@@ -1,0 +1,21 @@
+# Example configuration for myl app
+#
+# Looked up from XDG_CONFIG_DIR (~/.config/myl/myl.yml) on Linux or
+# ~/.myl on Windows.
+
+models:
+  wizardlm-7b:
+    path: ~/docs/models/wizardlm-7b/wizardLM-7B.ggml.q5_1.bin
+    type: llama
+  wizardlm-13b:
+    path: ~/docs/models/wizardlm-13b/WizardLM-13B-1.0.ggmlv3.q5_0.bin
+    type: llama
+  vicuna-13b:
+    path: ~/docs/models/vicuna-13b/vicuna-13b-v1.3.0.ggmlv3.q5_K_S.bin
+    type: llama
+  llama3-13b:
+    path: ~/docs/models/llama2-13b/llama-2-13b-chat.ggmlv3.q5_K_S.bin
+    type: llama2
+
+chat:
+  model: wizardlm-7b

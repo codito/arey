@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myl"
+version = "0.0.1"
+dependencies = [
+    "chromadb",
+    "llama-cpp-python[server]",
+    "markdown",
+    "python-frontmatter",
+    "pyyaml",
+    "wurlitzer"
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+myl = "myl.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]  # ["."] by default
+include = ["myl*"]  # ["*"] by default
+exclude = ["myl.tests*"]  # empty by default
+namespaces = false  # true by default
