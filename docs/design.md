@@ -32,6 +32,7 @@ We believe below tools are awesome and may be in the same bucket as this one.
 
 - <https://github.com/simonw/llm>
 - <https://github.com/go-skynet/LocalAI>
+- <https://github.com/jmorganca/ollama>
 
 ## Approach
 
@@ -91,7 +92,7 @@ or wait until all output is available.
 
 ### Example runs
 
-Let's enumerate few example scenarios to ensure the mental model is sufficient.
+Let's enumerate few example scenarios to validate the mental model.
 
 **1. Summarize a text**
 

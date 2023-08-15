@@ -1,6 +1,6 @@
 # Create a abstract class for chat prompts.
-
 from abc import ABC, ABCMeta, abstractmethod, abstractproperty
+from typing import List
 
 from myl.models.chat import Message
 
@@ -11,7 +11,7 @@ class Prompt(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractproperty
-    def stop_words(self) -> list[str]:
+    def stop_words(self) -> List[str]:
         return []
 
     @abstractmethod

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from myl.models.ai import CompletionMetrics
 
@@ -32,5 +32,5 @@ class ChatContext:
 
 @dataclass
 class Chat:
-    messages: list[Message] = field(default_factory=list)
+    messages: List[Message] = field(default_factory=list)
     context: ChatContext = field(default_factory=ChatContext)

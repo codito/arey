@@ -1,7 +1,7 @@
 # Models for AI
-
 from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 from dataclasses import dataclass
+from typing import List
 
 
 @dataclass
@@ -15,6 +15,7 @@ class CompletionMetrics:
     completion_tokens: int
     total_tokens: int
     latency_ms: float
+    time_to_first_token_ms: float
 
 
 @dataclass
@@ -29,7 +30,7 @@ class CompletionModel(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def complete(self, text: str) -> list[CompletionResponse]:
+    def complete(self, text: str) -> List[CompletionResponse]:
         raise NotImplementedError
 
     @abstractmethod
@@ -44,5 +45,5 @@ class EmbeddingModel(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text: str) -> List[float]:
         raise NotImplementedError

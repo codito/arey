@@ -1,4 +1,6 @@
 # Base prompt for chat.
+from typing import List
+
 from myl.models.chat import Message, SenderType
 from myl.prompts import Prompt
 
@@ -13,7 +15,7 @@ class ChatPrompt(Prompt):
         )
 
     @property
-    def stop_words(self) -> list[str]:
+    def stop_words(self) -> List[str]:
         return ["### Human:"]
 
     def get_prompt(self, context: str, query: str) -> str:

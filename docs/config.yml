@@ -19,6 +19,19 @@ models:
   openorcaxopenchat:
     path: ~/docs/models/openorca/openorcaxopenchat-preview2-13b.ggmlv3.q5_K_S.bin
     type: llama2
+    template: openorca # user, assistant, <|end_of_turn|>
+  nous-hermes-13b:
+    path: ~/docs/models/nous-hermes/nous-hermes-llama2-13b.ggmlv3.q5_K_S.bin
+    type: llama2
+    template: alpaca
+  stablebeluga-7b:
+    path: ~/docs/models/stablebeluga-7b/stablebeluga-7b.ggmlv3.q5_K_M.bin
+    type: llama2
+    template: orca # system, user, assistant
+  stabilityplatypus:
+    path: ~/docs/models/stabilityplatypus/stabilityplatypus.ggmlv3.q5_K_M.bin
+    type: llama2
+    template: alpaca # instruction, response
 
 chat:
-  model: wizardlm-7b
+  model: stablebeluga-7b

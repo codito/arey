@@ -1,15 +1,16 @@
 # Services for the chat command
 
 
-from typing import Iterator, Optional
+from typing import Iterator, List, Optional
 
 from myl.config import get_config
-from myl.models.ai import CompletionMetrics
+from myl.models.ai import CompletionMetrics, ModelMetrics
 from myl.models.chat import Chat, Message, MessageContext, SenderType
 from myl.platform.llama import LlamaBaseModel
 from myl.prompts import Prompt
 from myl.prompts.chat import ChatPrompt
 from myl.prompts.instruct import InstructPrompt
+from myl.prompts.openorca import OpenOrcaPrompt
 
 config = get_config()
 models = config["models"]
@@ -31,7 +32,9 @@ def _get_max_tokens(model: LlamaBaseModel, prompt_model: Prompt, text: str) -> i
     return context_size - prompt_raw_tokens - query_tokens - buffer
 
 
-def _get_usage(usage_series: list[CompletionMetrics]) -> CompletionMetrics:
+def _get_usage(
+    model_metrics: ModelMetrics, usage_series: List[CompletionMetrics]
+) -> CompletionMetrics:
     response_latency = 0
     response_tokens = 0
     for u in usage_series:
@@ -42,6 +45,8 @@ def _get_usage(usage_series: list[CompletionMetrics]) -> CompletionMetrics:
         completion_tokens=response_tokens,
         total_tokens=usage_series[0].prompt_tokens + response_tokens,
         latency_ms=response_latency,
+        time_to_first_token_ms=model_metrics.init_latency_ms
+        + usage_series[0].latency_ms,
     )
 
 
@@ -75,7 +80,7 @@ def create_response(chat: Chat, message: str) -> str:
 
 
 def stream_response(chat: Chat, message: str) -> Iterator[str]:
-    prompt_model = InstructPrompt()
+    prompt_model = OpenOrcaPrompt()
     max_tokens = _get_max_tokens(model, prompt_model, message)
     context = get_history(model, chat, prompt_model, max_tokens)
     prompt = prompt_model.get_prompt(context, message)
@@ -90,7 +95,9 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
         usage_series.append(chunk.metrics)
         yield chunk.text
 
-    msg_context = MessageContext(prompt=prompt, metrics=_get_usage(usage_series))
+    msg_context = MessageContext(
+        prompt=prompt, metrics=_get_usage(model.metrics, usage_series)
+    )
     ai_msg = Message(ai_msg_text, 0, SenderType.AI, msg_context)
     chat.messages.append(ai_msg)
 

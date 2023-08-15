@@ -62,27 +62,27 @@ class LlamaBaseModel(CompletionModel):
 
         prompt_token_count = self.count_tokens(text)
         prev_time = time.perf_counter()
+        time_to_first_token = -1
         for chunk in output:
             current_time = time.perf_counter()
             latency = current_time - prev_time
             prev_time = current_time
+            if time_to_first_token == -1:
+                time_to_first_token = latency
 
             chunk_text = chunk["choices"][0]["text"]
             token_count = self.count_tokens(chunk_text)
             yield CompletionResponse(
                 text=chunk_text,
                 metrics=CompletionMetrics(
-                    prompt_token_count, token_count, 0, round(latency * 1000, 2)
+                    prompt_token_count,
+                    token_count,
+                    0,
+                    round(latency * 1000, 2),
+                    time_to_first_token,
                 ),
             )
 
     def count_tokens(self, text: str) -> int:
         model = self._get_model()
         return len(model.tokenize(text.encode("utf-8")))
-
-
-class Wizard(LlamaBaseModel):
-    model_path = "~/docs/models/wizardlm-7b/wizardLM-7B.ggml.q5_1.bin"
-
-    def __init__(self):
-        super().__init__(self.model_path)
