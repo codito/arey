@@ -25,8 +25,8 @@ def summarize_markdown_file(path: str) -> str:
         summary, prompt, metrics = summarize(content)
         # print("---")
         # print(prompt)
-        # print("---")
-        # print(metrics)
+        print("---")
+        print(metrics)
         return summary
 
 

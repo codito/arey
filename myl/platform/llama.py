@@ -37,6 +37,7 @@ class LlamaBaseModel(CompletionModel):
                     model_path=model_path,
                     n_batch=256,
                     n_ctx=self.context_size,
+                    n_threads=32,
                     verbose=False,
                 )
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)

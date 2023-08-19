@@ -6,17 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "myl"
 version = "0.0.1"
 dependencies = [
-    "chromadb",
     "llama-cpp-python[server]",
     "markdown",
     "python-frontmatter",
     "pyyaml",
+    "rich",
     "wurlitzer"
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["black", "isort", "pytest"]
+samples = ["beautifulsoup4", "lxml"]
 
 [project.scripts]
 myl = "myl.main:main"

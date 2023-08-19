@@ -29,9 +29,17 @@ models:
     type: llama2
     template: orca # system, user, assistant
   stabilityplatypus:
-    path: ~/docs/models/stabilityplatypus/stabilityplatypus.ggmlv3.q5_K_M.bin
+    path: ~/models/stable-platypus2-13b.ggmlv3.q5_K_M.bin
     type: llama2
     template: alpaca # instruction, response
+  openorcaplatypus:
+    path: ~/models/openorca-platypus2-13b.ggmlv3.q4_K_M.bin
+    type: llama2
+    template: alpaca # instruction, response
+  lunaai-7b:
+    path: ~/models/luna-ai-llama2-uncensored.ggmlv3.q5_K_M.bin
+    type: llama2
+    template: openchat # user, assistant
 
 chat:
-  model: stablebeluga-7b
+  model: openorcaplatypus

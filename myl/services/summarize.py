@@ -14,7 +14,7 @@ model_path = models[chat_model]["path"]
 model: LlamaBaseModel = LlamaBaseModel(model_path=model_path)
 
 
-# StableBeluga format
+# StableBeluga format, or OpenChat format
 class SummarizePrompt(Prompt):
     @property
     def raw_prompt(self) -> str:
@@ -29,13 +29,14 @@ class SummarizePrompt(Prompt):
 
     def get_prompt(self, context: str, query: str) -> str:
         return (
-            f"### System:\n{self.raw_prompt}"
-            f"{context}"
-            f"\n\n### User:\n"
-            "Summarize and extract keywords from below text in JSON format: "
-            '{"summary": "", "keywords": []}.\n'
-            f"\n{query}"
-            f"\n\n### Assistant:\n"
+            # f"### System:\n{self.raw_prompt}" # required for StableBeluga
+            # f"{context}"
+            f"\n\n### User: "
+            "Summarize and extract keywords from below text. Your response must "
+            'be in this JSON format: {"summary": "", "keywords": []}.\n'
+            "Here's the text: \n"
+            f"{query}"
+            f"\n\n### Assistant: "
         )
 
     def format_message(self, message: Message) -> str:
@@ -48,7 +49,6 @@ class SummarizePrompt2(Prompt):
     def raw_prompt(self) -> str:
         return (
             "Summarize and extract keywords from the text provided below. "
-            "Summary must paraphrase the entire text, should be grammatically correct, "
             "and readable by a twelve year old. "
             'You must respond in JSON format: {"keywords": [], "summary": ""}.\n'
         )
@@ -70,6 +70,8 @@ class SummarizePrompt2(Prompt):
 
 # Alpaca instruction format
 class SummarizePrompt3(Prompt):
+    instruct_only = True
+
     @property
     def raw_prompt(self) -> str:
         return (
@@ -83,10 +85,12 @@ class SummarizePrompt3(Prompt):
 
     def get_prompt(self, context: str, query: str) -> str:
         return (
-            f"{self.raw_prompt}{context}"
-            f"\n\n### Instruction:\n"
-            "Summarize and extract keywords from below text in JSON format: "
-            '{"summary": "", "keywords": []}.'
+            # f"{self.raw_prompt}{context}"
+            f"\n\n### Instruction:\n\n"
+            "Summarize and extract keywords from below text. Your response must "
+            'be in this JSON format: {"summary": "", "keywords": []}.\n'
+            "Summary must be in first person.\n"
+            "Here's the text: \n"
             f"{query}"
             f"\n\n### Response:\n"
         )
@@ -119,7 +123,7 @@ def summarize(text: str) -> Tuple[str, str, CompletionMetrics]:
     # max_tokens = _get_max_tokens(model, prompt_model, message)
     # context = get_history(model, chat, prompt_model, max_tokens)
     context = ""
-    prompt = prompt_model.get_prompt(context, f"Here's the text to summarize:\n{text}")
+    prompt = prompt_model.get_prompt(context, f"```\n{text}\n```")
 
     usage_series = []
     summary_text = ""
