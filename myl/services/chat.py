@@ -75,7 +75,7 @@ def get_history(
         if message.sender == SenderType.USER and token_count >= max_tokens:
             break
 
-    return "\n".join(messages)
+    return "".join(messages)
 
 
 def create_response(chat: Chat, message: str) -> str:
