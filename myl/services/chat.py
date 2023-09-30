@@ -11,12 +11,19 @@ from myl.prompts import Prompt
 from myl.prompts.chat import ChatPrompt
 from myl.prompts.instruct import InstructPrompt
 from myl.prompts.openorca import OpenOrcaPrompt
+from myl.prompts.orca import OrcaPrompt
 
 config = get_config()
 models = config["models"]
-chat_model = config["chat"]["model"]
-model_path = models[chat_model]["path"]
-model: LlamaBaseModel = LlamaBaseModel(model_path=model_path)
+profiles = config["profiles"]
+chat_config = config["chat"]
+model_path = models[chat_config["model"]]["path"]
+model_settings = chat_config["settings"]
+completion_settings = profiles[chat_config["profile"]]
+
+model: LlamaBaseModel = LlamaBaseModel(
+    model_path=model_path, model_settings=model_settings
+)
 
 
 def _count_token(model: LlamaBaseModel, text: str) -> int:
@@ -80,7 +87,7 @@ def create_response(chat: Chat, message: str) -> str:
 
 
 def stream_response(chat: Chat, message: str) -> Iterator[str]:
-    prompt_model = OpenOrcaPrompt()
+    prompt_model = InstructPrompt()
     max_tokens = _get_max_tokens(model, prompt_model, message)
     context = get_history(model, chat, prompt_model, max_tokens)
     prompt = prompt_model.get_prompt(context, message)

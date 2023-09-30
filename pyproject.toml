@@ -7,8 +7,6 @@ name = "myl"
 version = "0.0.1"
 dependencies = [
     "llama-cpp-python[server]",
-    "markdown",
-    "python-frontmatter",
     "pyyaml",
     "rich",
     "wurlitzer"
@@ -16,8 +14,8 @@ dependencies = [
 readme = { file = "README.md", content-type = "text/markdown" }
 
 [project.optional-dependencies]
-test = ["black", "isort", "pytest"]
-samples = ["beautifulsoup4", "lxml"]
+test = ["black", "isort", "pytest", "pytest-mock", "pytest-cov"]
+samples = ["beautifulsoup4", "lxml", "markdown", "python-frontmatter"]
 
 [project.scripts]
 myl = "myl.main:main"
@@ -27,3 +25,6 @@ where = ["."]  # ["."] by default
 include = ["myl*"]  # ["*"] by default
 exclude = ["myl.tests*"]  # empty by default
 namespaces = false  # true by default
+
+[tool.pytest.ini_options]
+addopts = "--cov=myl --cov-report=term-missing"

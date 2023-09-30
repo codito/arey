@@ -28,10 +28,6 @@ models:
     path: ~/docs/models/stablebeluga-7b/stablebeluga-7b.ggmlv3.q5_K_M.bin
     type: llama2
     template: orca # system, user, assistant
-  stabilityplatypus:
-    path: ~/models/stable-platypus2-13b.ggmlv3.q5_K_M.bin
-    type: llama2
-    template: alpaca # instruction, response
   openorcaplatypus:
     path: ~/models/openorca-platypus2-13b.ggmlv3.q4_K_M.bin
     type: llama2
@@ -40,6 +36,38 @@ models:
     path: ~/models/luna-ai-llama2-uncensored.ggmlv3.q5_K_M.bin
     type: llama2
     template: openchat # user, assistant
+  speechless-13b:
+    path: ~/docs/models/speechless/speechless-llama2-hermes-orca-platypus-wizardlm-13b.Q5_K_S.gguf
+    type: llama2
+    template: alpaca
+  synthia-7b:
+    path: ~/docs/models/synthia-7b/synthia-7b-v1.3.Q5_K_M.gguf
+    type: llama2
+    template: alpaca
+
+profiles:
+  # See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/
+  precise:
+    # factual responses and straightforward assistant answers
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+  creative:
+    # chatting, storywriting, and interesting assistant answers
+    temperature: 0.72
+    repeat_penalty: 1.1
+    top_k: 0
+    top_p: 0.73
+  sphinx:
+    # varied storywriting (on 30B/65B) and unconventional chatting
+    temperature: 1.99
+    repeat_penalty: 1.15
+    top_k: 30
+    top_p: 0.18
 
 chat:
-  model: openorcaplatypus
+  model: synthia-7b
+  profile: precise
+  settings:
+    n_threads: 11

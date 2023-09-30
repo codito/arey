@@ -59,7 +59,8 @@ class SummarizePrompt2(Prompt):
 
     def get_prompt(self, context: str, query: str) -> str:
         return (
-            # f"### System:\n{self.raw_prompt}{context}"
+            f"### System:\nYou are an AI assistant that follows instruction"
+            "extremely well. Help as much as you can."
             f"\n\n### User:\n{self.raw_prompt}\n{query}\n"
             f"\n\n### Assistant:\n"
         )

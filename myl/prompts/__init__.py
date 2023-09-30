@@ -21,3 +21,19 @@ class Prompt(ABC, metaclass=ABCMeta):
     @abstractmethod
     def format_message(self, message: Message) -> str:
         raise NotImplementedError
+
+
+def get_prompt_template(template_name: str) -> Prompt:
+    from myl.prompts.chat import ChatPrompt
+    from myl.prompts.instruct import InstructPrompt
+    from myl.prompts.openorca import OpenOrcaPrompt
+    from myl.prompts.orca import OrcaPrompt
+
+    if template_name == "chat":
+        return ChatPrompt()
+    if template_name == "instruct":
+        return InstructPrompt()
+    if template_name == "orca":
+        return OrcaPrompt()
+    if template_name == "openorca":
+        return OpenOrcaPrompt()

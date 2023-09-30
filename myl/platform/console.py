@@ -2,7 +2,9 @@
 
 import readline
 import signal
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from functools import lru_cache
+from os import devnull
 
 from rich.console import Console
 from rich.theme import Theme
@@ -34,3 +36,12 @@ class SignalContextManager:
 
     def __exit__(self, exc_type, exc_value, traceback):
         signal.signal(self.signal_num, self.original_handler)
+
+
+@contextmanager
+def suppress_stderr():
+    """A context manager that redirects stderr to devnull."""
+    # See https://stackoverflow.com/a/52442331
+    with open(devnull, "w") as fnull:
+        with redirect_stderr(fnull) as err:
+            yield (err)
