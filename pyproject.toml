@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "myl"
 version = "0.0.1"
 dependencies = [
-    "llama-cpp-python[server]",
+    "llama-cpp-python",
     "pyyaml",
     "rich",
     "wurlitzer"

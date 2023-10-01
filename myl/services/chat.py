@@ -14,12 +14,9 @@ from myl.prompts.openorca import OpenOrcaPrompt
 from myl.prompts.orca import OrcaPrompt
 
 config = get_config()
-models = config["models"]
-profiles = config["profiles"]
-chat_config = config["chat"]
-model_path = models[chat_config["model"]]["path"]
-model_settings = chat_config["settings"]
-completion_settings = profiles[chat_config["profile"]]
+model_path = config.chat.model.path
+model_settings = config.chat.settings
+completion_settings = config.chat.profile
 
 model: LlamaBaseModel = LlamaBaseModel(
     model_path=model_path, model_settings=model_settings
