@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-from myl.models.ai import CompletionMetrics
+from myl.ai import CompletionMetrics
 
 
 class SenderType(Enum):
@@ -14,6 +14,7 @@ class SenderType(Enum):
 @dataclass
 class MessageContext:
     prompt: str
+    finish_reason: Optional[str]
     metrics: CompletionMetrics
 
 

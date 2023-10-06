@@ -4,46 +4,18 @@
 # ~/.myl on Windows.
 
 models:
-  wizardlm-7b:
-    path: ~/docs/models/wizardlm-7b/wizardLM-7B.ggml.q5_1.bin
-    type: llama
-    template: dummy
-  wizardlm-13b:
-    path: ~/docs/models/wizardlm-13b/WizardLM-13B-1.0.ggmlv3.q5_0.bin
-    type: llama
-    template: dummy
-  vicuna-13b:
-    path: ~/docs/models/vicuna-13b/vicuna-13b-v1.3.0.ggmlv3.q5_K_S.bin
-    type: llama
-    template: dummy
-  openorcaxopenchat:
-    path: ~/docs/models/openorca/openorcaxopenchat-preview2-13b.ggmlv3.q5_K_S.bin
-    type: llama2
-    template: openorca # user, assistant, <|end_of_turn|>
-  nous-hermes-13b:
-    path: ~/docs/models/nous-hermes/nous-hermes-llama2-13b.ggmlv3.q5_K_S.bin
-    type: llama2
-    template: alpaca
-  stablebeluga-7b:
-    path: ~/docs/models/stablebeluga-7b/stablebeluga-7b.ggmlv3.q5_K_M.bin
-    type: llama2
-    template: orca # system, user, assistant
-  openorcaplatypus:
-    path: ~/models/openorca-platypus2-13b.ggmlv3.q4_K_M.bin
-    type: llama2
-    template: alpaca # instruction, response
-  lunaai-7b:
-    path: ~/models/luna-ai-llama2-uncensored.ggmlv3.q5_K_M.bin
-    type: llama2
-    template: openchat # user, assistant
   speechless-13b:
     path: ~/docs/models/speechless/speechless-llama2-hermes-orca-platypus-wizardlm-13b.Q5_K_S.gguf
     type: llama2
     template: alpaca
   synthia-7b:
     path: ~/docs/models/synthia-7b/synthia-7b-v1.3.Q5_K_M.gguf
-    type: llama2
-    template: alpaca
+    type: mistral
+    template: synthia
+  mistral-openorca-7b:
+    path: ~/docs/models/mistral-openorca-7b/mistral-7b-openorca.Q5_K_M.gguf
+    type: mistral
+    template: chatml
 
 profiles:
   # See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/
@@ -67,7 +39,7 @@ profiles:
     top_p: 0.18
 
 chat:
-  model: synthia-7b
+  model: mistral-openorca-7b
   profile: precise
   settings:
     n_threads: 11

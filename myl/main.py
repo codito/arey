@@ -3,8 +3,15 @@ import signal
 import sys
 from typing import List
 
+from numpy import who
+from rich.console import Group
+from rich.live import Live
+from rich.progress import Progress
+from rich.spinner import Spinner
+from rich.text import Text
+
+from myl.chat import create_chat, get_completion_metrics, stream_response
 from myl.platform.console import SignalContextManager, get_console
-from myl.services.chat import create_chat, get_completion_metrics, stream_response
 
 
 def chat(args: List[str]) -> int:
@@ -14,7 +21,12 @@ def chat(args: List[str]) -> int:
     )
     console.print()
 
-    chat = create_chat()
+    with console.status("Loading model..."):
+        chat, model_metrics = create_chat()
+        footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
+        console.print(footer, style="message_footer")
+        console.print()
+
     while True:
         # Get input from user
         # Workaround for https://github.com/Textualize/rich/issues/2293
@@ -42,24 +54,49 @@ def chat(args: List[str]) -> int:
             nonlocal stop_completion
             stop_completion = True
 
-        with SignalContextManager(signal.SIGINT, stop_completion_handler):
-            for response in stream_response(chat, user_input):
-                if stop_completion:
-                    break
-                console.print(response, end="")
+        spinner = Spinner(text="Generating...", name="dots")
+        text = Text()
+        output = Group(
+            text,
+            spinner,
+        )
 
+        def format_text(text: str) -> str:
+            if not text.endswith("\\"):
+                return text.encode("utf-8").decode("unicode_escape")
+            return text
+
+        with SignalContextManager(signal.SIGINT, stop_completion_handler):
+            with Live(console=console, transient=True, refresh_per_second=8) as live:
+                live.update(output)
+                for response in stream_response(chat, user_input):
+                    if stop_completion:
+                        break
+                    text.append(response)
+                    text.plain = format_text(text.plain)
+                    live.update(output)
+
+        text = Text(chat.messages[-1].text)
+        console.print(text)
         metrics = get_completion_metrics(chat)
-        footer = "◼ Canceled." if stop_completion else "◼ Completed."
+        footer = (
+            "◼ Canceled."
+            if stop_completion
+            else f"◼ Completed ({chat.messages[-1].context.finish_reason})."
+        )
         if metrics:
-            tokens_per_sec = int(metrics.total_tokens * 1000 / metrics.latency_ms)
+            tokens_per_sec = (
+                metrics.completion_tokens * 1000 / metrics.completion_latency_ms
+            )
             footer += (
-                f" {int(metrics.time_to_first_token_ms / 1000)}s to first token."
-                f" {int(metrics.latency_ms / 1000)}s total."
-                f" {tokens_per_sec} tokens/s."
-                f" {metrics.total_tokens} tokens."
+                f" {metrics.prompt_eval_latency_ms / 1000:.2f}s to first token."
+                f" {metrics.completion_latency_ms / 1000:.2f}s total."
+                f" {tokens_per_sec:.2f} tokens/s."
+                f" {metrics.completion_tokens} tokens."
+                f" {metrics.prompt_tokens} prompt tokens."
             )
 
-        console.print("\n")
+        console.print()
         console.print(footer, style="message_footer")
         console.print()
 
