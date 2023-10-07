@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from myl.ai import CompletionMetrics
+from myl.ai import CompletionMetrics, ModelMetrics
 
 
 class SenderType(Enum):
@@ -16,6 +16,7 @@ class MessageContext:
     prompt: str
     finish_reason: Optional[str]
     metrics: CompletionMetrics
+    logs: str = ""
 
 
 @dataclass
@@ -23,12 +24,13 @@ class Message:
     text: str
     timestamp: int  # unix timestamp
     sender: SenderType
-    context: Optional[MessageContext]
+    context: MessageContext
 
 
 @dataclass
 class ChatContext:
-    pass
+    metrics: Optional[ModelMetrics] = None
+    logs: str = ""
 
 
 @dataclass

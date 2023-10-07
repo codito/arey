@@ -18,19 +18,23 @@ tokens:
 
 roles:
   ai:
-    message: >-
-      \nASSISTANT: $message_text
+    message: |-
+
+      ASSISTANT: $message_text
   user:
-    message: >-
-      \nUSER: $message_text
+    message: |-
+
+      USER: $message_text
   system:
-    message: >-
+    message: |
       SYSTEM: $prompt_prefix
 stop_words:
   - "USER:"
 prompts:
-  chat: >-
-    "SYSTEM: $prompt_prefix\n$chat_history\nUSER: $user_query\nASSISTANT: "
+  chat: |-
+    SYSTEM: $prompt_prefix$chat_history
+    USER: $user_query
+    ASSISTANT: 
   task: >-
     "SYSTEM: $prompt_prefix\nUSER: $user_query\nASSISTANT: "
 

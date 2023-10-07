@@ -1,13 +1,17 @@
 # Console abstraction
 
+import io
 import readline
 import signal
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+import sys
+from contextlib import contextmanager, redirect_stderr
 from functools import lru_cache
-from os import devnull
+from io import BytesIO, StringIO
+from typing import Generator
 
 from rich.console import Console
 from rich.theme import Theme
+from wurlitzer import pipes
 
 theme = Theme(
     {
@@ -39,9 +43,11 @@ class SignalContextManager:
 
 
 @contextmanager
-def suppress_stderr():
-    """A context manager that redirects stderr to devnull."""
-    # See https://stackoverflow.com/a/52442331
-    with open(devnull, "w") as fnull:
-        with redirect_stderr(fnull) as err:
-            yield (err)
+def capture_stderr() -> Generator[StringIO | BytesIO | int | None, None, None]:
+    """A context manager that captures stderr for both python and
+    c-functions."""
+    stderr = io.StringIO()
+    with redirect_stderr(stderr) as err, pipes(
+        stdout=0, stderr=stderr, encoding="utf-8"
+    ):
+        yield err

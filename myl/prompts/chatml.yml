@@ -15,25 +15,30 @@ tokens:
       You are a helpful assistant. Please think step by step and answer the query.
 roles:
   ai:
-    message: <|im_start|>assistant\n$message_text<|im_end|>
+    message: |+
+      <|im_start|>assistant
+      $message_text<|im_end|>
   user:
-    message: <|im_start|>user\n$message_text<|im_end|>
+    message: |+
+      <|im_start|>user
+      $message_text<|im_end|>
   system:
-    message: <|im_start|>system\n$message_text\n<|im_end|>
+    message: |+
+      <|im_start|>system
+      $prompt_prefix<|im_end|>
 stop_words:
   - <|im_start|>
   - <|im_end|>
 prompts:
-  chat: >-
+  chat: |
     <|im_start|>system
-    $prompt_prefix\n<|im_end|>
-    $chat_history
-    <|im_start|>user\n$user_query<|im_end|>
-    <|im_start|>assistant\n
-  task: >-
+    $prompt_prefix<|im_end|>
+    $chat_history<|im_start|>user
+    $user_query<|im_end|>
+    <|im_start|>assistant
+  task: |
     <|im_start|>system
-    $prompt_prefix\n<|im_end|>
-    <|im_start|>user\n$user_query<|im_end|>
-    <|im_start|>assistant\n
-
-
+    $prompt_prefix<|im_end|>
+    <|im_start|>user
+    $user_query<|im_end|>
+    <|im_start|>assistant

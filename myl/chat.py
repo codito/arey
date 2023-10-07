@@ -1,9 +1,11 @@
 # Services for the chat command
+from io import StringIO
 from typing import Iterator, List, Optional, Tuple
 
 from myl.ai import CompletionMetrics, ModelMetrics
 from myl.config import get_config
 from myl.model import Chat, Message, MessageContext, SenderType
+from myl.platform.console import capture_stderr
 from myl.platform.llama import LlamaBaseModel
 from myl.prompts import Prompt, get_prompt
 
@@ -48,8 +50,12 @@ def _get_usage(
 
 def create_chat() -> Tuple[Chat, ModelMetrics]:
     system_prompt = prompt_model.get_message("system", "")
-    model.load(system_prompt)
-    return Chat(), model.metrics
+    with capture_stderr() as stderr:
+        model.load(system_prompt)
+    chat = Chat()
+    chat.context.metrics = model.metrics
+    chat.context.logs = stderr.getvalue()
+    return chat, model.metrics
 
 
 def get_history(
@@ -98,19 +104,20 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
     ai_msg_text = ""
     usage_series = []
     finish_reason = ""
-    for chunk in model.complete(prompt, {"stop": prompt_model.stop_words}):
-        ai_msg_text += chunk.text
-        finish_reason = chunk.finish_reason
-        usage_series.append(chunk.metrics)
-        yield chunk.text
+    with capture_stderr() as stderr:
+        for chunk in model.complete(prompt, {"stop": prompt_model.stop_words}):
+            ai_msg_text += chunk.text
+            finish_reason = chunk.finish_reason
+            usage_series.append(chunk.metrics)
+            yield chunk.text
 
     msg_context = MessageContext(
         prompt=prompt,
         finish_reason=finish_reason,
         metrics=_get_usage(model.metrics, usage_series),
+        logs=stderr.getvalue(),
     )
-    cleaned_text = ai_msg_text.encode("utf-8").decode("unicode_escape")
-    ai_msg = Message(cleaned_text, 0, SenderType.AI, msg_context)
+    ai_msg = Message(ai_msg_text, 0, SenderType.AI, msg_context)
     chat.messages.append(ai_msg)
 
 

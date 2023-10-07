@@ -3,10 +3,8 @@ import signal
 import sys
 from typing import List
 
-from numpy import who
 from rich.console import Group
 from rich.live import Live
-from rich.progress import Progress
 from rich.spinner import Spinner
 from rich.text import Text
 
@@ -21,7 +19,7 @@ def chat(args: List[str]) -> int:
     )
     console.print()
 
-    with console.status("Loading model..."):
+    with console.status("[message_footer]Loading model..."):
         chat, model_metrics = create_chat()
         footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
         console.print(footer, style="message_footer")
@@ -54,7 +52,7 @@ def chat(args: List[str]) -> int:
             nonlocal stop_completion
             stop_completion = True
 
-        spinner = Spinner(text="Generating...", name="dots")
+        spinner = Spinner(text="[message_footer]Generating...", name="dots")
         text = Text()
         output = Group(
             text,
@@ -67,7 +65,11 @@ def chat(args: List[str]) -> int:
             return text
 
         with SignalContextManager(signal.SIGINT, stop_completion_handler):
-            with Live(console=console, transient=True, refresh_per_second=8) as live:
+            with Live(
+                console=console,
+                transient=True,
+                refresh_per_second=8,
+            ) as live:
                 live.update(output)
                 for response in stream_response(chat, user_input):
                     if stop_completion:
@@ -98,6 +100,8 @@ def chat(args: List[str]) -> int:
 
         console.print()
         console.print(footer, style="message_footer")
+        console.print()
+        console.print(chat.messages[-1].context.logs)
         console.print()
 
     return 0

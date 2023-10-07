@@ -1,7 +1,7 @@
 # Models for AI
 from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 @dataclass
