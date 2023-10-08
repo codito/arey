@@ -39,7 +39,7 @@ profiles:
     top_p: 0.18
 
 chat:
-  model: synthia-7b
+  model: mistral-openorca-7b
   profile: precise
   settings:
     n_threads: 11

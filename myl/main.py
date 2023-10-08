@@ -5,6 +5,7 @@ from typing import List
 
 from rich.console import Group
 from rich.live import Live
+from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
@@ -55,30 +56,29 @@ def chat(args: List[str]) -> int:
         spinner = Spinner(text="[message_footer]Generating...", name="dots")
         text = Text()
         output = Group(
-            text,
+            Padding(text, pad=(0, 0, 2, 0)),
             spinner,
         )
 
         def format_text(text: str) -> str:
+            text = text.lstrip()
             if not text.endswith("\\"):
+                # FIXME breaks math unicode operators like subset or belongs to
                 return text.encode("utf-8").decode("unicode_escape")
             return text
 
         with SignalContextManager(signal.SIGINT, stop_completion_handler):
             with Live(
+                output,
                 console=console,
                 transient=True,
-                refresh_per_second=8,
-            ) as live:
-                live.update(output)
+            ):
                 for response in stream_response(chat, user_input):
                     if stop_completion:
                         break
                     text.append(response)
-                    text.plain = format_text(text.plain)
-                    live.update(output)
 
-        text = Text(chat.messages[-1].text)
+        text = Text(format_text(chat.messages[-1].text))
         console.print(text)
         metrics = get_completion_metrics(chat)
         footer = (
@@ -101,7 +101,12 @@ def chat(args: List[str]) -> int:
         console.print()
         console.print(footer, style="message_footer")
         console.print()
-        console.print(chat.messages[-1].context.logs)
+        logs = (
+            chat.messages[-1].context.logs
+            if chat.messages and chat.messages[-1].context
+            else ""
+        )
+        console.print(logs)
         console.print()
 
     return 0
