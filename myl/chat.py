@@ -2,7 +2,7 @@
 from io import StringIO
 from typing import Iterator, List, Optional, Tuple
 
-from myl.ai import CompletionMetrics, ModelMetrics
+from myl.ai import CompletionMetrics, ModelMetrics, combine_metrics
 from myl.config import get_config
 from myl.model import Chat, Message, MessageContext, SenderType
 from myl.platform.console import capture_stderr
@@ -29,23 +29,6 @@ def _get_max_tokens(model: LlamaBaseModel, prompt_model: Prompt, text: str) -> i
     buffer = 200
 
     return context_size - prompt_tokens_without_history - buffer
-
-
-def _get_usage(
-    model_metrics: ModelMetrics, usage_series: List[CompletionMetrics]
-) -> CompletionMetrics:
-    response_latency = 0
-    response_tokens = 0
-    for u in usage_series:
-        response_latency += u.completion_latency_ms
-        response_tokens += u.completion_tokens
-    return CompletionMetrics(
-        prompt_tokens=usage_series[0].prompt_tokens,
-        prompt_eval_latency_ms=usage_series[0].prompt_eval_latency_ms,
-        completion_tokens=response_tokens,
-        completion_runs=len(usage_series),
-        completion_latency_ms=response_latency,
-    )
 
 
 def create_chat() -> Tuple[Chat, ModelMetrics]:
@@ -114,7 +97,7 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
     msg_context = MessageContext(
         prompt=prompt,
         finish_reason=finish_reason,
-        metrics=_get_usage(model.metrics, usage_series),
+        metrics=combine_metrics(usage_series),
         logs=stderr.getvalue(),
     )
     ai_msg = Message(ai_msg_text, 0, SenderType.AI, msg_context)

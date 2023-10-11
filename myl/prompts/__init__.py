@@ -57,12 +57,35 @@ class Prompt:
             name, system_tokens, custom_tokens, stop_words, prompts, message_formats
         )
 
+    @classmethod
+    def create_overrides(cls, yml: str) -> "Prompt":
+        """Creates an override prompt. They are merged with the base prompt."""
+        content = yaml.safe_load(yml) or {}
+        name = content.get("name", "")
+        if not name:
+            raise ValueError("`name` element in the prompt template is required.")
+
+        prompt_type = content.get("type", "")
+        if not prompt_type:
+            raise ValueError("`type` element in the prompt template is required.")
+
+        # Overrides are only supported for custom_tokens currently
+        tokens = content.get("tokens", {})
+        custom_tokens = tokens.get("custom", {})
+
+        return cls(name, custom_tokens=custom_tokens)
+
     def get(self, task: Literal["chat", "task"], context: Dict[str, str]) -> str:
         merged_context = {**context, **self.custom_tokens}
         return Template(self.prompts[task]).substitute(merged_context)
 
-    def get_message(self, role: Literal["ai", "user", "system"], text: str) -> str:
-        merged_context = {"message_text": text} | self.custom_tokens
+    def get_message(
+        self,
+        role: Literal["ai", "user", "system"],
+        text: str,
+        token_overrides: Dict[str, str] = {},
+    ) -> str:
+        merged_context = {"message_text": text} | self.custom_tokens | token_overrides
         return Template(self.message_formats[role]).substitute(merged_context)
 
 
@@ -89,3 +112,12 @@ def _get_oob_prompts() -> Dict[str, Prompt]:
 def get_prompt(template_name: str) -> Prompt:
     oob_prompts = _get_oob_prompts()
     return oob_prompts[template_name]
+
+
+def get_prompt_overrides(prompt_file_path: str) -> Prompt:
+    try:
+        with open(prompt_file_path, "r") as f:
+            return Prompt.create_overrides(f.read())
+    except Exception as err:
+        print(f"Error parsing: {prompt_file_path}. Error: {err.args[0]}")
+        raise

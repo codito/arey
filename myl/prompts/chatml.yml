@@ -36,9 +36,11 @@ prompts:
     $chat_history<|im_start|>user
     $user_query<|im_end|>
     <|im_start|>assistant
+     
   task: |
     <|im_start|>system
     $prompt_prefix<|im_end|>
     <|im_start|>user
     $user_query<|im_end|>
     <|im_start|>assistant
+     

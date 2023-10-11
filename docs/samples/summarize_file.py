@@ -33,7 +33,7 @@ def summarize_markdown_file(path: str) -> str:
 if __name__ == "__main__":
     show_help = len(sys.argv) < 2 or sys.argv[1] == "-h" or sys.argv[1] == "--help"
     if show_help:
-        print("Usage: {} <path to markdown file>".format(sys.argv[0]))
+        print(f"Usage: {sys.argv[0]} <path to markdown file>")
         sys.exit(1)
     summary = summarize_markdown_file(sys.argv[1])
     print(summary)
