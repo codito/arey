@@ -42,16 +42,20 @@ def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
         text = StringIO()
         for response in run(task, instruction):
             text.write(response)
-        summary = json.loads(text.getvalue())
-        post["auto_summary"] = summary["summary"]
-        post["auto_keywords"] = summary["keywords"]
-        if write:
-            frontmatter.dump(post, path, sort_keys=False)
-        print("---")
-        print(f'  {summary["summary"]}')
-        print(f'  {summary["keywords"]}')
-        print("---")
-        print(task.result and task.result.metrics)
+        try:
+            summary = json.loads(text.getvalue())
+            post["auto_summary"] = summary["summary"]
+            post["auto_keywords"] = summary["keywords"]
+            if write:
+                frontmatter.dump(post, path, sort_keys=False)
+            print("---")
+            print(f'  {summary["summary"]}')
+            print(f'  {summary["keywords"]}')
+            print("---")
+            print(task.result and task.result.metrics)
+        except Exception as e:
+            print(text.getvalue())
+            print(e)
 
 
 def main(path: str, write: bool):
