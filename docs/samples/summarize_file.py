@@ -29,7 +29,7 @@ def _convert_to_text(markdown: str):
 def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
     with open(path, "r+") as article:
         post = frontmatter.load(article)
-        if "auto_keyword" in post.metadata and "auto_summary" in post.metadata:
+        if "auto_keywords" in post.metadata and "auto_summary" in post.metadata:
             print(f"[SKIP] {path}")
             return
         print(path)
