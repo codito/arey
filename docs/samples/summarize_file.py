@@ -46,7 +46,7 @@ def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
         post["auto_summary"] = summary["summary"]
         post["auto_keywords"] = summary["keywords"]
         if write:
-            frontmatter.dump(post, path)
+            frontmatter.dump(post, path, sort_keys=False)
         print("---")
         print(f'  {summary["summary"]}')
         print(f'  {summary["keywords"]}')
