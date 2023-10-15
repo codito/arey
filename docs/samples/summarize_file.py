@@ -3,22 +3,16 @@ import argparse
 import glob
 import json
 import os
-import sys
-from dataclasses import dataclass
 from io import StringIO
-from typing import List, Tuple
 
 import frontmatter
 from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
+from rich.console import Console
 
 from myl.task import Task, create_task, run
 
-
-@dataclass
-class SummaryResponse:
-    summary: str
-    keywords: List[str]
+console = Console()
 
 
 def _convert_to_text(markdown: str):
@@ -27,12 +21,15 @@ def _convert_to_text(markdown: str):
 
 
 def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
+    console.print(f"[bold]> {path}")
     with open(path, "r+") as article:
         post = frontmatter.load(article)
         if "auto_keywords" in post.metadata and "auto_summary" in post.metadata:
-            print(f"[SKIP] {path}")
+            console.print(
+                "  [yellow]Skipping file since summary and keywords"
+                " already exist.[/yellow]"
+            )
             return
-        print(path)
         content = _convert_to_text(post.content)
         instruction = (
             "Summarize below text in JSON format: "
@@ -48,14 +45,14 @@ def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
             post["auto_keywords"] = summary["keywords"]
             if write:
                 frontmatter.dump(post, path, sort_keys=False)
-            print("---")
-            print(f'  {summary["summary"]}')
-            print(f'  {summary["keywords"]}')
-            print("---")
-            print(task.result and task.result.metrics)
-        except Exception as e:
-            print(text.getvalue())
-            print(e)
+            console.print("---")
+            console.print(f'  [green]{summary["summary"]}[/green]')
+            console.print(f'  [green]{summary["keywords"]}[/green]')
+            console.print("---")
+            console.print(f"[dim]{task.result and task.result.metrics}[/dim]")
+        except Exception:
+            console.print(text.getvalue())
+            console.print_exception()
 
 
 def main(path: str, write: bool):
@@ -71,7 +68,6 @@ def main(path: str, write: bool):
 
 
 if __name__ == "__main__":
-    # create argument parser with 1 positional and 1 boolean switch
     parser = argparse.ArgumentParser(
         description="Summarize a markdown file or directory."
     )

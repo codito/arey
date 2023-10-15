@@ -43,3 +43,8 @@ chat:
   profile: precise
   settings:
     n_threads: 11
+task:
+  model: mistral-openorca-7b
+  profile: precise
+  settings:
+    n_threads: 11

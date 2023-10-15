@@ -5,6 +5,7 @@ from typing import Callable, Iterable, List, Optional
 
 from rich.console import Console, Group
 from rich.live import Live
+from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
@@ -46,7 +47,7 @@ def _generate_response(
                     break
                 text.append(response)
 
-    console.print(text)
+    console.print(Markdown(text.plain))
 
     console.print()
     metrics = get_metrics()

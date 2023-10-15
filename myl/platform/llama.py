@@ -40,7 +40,7 @@ class LlamaBaseModel(CompletionModel):
                 model_path=model_path,
                 **dataclasses.asdict(self._model_settings),
             )
-            self._llm.set_cache(llama_cpp.LlamaCache(2 << 33))
+            # self._llm.set_cache(llama_cpp.LlamaCache(2 << 33))
 
             latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
             self._metrics = ModelMetrics(init_latency_ms=latency_ms)
