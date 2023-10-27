@@ -43,8 +43,10 @@ chat:
   profile: precise
   settings:
     n_threads: 11
+    n_gpu_layers: 18
 task:
   model: mistral-openorca-7b
   profile: precise
   settings:
     n_threads: 11
+    n_gpu_layers: 20

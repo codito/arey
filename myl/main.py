@@ -72,7 +72,7 @@ def _print_logs(console: Console, logs: Optional[str]) -> None:
     if not logs:
         return
     console.print()
-    console.print(logs)
+    # console.print(logs)
     console.print()
 
 

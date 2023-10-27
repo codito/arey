@@ -14,6 +14,7 @@ class LlamaSettings:
     n_threads: int
     n_ctx: int = 4096
     n_batch: int = 512
+    n_gpu_layers: int = 0
     verbose: bool = True
 
 
