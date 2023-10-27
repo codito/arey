@@ -30,6 +30,13 @@ With OPENBLAS, loading time for models is much smaller and inference is about
 > CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" FORCE_CMAKE=1 pip install llama-cpp-python --force-reinstall --upgrade --verbose
 ```
 
+If you've a GPU, try the following installation instead.
+
+```sh
+> pip uninstall llama-cpp-python
+> CMAKE_ARGS="-DLLAMA_CUBLAS=ON" FORCE_CMAKE=1 pip install llama-cpp-python --force-reinstall --upgrade --verbose
+```
+
 ## Roadmap
 
 - [x] Chat and task modes for interactive or batch queries
