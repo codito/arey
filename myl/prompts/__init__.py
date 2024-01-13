@@ -1,4 +1,4 @@
-# Create a abstract class for chat prompts.
+"""Create a abstract class for chat prompts."""
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -12,6 +12,11 @@ SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
 @dataclass
 class Prompt:
+    """An extensible prompt with dynamic template provided in a YML file.
+
+    Tokens in the file are replaced at runtime.
+    """
+
     name: str
     system_tokens: List[str] = field(default_factory=list)
     custom_tokens: Dict[str, str] = field(default_factory=dict)
@@ -21,6 +26,7 @@ class Prompt:
 
     @classmethod
     def create(cls, yml: str) -> "Prompt":
+        """Create a prompt from yml file."""
         content = yaml.safe_load(yml) or {}
         name = content.get("name", "")
         if not name:
@@ -59,7 +65,7 @@ class Prompt:
 
     @classmethod
     def create_overrides(cls, yml: str) -> "Prompt":
-        """Creates an override prompt. They are merged with the base prompt."""
+        """Create an override prompt. They are merged with the base prompt."""
         content = yaml.safe_load(yml) or {}
         name = content.get("name", "")
         if not name:
@@ -76,6 +82,7 @@ class Prompt:
         return cls(name, custom_tokens=custom_tokens)
 
     def get(self, task: Literal["chat", "task"], context: Dict[str, str]) -> str:
+        """Get a prompt with tokens resolved from the context."""
         merged_context = {**context, **self.custom_tokens}
         return Template(self.prompts[task]).substitute(merged_context)
 
@@ -85,6 +92,7 @@ class Prompt:
         text: str,
         token_overrides: Dict[str, str] = {},
     ) -> str:
+        """Get a chat message for given role and text."""
         merged_context = {"message_text": text} | self.custom_tokens | token_overrides
         return Template(self.message_formats[role]).substitute(merged_context)
 
@@ -110,11 +118,13 @@ def _get_oob_prompts() -> Dict[str, Prompt]:
 
 
 def get_prompt(template_name: str) -> Prompt:
+    """Create an out-of-box prompt from template name."""
     oob_prompts = _get_oob_prompts()
     return oob_prompts[template_name]
 
 
 def get_prompt_overrides(prompt_file_path: str) -> Prompt:
+    """Create a prompt with overrides from a file."""
     try:
         with open(prompt_file_path, "r") as f:
             return Prompt.create_overrides(f.read())

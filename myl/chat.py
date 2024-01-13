@@ -1,6 +1,5 @@
-# Services for the chat command
-from io import StringIO
-from typing import Iterator, List, Optional, Tuple
+"""Services for the chat command."""
+from typing import Iterator, Optional, Tuple
 
 from myl.ai import CompletionMetrics, ModelMetrics, combine_metrics
 from myl.config import get_config
@@ -32,6 +31,7 @@ def _get_max_tokens(model: LlamaBaseModel, prompt_model: Prompt, text: str) -> i
 
 
 def create_chat() -> Tuple[Chat, ModelMetrics]:
+    """Create a new chat session."""
     system_prompt = prompt_model.get_message("system", "")
     with capture_stderr() as stderr:
         model.load(system_prompt)
@@ -44,6 +44,7 @@ def create_chat() -> Tuple[Chat, ModelMetrics]:
 def get_history(
     model: LlamaBaseModel, chat: Chat, prompt_model: Prompt, max_tokens: int
 ) -> str:
+    """Get the messages for a chat."""
     messages = []
     token_count = 0
     for message in reversed(chat.messages):
@@ -66,6 +67,7 @@ def get_history(
 
 
 def create_response(chat: Chat, message: str) -> str:
+    """Create a chat response."""
     response = ""
     for chunk in stream_response(chat, message):
         response += chunk
@@ -74,6 +76,7 @@ def create_response(chat: Chat, message: str) -> str:
 
 
 def stream_response(chat: Chat, message: str) -> Iterator[str]:
+    """Stream a chat response."""
     max_tokens = _get_max_tokens(model, prompt_model, message)
     context = {
         "user_query": message,
@@ -105,6 +108,7 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
 
 
 def get_completion_metrics(chat: Chat) -> Optional[CompletionMetrics]:
+    """Get completion metrics for the chat."""
     msg = next(
         filter(lambda m: m.sender == SenderType.AI, reversed(chat.messages)), None
     )

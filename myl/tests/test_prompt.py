@@ -1,5 +1,4 @@
-# Tests for the prompts
-import pytest
+"""Tests for the prompts."""
 
 
 def prompts_should_be_valid():

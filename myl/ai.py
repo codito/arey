@@ -1,11 +1,13 @@
-# Models for AI
+"""Models for AI."""
 from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 
 @dataclass
 class ModelMetrics:
+    """Metrics for the model."""
+
     init_latency_ms: float
 
 
@@ -35,43 +37,54 @@ class CompletionMetrics:
 
 @dataclass
 class CompletionResponse:
+    """Response from a generative ai model."""
+
     text: str
     finish_reason: Optional[str]  # stop, length, none
     metrics: CompletionMetrics
 
 
 class CompletionModel(ABC, metaclass=ABCMeta):
+    """A generative AI model."""
+
     @abstractproperty
     def metrics(self) -> ModelMetrics:
+        """Get metrics for the model."""
         raise NotImplementedError
 
     @abstractmethod
     def load(self, text: str):
-        """Loads the model with a warm up system prompt."""
+        """Load the model with a warm up system prompt."""
         raise NotImplementedError
 
     @abstractmethod
     def complete(self, text: str) -> List[CompletionResponse]:
+        """Create a completion for given text."""
         raise NotImplementedError
 
     @abstractmethod
     def count_tokens(self, text: str) -> int:
+        """Count tokens for the given text."""
         raise NotImplementedError
 
 
 class EmbeddingModel(ABC, metaclass=ABCMeta):
+    """An embedding AI model."""
+
     @property
     @abstractmethod
     def dimensions(self) -> int:
+        """Count of dimensions supported by the model."""
         raise NotImplementedError
 
     @abstractmethod
     def embed(self, text: str) -> List[float]:
+        """Create an embedding for given text."""
         raise NotImplementedError
 
 
 def combine_metrics(usage_series: List[CompletionMetrics]) -> CompletionMetrics:
-    """Joins a series of completion metrics into one."""
+    """Join a series of completion metrics into one."""
     response_latency = 0
     response_tokens = 0
     for u in usage_series:

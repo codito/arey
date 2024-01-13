@@ -1,4 +1,4 @@
-# Configuration for myl
+"""Configuration for myl."""
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional, TypedDict
@@ -33,7 +33,7 @@ class ProfileConfig(TypedDict):
 
 @dataclass
 class ChatConfig:
-    """Configuration for chat mode"""
+    """Configuration for chat mode."""
 
     model: ModelConfig
     profile: ProfileConfig
@@ -42,7 +42,7 @@ class ChatConfig:
 
 @dataclass
 class Config:
-    """Myl Configuration"""
+    """Myl Configuration."""
 
     models: Dict[str, ModelConfig]
     profiles: Dict[str, ProfileConfig]
@@ -50,6 +50,7 @@ class Config:
 
     @classmethod
     def from_dict(cls, config: dict):
+        """Create a configuration from dictionary."""
         models = {
             key: ModelConfig(val["path"], val["template"], val.get("type", "llama2"))
             for key, val in config.get("models", {}).items()
@@ -86,7 +87,7 @@ def _get_config_dir():
 
 
 def get_config() -> Config:
-    """Gets the app configuration if available."""
+    """Get the app configuration if available."""
     if getattr(get_config, "config", None):
         return get_config.config
 

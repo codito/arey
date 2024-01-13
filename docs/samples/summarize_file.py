@@ -1,3 +1,4 @@
+"""Summarize sample script."""
 #!/usr/bin/env python
 import argparse
 import glob
@@ -21,6 +22,7 @@ def _convert_to_text(markdown: str):
 
 
 def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
+    """Summarize a markdown file and extract keywords."""
     console.print(f"[bold]> {path}")
     with open(path, "r+") as article:
         post = frontmatter.load(article)
@@ -56,6 +58,7 @@ def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
 
 
 def main(path: str, write: bool):
+    """Summarize sample entrypoint."""
     summarize_overrides = os.path.join(os.path.dirname(__file__), "summarize.yml")
     task, _ = create_task(summarize_overrides)
 

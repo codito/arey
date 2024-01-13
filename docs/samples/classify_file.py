@@ -1,3 +1,4 @@
+"""A classification sample script."""
 #!/usr/bin/env python
 import argparse
 import glob
@@ -14,6 +15,7 @@ console = Console()
 
 
 def classify_summary_keywords(task: Task, path: str, write: bool) -> None:
+    """Classify a text represented by summary and keywords into a category."""
     console.print(f"[bold]> {path}")
     with open(path, "r+") as article:
         post = frontmatter.load(article)
@@ -51,6 +53,7 @@ def classify_summary_keywords(task: Task, path: str, write: bool) -> None:
 
 
 def main(path: str, write: bool):
+    """Classify sample entrypoint."""
     classify_overrides = os.path.join(os.path.dirname(__file__), "classify.yml")
     task, _ = create_task(classify_overrides)
 

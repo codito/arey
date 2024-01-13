@@ -1,9 +1,7 @@
-# Console abstraction
+"""Console platform abstraction."""
 
 import io
-import readline
 import signal
-import sys
 from contextlib import contextmanager, redirect_stderr
 from functools import lru_cache
 from io import BytesIO, StringIO
@@ -26,26 +24,31 @@ theme = Theme(
 
 @lru_cache(maxsize=None)
 def get_console() -> Console:
+    """Get a console instance."""
     return Console(theme=theme)
 
 
 class SignalContextManager:
+    """Context manager for console signals."""
+
     def __init__(self, signal_num, handler):
+        """Create a signal context instance."""
         self.signal_num = signal_num
         self.handler = handler
         self.original_handler = None
 
     def __enter__(self):
+        """Context manager enter implementation."""
         self.original_handler = signal.signal(self.signal_num, self.handler)
 
     def __exit__(self, exc_type, exc_value, traceback):
+        """Context manager exit implementation."""
         signal.signal(self.signal_num, self.original_handler)
 
 
 @contextmanager
 def capture_stderr() -> Generator[StringIO | BytesIO | int | None, None, None]:
-    """A context manager that captures stderr for both python and
-    c-functions."""
+    """Capture stderr for both python and c-functions."""
     stderr = io.StringIO()
     with redirect_stderr(stderr) as err, pipes(
         stdout=0, stderr=stderr, encoding="utf-8"

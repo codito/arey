@@ -1,3 +1,4 @@
+"""Myl app cli entrypoint."""
 #!/usr/bin/env python
 import signal
 import sys
@@ -77,6 +78,7 @@ def _print_logs(console: Console, logs: Optional[str]) -> None:
 
 
 def task(args: List[str]) -> int:
+    """Command to execute a stateless task."""
     if len(args) < 1:
         raise ValueError("No instruction provided")
     instruction = args[0]
@@ -104,6 +106,7 @@ def task(args: List[str]) -> int:
 
 
 def chat(args: List[str]) -> int:
+    """Command to create a chat session with an AI model."""
     console = get_console()
     console.print(
         ("Welcome to myl chat! How can I help you today?" "\nType 'q' to exit.")
@@ -155,6 +158,7 @@ def chat(args: List[str]) -> int:
 
 
 def main(args: List[str] = sys.argv) -> int:
+    """Myl app entrypoint."""
     commands = {"chat": chat, "task": task}
     if len(args) < 2:
         print("Usage: {} <command>".format(args[0]))

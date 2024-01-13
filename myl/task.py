@@ -1,5 +1,7 @@
-# Services for the task command.
-# A task is stateless execution of a single instruction.
+"""Services for the task command.
+
+A task is stateless execution of a single instruction.
+"""
 import os
 from dataclasses import dataclass, field
 from typing import Iterator, Optional, Tuple
@@ -24,6 +26,8 @@ prompt_model = get_prompt(prompt_template)
 
 @dataclass
 class TaskResult:
+    """Result of a task execution."""
+
     response: str
     metrics: CompletionMetrics
     finish_reason: Optional[str]
@@ -32,11 +36,14 @@ class TaskResult:
 
 @dataclass
 class Task:
+    """A task is a stateless script invocation with a prompt."""
+
     prompt_overrides: dict = field(default_factory=dict)
     result: Optional[TaskResult] = None
 
 
 def create_task(prompt_file: Optional[str]) -> Tuple[Task, ModelMetrics]:
+    """Create a task with given prompt file."""
     token_overrides = (
         get_prompt_overrides(prompt_file).custom_tokens
         if prompt_file and os.path.exists(prompt_file)
@@ -50,6 +57,7 @@ def create_task(prompt_file: Optional[str]) -> Tuple[Task, ModelMetrics]:
 
 
 def run(task: Task, user_input: str) -> Iterator[str]:
+    """Run a task with user query."""
     context = {
         "user_query": user_input,
         "chat_history": "",

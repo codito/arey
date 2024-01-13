@@ -1,4 +1,4 @@
-# Llama based models
+"""Llama.cpp based models."""
 import dataclasses
 import os
 import time
@@ -11,6 +11,8 @@ from myl.ai import CompletionMetrics, CompletionModel, CompletionResponse, Model
 
 @dataclasses.dataclass
 class LlamaSettings:
+    """Core model settings."""
+
     n_threads: int
     n_ctx: int = 4096
     n_batch: int = 512
@@ -19,11 +21,17 @@ class LlamaSettings:
 
 
 class LlamaBaseModel(CompletionModel):
+    """Base local completion model.
+
+    Wraps over the llama-cpp library.
+    """
+
     context_size: int = 4096
     _model_settings: LlamaSettings
     _metrics: ModelMetrics
 
     def __init__(self, model_path: str, model_settings: dict = {}) -> None:
+        """Create an instance of local completion model."""
         self._llm = None
         self._model_path = model_path
         self._model_settings = LlamaSettings(**model_settings)
@@ -31,6 +39,7 @@ class LlamaBaseModel(CompletionModel):
 
     @property
     def metrics(self) -> ModelMetrics:
+        """Get metrics for model initialization."""
         return self._metrics
 
     def _get_model(self):
@@ -48,10 +57,12 @@ class LlamaBaseModel(CompletionModel):
         return self._llm
 
     def load(self, text: str):
+        """Load a model into memory."""
         model = self._get_model()
         model.eval(model.tokenize(text.encode("utf-8")))
 
     def complete(self, text: str, settings: dict = {}) -> Iterator[CompletionResponse]:
+        """Get a completion for the given text and settings."""
         prev_time = time.perf_counter()
         model = self._get_model()
         output = cast(
@@ -94,5 +105,6 @@ class LlamaBaseModel(CompletionModel):
             )
 
     def count_tokens(self, text: str) -> int:
+        """Get the token count for given text."""
         model = self._get_model()
         return len(model.tokenize(text.encode("utf-8")))
