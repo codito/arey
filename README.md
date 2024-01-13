@@ -49,6 +49,8 @@ If you've a GPU, try the following installation instead.
 - [ ] Download models and manage them
 - [ ] Release v0.1
 - [ ] Add [textfx](https://github.com/google/generative-ai-docs/tree/main/demos/palm/web/textfx)
+- [ ] Add offline knowledge bases and RAG. See
+      <https://library.kiwix.org/#lang=eng>
 
 ## License
 

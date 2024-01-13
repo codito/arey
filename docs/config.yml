@@ -16,6 +16,14 @@ models:
     path: ~/docs/models/mistral-openorca-7b/mistral-7b-openorca.Q5_K_M.gguf
     type: mistral
     template: chatml
+  openhermes-mistral-7b:
+    path: ~/docs/models/openhermes-2-mistral-7b/openhermes-2-mistral-7b.Q5_K_M.gguf
+    type: mistral
+    template: chatml
+  openhermes25-mistral-7b:
+    path: ~/docs/models/openhermes-25-mistral-7b/openhermes-2.5-mistral-7b.Q5_K_M.gguf
+    type: mistral
+    template: chatml
 
 profiles:
   # See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/
@@ -39,7 +47,7 @@ profiles:
     top_p: 0.18
 
 chat:
-  model: mistral-openorca-7b
+  model: openhermes25-mistral-7b
   profile: precise
   settings:
     n_threads: 11
@@ -48,5 +56,5 @@ task:
   model: mistral-openorca-7b
   profile: precise
   settings:
-    n_threads: 11
+    n_threads: 10
     n_gpu_layers: 20
