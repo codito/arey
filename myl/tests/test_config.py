@@ -11,6 +11,7 @@ from myl.config import get_config
 @pytest.fixture
 def config_file_empty(mocker: MockerFixture):
     mocker.patch("os.mkdir", return_value=None)
+    mocker.patch("os.path.exists", return_value=True)
     mock_file = mocker.mock_open(read_data="")
     return mock_file
 
