@@ -17,7 +17,8 @@ def config_file_empty(mocker: MockerFixture):
 
 
 @pytest.fixture
-def config_file_valid():
+def config_file_valid(mocker: MockerFixture):
+    mocker.patch("os.path.exists", return_value=True)
     with open("docs/config.yml", "r") as f:
         return f.read()
 
