@@ -4,7 +4,7 @@ import io
 import signal
 from contextlib import contextmanager, redirect_stderr
 from functools import lru_cache
-from io import BytesIO, StringIO
+from io import StringIO
 from typing import Generator
 
 from rich.console import Console
@@ -47,7 +47,7 @@ class SignalContextManager:
 
 
 @contextmanager
-def capture_stderr() -> Generator[StringIO | BytesIO | int | None, None, None]:
+def capture_stderr() -> Generator[StringIO, None, None]:
     """Capture stderr for both python and c-functions."""
     stderr = io.StringIO()
     with redirect_stderr(stderr) as err, pipes(

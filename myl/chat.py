@@ -6,7 +6,7 @@ from myl.config import get_config
 from myl.model import Chat, Message, MessageContext, SenderType
 from myl.platform.console import capture_stderr
 from myl.platform.llama import LlamaBaseModel
-from myl.prompts import Prompt, get_prompt
+from myl.prompt import Prompt, get_prompt
 
 config = get_config()
 model_path = config.chat.model.path

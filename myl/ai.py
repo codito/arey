@@ -1,7 +1,7 @@
 """Models for AI."""
 from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional, Iterator, List
 
 
 @dataclass
@@ -58,7 +58,7 @@ class CompletionModel(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def complete(self, text: str) -> List[CompletionResponse]:
+    def complete(self, text: str) -> Iterator[CompletionResponse]:
         """Create a completion for given text."""
         raise NotImplementedError
 

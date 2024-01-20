@@ -1,0 +1,30 @@
+# Prompt template for Magicoder
+
+name: magicoder
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    prompt_prefix: >-
+      You are an exceptionally intelligent coding assistant that consistently
+      delivers accurate and reliable responses to user instructions.
+roles:
+  ai:
+    message: >-
+      \n\n@@ Response\n$message_text
+  user:
+    message: >-
+      \n\n@@ Instruction\n$message_text
+  system:
+    message: >-
+      $prompt_prefix
+stop_words:
+  - "@@ Instruction"
+prompts:
+  chat: >-
+    $prompt_prefix$chat_history\n\n@@ Instruction:\n$user_query\n\n@@ Response\n
+  task: >-
+    $prompt_prefix\n\n@@ Instruction\n$user_query\n\n@@ Response\n

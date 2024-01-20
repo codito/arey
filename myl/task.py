@@ -10,7 +10,7 @@ from myl.ai import CompletionMetrics, ModelMetrics, combine_metrics
 from myl.config import get_config
 from myl.platform.console import capture_stderr
 from myl.platform.llama import LlamaBaseModel
-from myl.prompts import get_prompt, get_prompt_overrides
+from myl.prompt import get_prompt, get_prompt_overrides
 
 config = get_config()
 model_path = config.chat.model.path

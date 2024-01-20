@@ -1,8 +1,9 @@
 """Myl app cli entrypoint."""
 #!/usr/bin/env python
+import click
 import signal
-import sys
-from typing import Callable, Iterable, List, Optional
+import datetime
+from typing import Callable, Iterable, Optional
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -11,10 +12,13 @@ from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
+from watchfiles import watch
+
 from myl.ai import CompletionMetrics
 from myl.chat import create_chat, get_completion_metrics, stream_response
 from myl.platform.console import SignalContextManager, get_console
 from myl.task import create_task, run
+from myl.play import get_play_file, get_play_response, load_play_model
 
 
 def _generate_response(
@@ -73,17 +77,67 @@ def _print_logs(console: Console, logs: Optional[str]) -> None:
     if not logs:
         return
     console.print()
-    # console.print(logs)
+    console.print(logs)
     console.print()
 
 
-def task(args: List[str]) -> int:
-    """Command to execute a stateless task."""
-    if len(args) < 1:
-        raise ValueError("No instruction provided")
-    instruction = args[0]
-    overrides_file = args[1] if len(args) > 1 else None
+@click.command("play")
+@click.argument("file", required=False)
+@click.option(
+    "--no-watch",
+    is_flag=True,
+    default=False,
+    help="Watch the play file and regenerate response on save.",
+)
+def play(file: str, no_watch: bool) -> int:
+    """Watch FILE for model, prompt and generate response on edit.
 
+    If FILE is not provided, a temporary file is created for edit.
+    """
+    console = get_console()
+    console.print()
+    console.print("Welcome to myl play!")
+    console.print()
+
+    play_file = get_play_file(file)
+
+    def run_play_file():
+        file_path = file or play_file.file_path
+        current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        console.print()
+        console.rule(current_date)
+        play_file_mod = get_play_file(file_path)
+        with console.status("[message_footer]Loading model..."):
+            model_metrics = load_play_model(play_file_mod)
+            footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
+            console.print(footer, style="message_footer")
+            console.print()
+
+        _generate_response(
+            console,
+            lambda: get_play_response(play_file_mod),
+            lambda: (play_file_mod.result and play_file_mod.result.metrics),
+        )
+
+        _print_logs(console, play_file.result and play_file.result.logs)
+
+    if no_watch:
+        run_play_file()
+        return 0
+
+    console.print(f"Watching `{play_file.file_path}` for changes...")
+    for _ in watch(play_file.file_path):
+        run_play_file()
+        console.print()
+        console.print(f"Watching `{play_file.file_path}` for changes...")
+    return 0
+
+
+@click.command("task")
+@click.argument("instruction", nargs=-1)
+@click.option("-o", "--overrides-file", type=click.File())
+def task(instruction: str, overrides_file: str) -> int:
+    """Run an instruction and generate response."""
     console = get_console()
     console.print()
     console.print("Welcome to myl task!")
@@ -105,12 +159,11 @@ def task(args: List[str]) -> int:
     return 0
 
 
-def chat(args: List[str]) -> int:
-    """Command to create a chat session with an AI model."""
+@click.command("chat")
+def chat() -> int:
+    """Chat with an AI model."""
     console = get_console()
-    console.print(
-        ("Welcome to myl chat! How can I help you today?" "\nType 'q' to exit.")
-    )
+    console.print(("Welcome to myl chat!\nType 'q' to exit."))
     console.print()
 
     with console.status("[message_footer]Loading model..."):
@@ -119,6 +172,7 @@ def chat(args: List[str]) -> int:
         console.print(footer, style="message_footer")
         console.print()
 
+    console.print("How can I help you today?")
     while True:
         # Get input from user
         # Workaround for https://github.com/Textualize/rich/issues/2293
@@ -157,17 +211,15 @@ def chat(args: List[str]) -> int:
     return 0
 
 
-def main(args: List[str] = sys.argv) -> int:
-    """Myl app entrypoint."""
-    commands = {"chat": chat, "task": task}
-    if len(args) < 2:
-        print("Usage: {} <command>".format(args[0]))
-        print("Supported commands: {}".format(", ".join(commands.keys())))
-        return 1
+@click.group()
+def main():
+    """Myl - a simple large language model app."""
+    pass
 
-    command = args[1]
-    return commands[command](args[2:])
 
+main.add_command(chat)
+main.add_command(task)
+main.add_command(play)
 
 if __name__ == "__main__":
     main()

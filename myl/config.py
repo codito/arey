@@ -72,13 +72,6 @@ def _make_dir(path: str) -> None:
         os.mkdir(path)
 
 
-def _get_data_dir():
-    base_dir = os.environ.get("XDG_DATA_HOME")
-    data_dir = os.path.join(base_dir, "myl") if base_dir else DEFAULT_DATA_DIR
-    _make_dir(data_dir)
-    return data_dir
-
-
 def _get_config_dir():
     base_dir = os.environ.get("XDG_CONFIG_HOME")
     config_dir = os.path.join(base_dir, "myl") if base_dir else DEFAULT_CONFIG_DIR
@@ -100,3 +93,28 @@ def get_config() -> Config:
             except Exception as _:
                 raise
     raise Exception(f"No config found at '{config_file}'. Please run `myl setup`.")
+
+
+def get_asset_dir(suffix: str = "") -> str:
+    """Get path of the assets directory.
+
+    params:
+        suffix (str): suffix directory name to append
+    """
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    return os.path.join(dir_path, "data", suffix)
+
+
+def get_asset_path(asset_name: str) -> str:
+    """Get the full path to included asset.
+
+    params:
+        asset_name (str): relative path to the asset. E.g., prompts/alpaca.yml
+    """
+    dir_path = get_asset_dir()
+    file_path = os.path.join(dir_path, asset_name)
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(
+            f"Asset file {asset_name} not found. Resolved path: {file_path}"
+        )
+    return file_path

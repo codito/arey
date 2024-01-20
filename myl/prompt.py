@@ -7,6 +7,8 @@ from typing import Dict, List, Literal
 
 import yaml
 
+from myl.config import get_asset_dir
+
 SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
 
@@ -101,7 +103,7 @@ class Prompt:
 def _get_oob_prompts() -> Dict[str, Prompt]:
     # get list of yml files in myl/prompts
     result: Dict[str, Prompt] = {}
-    dir_path = os.path.dirname(os.path.realpath(__file__))
+    dir_path = get_asset_dir("prompts")
     for file_path in os.listdir(dir_path):
         if not file_path.endswith(".yml"):
             continue

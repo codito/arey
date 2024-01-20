@@ -6,25 +6,35 @@ build-backend = "setuptools.build_meta"
 name = "myl"
 version = "0.0.1"
 dependencies = [
+    "click",
     "llama-cpp-python",
+    "markdown",
+    "python-frontmatter",
     "pyyaml",
     "rich",
-    "wurlitzer"
+    "watchfiles",
+    "wurlitzer",
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 
 [project.optional-dependencies]
 test = ["pre-commit", "pytest", "pytest-mock", "pytest-cov", "ruff"]
-samples = ["beautifulsoup4", "lxml", "markdown", "python-frontmatter"]
+samples = ["beautifulsoup4", "lxml"]
 
 [project.scripts]
 myl = "myl.main:main"
 
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.package-data]
+"myl" = ["**/*.yml", "**/*.md"]
+
 [tool.setuptools.packages.find]
-where = ["."]  # ["."] by default
-include = ["myl*"]  # ["*"] by default
-exclude = ["myl.tests*"]  # empty by default
-namespaces = false  # true by default
+where = ["."]           # ["."] by default
+include = ["myl*"]      # ["*"] by default
+exclude = ["myl*tests"] # empty by default
+namespaces = false      # true by default
 
 [tool.coverage.run]
 omit = []
@@ -37,19 +47,10 @@ addopts = "--cov=myl --cov-report=term-missing --quiet"
 
 [tool.ruff]
 exclude = [".venv", "venv"]
-ignore = []
+ignore = ["D203", "D212"]
 line-length = 88
-select = [
-    "D",
-    "E",
-    "F",
-    "W",
-]
+select = ["D", "E", "F", "W"]
 
 [tool.ruff.per-file-ignores]
-"myl/tests/**/*.py" = [
-    "D101",
-    "D102",
-    "D103"
-]
+"myl/tests/**/*.py" = ["D101", "D102", "D103"]
 "**/*.py" = ["F405", "D203", "D213"]

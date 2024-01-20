@@ -172,3 +172,4 @@ pyrightconfig.json
 
 extract.py
 data/
+!myl/data/
