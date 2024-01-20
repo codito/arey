@@ -1,0 +1,30 @@
+# Prompt template for Alpaca
+
+name: alpaca
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    prompt_prefix: >-
+      Below is an instruction that describes a task. Write a response that
+      appropriately completes the request
+roles:
+  ai:
+    message: >-
+      \n\n### Response:\n\n$message_text
+  user:
+    message: >-
+      \n\n### Instruction:\n\n$message_text
+  system:
+    message: >-
+      $prompt_prefix
+stop_words:
+  - "### Instruction:"
+prompts:
+  chat: >-
+    $prompt_prefix$chat_history\n\n### Instruction:\n\n$user_query\n\n### Response:\n\n
+  task: >-
+    $prompt_prefix\n\n### Instruction:\n\n$user_query\n\n### Response:\n\n
