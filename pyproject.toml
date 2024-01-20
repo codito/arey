@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "myl"
+name = "aye"
 version = "0.0.1"
 dependencies = [
     "click",
@@ -22,18 +22,18 @@ test = ["pre-commit", "pytest", "pytest-mock", "pytest-cov", "ruff"]
 samples = ["beautifulsoup4", "lxml"]
 
 [project.scripts]
-myl = "myl.main:main"
+aye = "aye.main:main"
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.package-data]
-"myl" = ["**/*.yml", "**/*.md"]
+"aye" = ["**/*.yml", "**/*.md"]
 
 [tool.setuptools.packages.find]
 where = ["."]           # ["."] by default
-include = ["myl*"]      # ["*"] by default
-exclude = ["myl*tests"] # empty by default
+include = ["aye*"]      # ["*"] by default
+exclude = ["aye*tests"] # empty by default
 namespaces = false      # true by default
 
 [tool.coverage.run]
@@ -43,7 +43,7 @@ omit = []
 show_missing = "true"
 
 [tool.pytest.ini_options]
-addopts = "--cov=myl --cov-report=term-missing --quiet"
+addopts = "--cov=aye --cov-report=term-missing --quiet"
 
 [tool.ruff]
 exclude = [".venv", "venv"]
@@ -52,5 +52,5 @@ line-length = 88
 select = ["D", "E", "F", "W"]
 
 [tool.ruff.per-file-ignores]
-"myl/tests/**/*.py" = ["D101", "D102", "D103"]
+"aye/tests/**/*.py" = ["D101", "D102", "D103"]
 "**/*.py" = ["F405", "D203", "D213"]

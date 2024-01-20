@@ -5,7 +5,7 @@ from unittest.mock import mock_open
 import pytest
 from pytest_mock import MockerFixture
 
-from myl.config import get_config
+from aye.config import get_config
 
 
 @pytest.fixture

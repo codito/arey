@@ -6,11 +6,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Iterator, Optional, Tuple
 
-from myl.ai import CompletionMetrics, ModelMetrics, combine_metrics
-from myl.config import get_config
-from myl.platform.console import capture_stderr
-from myl.platform.llama import LlamaBaseModel
-from myl.prompt import get_prompt, get_prompt_overrides
+from aye.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from aye.config import get_config
+from aye.platform.console import capture_stderr
+from aye.platform.llama import LlamaBaseModel
+from aye.prompt import get_prompt, get_prompt_overrides
 
 config = get_config()
 model_path = config.chat.model.path

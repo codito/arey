@@ -8,10 +8,10 @@ import os
 import tempfile
 import frontmatter
 from functools import lru_cache
-from myl.ai import CompletionMetrics, ModelMetrics, combine_metrics
-from myl.config import ModelConfig, get_config, get_asset_path
-from myl.platform.llama import LlamaBaseModel
-from myl.platform.console import capture_stderr
+from aye.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from aye.config import ModelConfig, get_config, get_asset_path
+from aye.platform.llama import LlamaBaseModel
+from aye.platform.console import capture_stderr
 from typing import Dict, Optional, Iterator
 
 
@@ -57,7 +57,7 @@ def _create_file_if_not_exists(play_file_path: str) -> str:
         return play_file_path
 
     with tempfile.NamedTemporaryFile(
-        mode="w+b", prefix="myl_play", suffix=".md", delete=False
+        mode="w+b", prefix="aye_play", suffix=".md", delete=False
     ) as file:
         file.write(_get_default_play_file().encode())
         return file.name

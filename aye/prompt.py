@@ -7,7 +7,7 @@ from typing import Dict, List, Literal
 
 import yaml
 
-from myl.config import get_asset_dir
+from aye.config import get_asset_dir
 
 SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
@@ -101,7 +101,7 @@ class Prompt:
 
 @lru_cache(maxsize=1)
 def _get_oob_prompts() -> Dict[str, Prompt]:
-    # get list of yml files in myl/prompts
+    # get list of yml files in aye/prompts
     result: Dict[str, Prompt] = {}
     dir_path = get_asset_dir("prompts")
     for file_path in os.listdir(dir_path):

@@ -6,7 +6,7 @@ from typing import Iterator, cast
 
 import llama_cpp
 
-from myl.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
+from aye.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
 
 
 @dataclasses.dataclass

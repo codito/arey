@@ -1,12 +1,12 @@
 """Services for the chat command."""
 from typing import Iterator, Optional, Tuple
 
-from myl.ai import CompletionMetrics, ModelMetrics, combine_metrics
-from myl.config import get_config
-from myl.model import Chat, Message, MessageContext, SenderType
-from myl.platform.console import capture_stderr
-from myl.platform.llama import LlamaBaseModel
-from myl.prompt import Prompt, get_prompt
+from aye.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from aye.config import get_config
+from aye.model import Chat, Message, MessageContext, SenderType
+from aye.platform.console import capture_stderr
+from aye.platform.llama import LlamaBaseModel
+from aye.prompt import Prompt, get_prompt
 
 config = get_config()
 model_path = config.chat.model.path

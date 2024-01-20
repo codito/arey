@@ -1,9 +1,9 @@
-"""Core data structures for the myl app."""
+"""Core data structures for the aye app."""
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-from myl.ai import CompletionMetrics, ModelMetrics
+from aye.ai import CompletionMetrics, ModelMetrics
 
 
 class SenderType(Enum):

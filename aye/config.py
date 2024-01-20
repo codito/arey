@@ -1,4 +1,4 @@
-"""Configuration for myl."""
+"""Configuration for aye."""
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional, TypedDict
@@ -6,10 +6,10 @@ from typing import Dict, Optional, TypedDict
 import yaml
 
 DEFAULT_DATA_DIR = os.path.expanduser(
-    "~/.local/share/myl" if os.name == "posix" else "~/.myl"
+    "~/.local/share/aye" if os.name == "posix" else "~/.aye"
 )
 DEFAULT_CONFIG_DIR = os.path.expanduser(
-    "~/.config/myl" if os.name == "posix" else "~/.myl"
+    "~/.config/aye" if os.name == "posix" else "~/.aye"
 )
 
 
@@ -74,7 +74,7 @@ def _make_dir(path: str) -> None:
 
 def _get_config_dir():
     base_dir = os.environ.get("XDG_CONFIG_HOME")
-    config_dir = os.path.join(base_dir, "myl") if base_dir else DEFAULT_CONFIG_DIR
+    config_dir = os.path.join(base_dir, "aye") if base_dir else DEFAULT_CONFIG_DIR
     _make_dir(config_dir)
     return config_dir
 
@@ -84,7 +84,7 @@ def get_config() -> Config:
     if getattr(get_config, "config", None):
         return get_config.config
 
-    config_file = os.path.join(_get_config_dir(), "myl.yml")
+    config_file = os.path.join(_get_config_dir(), "aye.yml")
     if os.path.exists(config_file):
         with open(config_file, "r") as f:
             try:
@@ -92,7 +92,7 @@ def get_config() -> Config:
                 return get_config.config
             except Exception as _:
                 raise
-    raise Exception(f"No config found at '{config_file}'. Please run `myl setup`.")
+    raise Exception(f"No config found at '{config_file}'. Please run `aye setup`.")
 
 
 def get_asset_dir(suffix: str = "") -> str:

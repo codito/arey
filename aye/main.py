@@ -14,11 +14,11 @@ from rich.text import Text
 
 from watchfiles import watch
 
-from myl.ai import CompletionMetrics
-from myl.chat import create_chat, get_completion_metrics, stream_response
-from myl.platform.console import SignalContextManager, get_console
-from myl.task import create_task, run
-from myl.play import get_play_file, get_play_response, load_play_model
+from aye.ai import CompletionMetrics
+from aye.chat import create_chat, get_completion_metrics, stream_response
+from aye.platform.console import SignalContextManager, get_console
+from aye.task import create_task, run
+from aye.play import get_play_file, get_play_response, load_play_model
 
 
 def _generate_response(
@@ -96,7 +96,7 @@ def play(file: str, no_watch: bool) -> int:
     """
     console = get_console()
     console.print()
-    console.print("Welcome to myl play!")
+    console.print("Welcome to aye play!")
     console.print()
 
     play_file = get_play_file(file)
@@ -140,7 +140,7 @@ def task(instruction: str, overrides_file: str) -> int:
     """Run an instruction and generate response."""
     console = get_console()
     console.print()
-    console.print("Welcome to myl task!")
+    console.print("Welcome to aye task!")
     console.print()
 
     with console.status("[message_footer]Loading model..."):
@@ -163,7 +163,7 @@ def task(instruction: str, overrides_file: str) -> int:
 def chat() -> int:
     """Chat with an AI model."""
     console = get_console()
-    console.print(("Welcome to myl chat!\nType 'q' to exit."))
+    console.print(("Welcome to aye chat!\nType 'q' to exit."))
     console.print()
 
     with console.status("[message_footer]Loading model..."):
