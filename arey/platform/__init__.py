@@ -1,0 +1,1 @@
+"""Arey platform."""
