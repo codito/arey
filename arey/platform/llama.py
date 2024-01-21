@@ -7,8 +7,8 @@ from typing import Iterator, cast
 
 import llama_cpp
 
-from aye.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
-from aye.model import AyeError
+from arey.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
+from arey.model import AreyError
 
 
 @dataclasses.dataclass
@@ -18,7 +18,7 @@ class LlamaSettings:
     n_threads: int = max(multiprocessing.cpu_count() // 2, 1)
     n_ctx: int = 4096
     n_batch: int = 512
-    n_gpu_layers: int = 0
+    n_gpu_lareyrs: int = 0
     verbose: bool = True
 
 
@@ -47,7 +47,7 @@ class LlamaBaseModel(CompletionModel):
     def _get_model(self):
         model_path = os.path.join(os.path.expanduser(self._model_path))
         if not os.path.exists(model_path):
-            raise AyeError(
+            raise AreyError(
                 "system",
                 f"Invalid model path: {model_path}.",
             )

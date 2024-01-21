@@ -8,12 +8,12 @@ import os
 import tempfile
 import frontmatter
 from functools import lru_cache
-from aye.ai import CompletionMetrics, ModelMetrics, combine_metrics
-from aye.config import ModelConfig, get_config
-from aye.model import AyeError
-from aye.platform.assets import get_asset_path
-from aye.platform.llama import LlamaBaseModel
-from aye.platform.console import capture_stderr
+from arey.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from arey.config import ModelConfig, get_config
+from arey.model import AreyError
+from arey.platform.assets import get_asset_path
+from arey.platform.llama import LlamaBaseModel
+from arey.platform.console import capture_stderr
 from typing import Dict, Optional, Iterator
 
 
@@ -59,7 +59,7 @@ def _create_file_if_not_exists(play_file_path: str) -> str:
         return play_file_path
 
     with tempfile.NamedTemporaryFile(
-        mode="w+b", prefix="aye_play", suffix=".md", delete=False
+        mode="w+b", prefix="arey_play", suffix=".md", delete=False
     ) as file:
         file.write(_get_default_play_file().encode())
         return file.name
@@ -100,7 +100,7 @@ def get_play_response(play_file: PlayFile) -> Iterator[str]:
     """Run a task with user query."""
     model = play_file.model
     if not model:
-        raise AyeError("system", "Model is empty.")
+        raise AreyError("system", "Model is empty.")
 
     completion_settings = play_file.completion_profile
     prompt = play_file.prompt

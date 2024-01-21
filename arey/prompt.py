@@ -7,8 +7,8 @@ from typing import Dict, List, Literal
 
 import yaml
 
-from aye.platform.assets import get_asset_dir
-from aye.model import AyeError
+from arey.platform.assets import get_asset_dir
+from arey.model import AreyError
 
 SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
@@ -33,7 +33,7 @@ class Prompt:
         content = yaml.safe_load(yml) or {}
         name = content.get("name", "")
         if not name:
-            raise AyeError(
+            raise AreyError(
                 "template", "`name` element in the prompt template is " "required."
             )
 
@@ -45,7 +45,7 @@ class Prompt:
 
         prompts = content.get("prompts", {})
         if not prompts.get("chat") or not prompts.get("task"):
-            raise AyeError(
+            raise AreyError(
                 "template",
                 "`prompts` element in the prompt template is required."
                 " It must define `chat` and `task` prompt formats.",
@@ -58,7 +58,7 @@ class Prompt:
             or not roles.get("user")
             or not roles.get("system")
         ):
-            raise AyeError(
+            raise AreyError(
                 "template", "`roles` element in the prompt template is required."
             )
         message_formats = {
@@ -77,13 +77,13 @@ class Prompt:
         content = yaml.safe_load(yml) or {}
         name = content.get("name", "")
         if not name:
-            raise AyeError(
+            raise AreyError(
                 "template", "`name` element in the prompt template is required."
             )
 
         prompt_type = content.get("type", "")
         if not prompt_type:
-            raise AyeError(
+            raise AreyError(
                 "template", "`type` element in the prompt template is required."
             )
 
@@ -111,7 +111,7 @@ class Prompt:
 
 @lru_cache(maxsize=1)
 def _get_oob_prompts() -> Dict[str, Prompt]:
-    # get list of yml files in aye/prompts
+    # get list of yml files in arey/prompts
     result: Dict[str, Prompt] = {}
     dir_path = get_asset_dir("prompts")
     for file_path in os.listdir(dir_path):

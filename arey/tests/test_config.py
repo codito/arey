@@ -4,8 +4,8 @@ import os
 import pytest
 from pytest_mock import MockerFixture
 
-from aye.config import get_config
-from aye.platform.assets import get_config_dir
+from arey.config import get_config
+from arey.platform.assets import get_config_dir
 
 
 @pytest.skip(allow_module_level=True)
@@ -20,13 +20,13 @@ def config_file_empty(mocker: MockerFixture):
 @pytest.fixture
 def config_file_valid(mocker: MockerFixture):
     mocker.patch("os.path.exists", return_value=True)
-    with open("aye/data/config.yml", "r") as f:
+    with open("arey/data/config.yml", "r") as f:
         return f.read()
 
 
 @pytest.fixture
 def template_file_valid(mocker: MockerFixture):
-    with open("aye/data/prompts/chatml.yml", "r") as f:
+    with open("arey/data/prompts/chatml.yml", "r") as f:
         return f.read()
 
 
@@ -49,7 +49,7 @@ def test_get_config_creates_default_config_file(
     def fake_open(*args, **kwargs):
         global mock_config_open
         print(args)
-        if args[0].endswith("aye.yml"):
+        if args[0].endswith("arey.yml"):
             mock_config_open = mocker.mock_open(read_data=config_file_valid)
             return mock_config_open()
         return mocker.mock_open(read_data=template_file_valid)()
@@ -59,14 +59,14 @@ def test_get_config_creates_default_config_file(
     get_config()
 
     config_dir = get_config_dir()
-    mock_config_open.assert_called_once_with(os.path.join(config_dir, "aye.yml"), "w")
+    mock_config_open.assert_called_once_with(os.path.join(config_dir, "arey.yml"), "w")
 
 
 def test_get_config_return_config_for_valid_schema(
     mocker: MockerFixture, config_file_valid, template_file_valid
 ):
     def fake_open(*args, **kwargs):
-        if args[0].endswith("aye.yml"):
+        if args[0].endswith("arey.yml"):
             return mocker.mock_open(read_data=config_file_valid)()
         return mocker.mock_open(read_data=template_file_valid)()
 

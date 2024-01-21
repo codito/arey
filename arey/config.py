@@ -1,12 +1,12 @@
-"""Configuration for aye."""
+"""Configuration for arey."""
 import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional, TypedDict, Tuple, Union, cast
 
 import yaml
 
-from aye.model import AyeError
-from aye.platform.assets import get_config_dir, get_default_config
+from arey.model import AreyError
+from arey.platform.assets import get_config_dir, get_default_config
 
 
 @dataclass
@@ -49,7 +49,7 @@ class TaskConfig:
 
 @dataclass
 class Config:
-    """Aye Configuration."""
+    """Arey Configuration."""
 
     models: Dict[str, ModelConfig]
     profiles: Dict[str, ProfileConfig]
@@ -59,7 +59,7 @@ class Config:
     @classmethod
     def from_dict(cls, config: dict):
         """Create a configuration from dictionary."""
-        from aye.prompt import has_prompt
+        from arey.prompt import has_prompt
 
         models = {
             key: ModelConfig(val["path"], val["template"], val.get("type", "llama2"))
@@ -76,24 +76,24 @@ class Config:
         }
 
         if "chat" not in config or "task" not in config:
-            raise AyeError(
+            raise AreyError(
                 "config", "`chat` and `task` sections are not available in config file."
             )
 
         def _get_config(key: str) -> Union[ChatConfig, TaskConfig]:
             model_name = config[key].get("model", None)
             if not model_name or model_name not in models:
-                raise AyeError(
+                raise AreyError(
                     "config", f"Section '{key}' must have valid `model` entry."
                 )
             model = models[model_name]
             model.path = os.path.expanduser(model.path) if model.path else model.path
             if not os.path.exists(model.path):
-                raise AyeError(
+                raise AreyError(
                     "config", f"Model '{model_name}' has invalid path: {model.path}."
                 )
             if not has_prompt(model.template):
-                raise AyeError(
+                raise AreyError(
                     "config",
                     f"Model '{model_name}' has invalid template: {model.template}.",
                 )
@@ -113,7 +113,7 @@ class Config:
 
 def create_or_get_config_file() -> Tuple[bool, str]:
     """Get config file path if exists, create a default otherwise."""
-    config_file = os.path.join(get_config_dir(), "aye.yml")
+    config_file = os.path.join(get_config_dir(), "arey.yml")
     if os.path.exists(config_file):
         return (True, config_file)
 

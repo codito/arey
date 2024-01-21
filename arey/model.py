@@ -1,9 +1,9 @@
-"""Core data structures for the aye app."""
+"""Core data structures for the arey app."""
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Union, Literal
 
-from aye.ai import CompletionMetrics, ModelMetrics
+from arey.ai import CompletionMetrics, ModelMetrics
 
 
 class SenderType(Enum):
@@ -50,8 +50,8 @@ class Chat:
     context: ChatContext = field(default_factory=ChatContext)
 
 
-class AyeError(Exception):
-    """Error in Aye execution."""
+class AreyError(Exception):
+    """Error in Arey execution."""
 
     category: Union[Literal["config"], Literal["template"], Literal["system"]]
     message: str
@@ -61,7 +61,7 @@ class AyeError(Exception):
         category: Union[Literal["config"], Literal["template"], Literal["system"]],
         message: str,
     ):
-        """Create an instance of AyeError with category and message."""
+        """Create an instance of AreyError with category and message."""
         self.category = category
         self.message = message
         super().__init__(message)

@@ -1,12 +1,12 @@
-"""Abstraction for various data and config assets in Aye."""
+"""Abstraction for various data and config assets in Arey."""
 import os
 
 
 DEFAULT_DATA_DIR = os.path.expanduser(
-    "~/.local/share/aye" if os.name == "posix" else "~/.aye"
+    "~/.local/share/arey" if os.name == "posix" else "~/.arey"
 )
 DEFAULT_CONFIG_DIR = os.path.expanduser(
-    "~/.config/aye" if os.name == "posix" else "~/.aye"
+    "~/.config/arey" if os.name == "posix" else "~/.arey"
 )
 
 
@@ -41,9 +41,9 @@ def get_asset_path(asset_name: str) -> str:
 
 
 def get_config_dir():
-    """Get aye config dir."""
+    """Get arey config dir."""
     base_dir = os.environ.get("XDG_CONFIG_HOME")
-    config_dir = os.path.join(base_dir, "aye") if base_dir else DEFAULT_CONFIG_DIR
+    config_dir = os.path.join(base_dir, "arey") if base_dir else DEFAULT_CONFIG_DIR
     _make_dir(config_dir)
     return config_dir
 

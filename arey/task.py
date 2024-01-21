@@ -6,11 +6,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Iterator, Optional, Tuple
 
-from aye.ai import CompletionMetrics, ModelMetrics, combine_metrics
-from aye.config import get_config
-from aye.platform.console import capture_stderr
-from aye.platform.llama import LlamaBaseModel
-from aye.prompt import get_prompt, get_prompt_overrides
+from arey.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from arey.config import get_config
+from arey.platform.console import capture_stderr
+from arey.platform.llama import LlamaBaseModel
+from arey.prompt import get_prompt, get_prompt_overrides
 
 config = get_config()
 model_path = config.chat.model.path

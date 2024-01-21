@@ -1,4 +1,4 @@
-"""Aye app cli entrypoint."""
+"""Arey app cli entrypoint."""
 #!/usr/bin/env python
 import click
 import signal
@@ -15,9 +15,9 @@ from rich.text import Text
 
 from watchfiles import watch
 
-from aye.ai import CompletionMetrics
-from aye.model import AyeError
-from aye.platform.console import SignalContextManager, get_console
+from arey.ai import CompletionMetrics
+from arey.model import AreyError
+from arey.platform.console import SignalContextManager, get_console
 
 
 def _generate_response(
@@ -81,18 +81,18 @@ def _print_logs(console: Console, verbose: bool, logs: Optional[str]) -> None:
 
 
 def error_handler(func):
-    """Global error handler for Aye."""
+    """Global error handler for Arey."""
 
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except AyeError as e:
+        except AreyError as e:
             console = get_console()
             help_text: str = (
                 "Ouch! This appears to be a bug. Do you mind "
                 "connecting with us at "
-                "<https://github.com/codito/aye/issues/new>"
+                "<https://github.com/codito/arey/issues/new>"
             )
 
             match e.category:
@@ -118,13 +118,13 @@ def error_handler(func):
 @error_handler
 def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
     """Run an instruction and generate response."""
-    from aye.task import create_task, run
+    from arey.task import create_task, run
 
     verbose = ctx.obj["VERBOSE"]
 
     console = get_console()
     console.print()
-    console.print("Welcome to aye task!")
+    console.print("Welcome to arey task!")
     console.print()
 
     with console.status("[message_footer]Loading model..."):
@@ -148,12 +148,12 @@ def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
 @error_handler
 def chat(ctx: click.Context) -> int:
     """Chat with an AI model."""
-    from aye.chat import create_chat, get_completion_metrics, stream_response
+    from arey.chat import create_chat, get_completion_metrics, stream_response
 
     verbose = ctx.obj["VERBOSE"]
 
     console = get_console()
-    console.print(("Welcome to aye chat!\nType 'q' to exit."))
+    console.print(("Welcome to arey chat!\nType 'q' to exit."))
     console.print()
 
     with console.status("[message_footer]Loading model..."):
@@ -217,14 +217,14 @@ def play(ctx: click.Context, file: str, no_watch: bool) -> int:
 
     If FILE is not provided, a temporary file is created for edit.
     """
-    from aye.play import get_play_file, get_play_response, load_play_model
+    from arey.play import get_play_file, get_play_response, load_play_model
 
     verbose = ctx.obj["VERBOSE"]
 
     console = get_console()
     console.print()
     console.print(
-        "Welcome to aye play! Edit the play file below in your favorite editor "
+        "Welcome to arey play! Edit the play file below in your favorite editor "
         "and I'll generate a response for you. Use `Ctrl+C` to abort play session."
     )
     console.print()
@@ -267,7 +267,7 @@ def play(ctx: click.Context, file: str, no_watch: bool) -> int:
 @click.option("-v", "--verbose", default=False, help="Show verbose logs.")
 @click.pass_context
 def main(ctx: click.Context, verbose: bool):
-    """Aye - a simple large language model app."""
+    """Arey - a simple large language model app."""
     ctx.ensure_object(dict)
     ctx.obj["VERBOSE"] = verbose
     pass

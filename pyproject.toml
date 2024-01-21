@@ -3,8 +3,11 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aye"
+name = "arey"
 version = "0.0.1"
+requires-python = '>=3.10'
+description = 'Simple large language model app.'
+authors = [{ name = 'codito', email = 'codito@codito.in' }]
 dependencies = [
     "click",
     "llama-cpp-python",
@@ -15,6 +18,27 @@ dependencies = [
     "watchfiles",
     "wurlitzer",
 ]
+classifiers = [
+    'Development Status :: 2 - Pre-Alpha',
+    'Environment :: Console',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3 :: Only',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Intended Audience :: Developers',
+    'Intended Audience :: Information Technology',
+    'License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication',
+    'Operating System :: POSIX :: Linux',
+    'Operating System :: Microsoft :: Windows',
+    'Operating System :: MacOS',
+    'Topic :: Communications :: Chat',
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    'Topic :: Terminals',
+    'Topic :: Utilities',
+    'Topic :: Text Processing :: Markup :: Markdown',
+]
 readme = { file = "README.md", content-type = "text/markdown" }
 
 [project.optional-dependencies]
@@ -22,19 +46,25 @@ test = ["pre-commit", "pytest", "pytest-mock", "pytest-cov", "ruff"]
 samples = ["beautifulsoup4", "lxml"]
 
 [project.scripts]
-aye = "aye.main:main"
+arey = "arey.main:main"
+
+[project.urls]
+Homepage = 'https://github.com/codito/arey'
+# Documentation = 'https://apps.codito.in/arey'
+Source = 'https://github.com/codito/arey'
+Changelog = 'https://github.com/codito/arey/blob/master/CHANGELOG.md'
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.package-data]
-"aye" = ["**/*.yml", "**/*.md"]
+"arey" = ["**/*.yml", "**/*.md"]
 
 [tool.setuptools.packages.find]
-where = ["."]           # ["."] by default
-include = ["aye*"]      # ["*"] by default
-exclude = ["aye*tests"] # empty by default
-namespaces = false      # true by default
+where = ["."]            # ["."] by default
+include = ["arey*"]      # ["*"] by default
+exclude = ["arey*tests"] # empty by default
+namespaces = false       # true by default
 
 [tool.coverage.run]
 omit = []
@@ -43,7 +73,7 @@ omit = []
 show_missing = "true"
 
 [tool.pytest.ini_options]
-addopts = "--cov=aye --cov-report=term-missing --quiet"
+addopts = "--cov=arey --cov-report=term-missing --quiet"
 
 [tool.ruff]
 exclude = [".venv", "venv"]
@@ -52,5 +82,5 @@ line-length = 88
 select = ["D", "E", "F", "W"]
 
 [tool.ruff.per-file-ignores]
-"aye/tests/**/*.py" = ["D101", "D102", "D103"]
+"arey/tests/**/*.py" = ["D101", "D102", "D103"]
 "**/*.py" = ["F405", "D203", "D213"]
