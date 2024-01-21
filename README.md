@@ -2,11 +2,11 @@
 
 Arey is a simple large language model app.
 
-✓ Chat with your favorite local models. CPU friendly 🍀
-✓ Ask the AI model with a single command.
+✓ Chat with your favorite local models. CPU friendly 🍀  
+✓ Ask the AI model with a single command.  
 ✓ Supercharged in-context learning workflow ❤️ Edit your prompt in _any_ editor
-and `arey` will generate a completion on save.
-✓ No telemetry, no internet, nothing to sell. Dedicated to the public domain.
+and `arey` will generate a completion on save.  
+✓ No telemetry, no internet, nothing to sell. Dedicated to the public domain.  
 
 🚧 Much more to come... See **Roadmap** below.
 
