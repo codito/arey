@@ -1,0 +1,46 @@
+# Prompt template for ChatML trained models.
+#
+# See <https://github.com/openai/openai-python/blob/main/chatml.md>
+# And prompt format for <https://huggingface.co/Open-Orca/Mistral-7B-OpenOrca>
+
+name: chatml
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    prompt_prefix: >-
+      You are a helpful assistant. Please think step by step and answer the query.
+roles:
+  ai:
+    message: |+
+      <|im_start|>assistant
+      $message_text<|im_end|>
+  user:
+    message: |+
+      <|im_start|>user
+      $message_text<|im_end|>
+  system:
+    message: |+
+      <|im_start|>system
+      $prompt_prefix<|im_end|>
+stop_words:
+  - <|im_start|>
+  - <|im_end|>
+prompts:
+  chat: |
+    <|im_start|>system
+    $prompt_prefix<|im_end|>
+    $chat_history<|im_start|>user
+    $user_query<|im_end|>
+    <|im_start|>assistant
+    
+  task: |
+    <|im_start|>system
+    $prompt_prefix<|im_end|>
+    <|im_start|>user
+    $user_query<|im_end|>
+    <|im_start|>assistant
+

@@ -1,0 +1,48 @@
+# Example configuration for arey app
+#
+# Looked up from XDG_CONFIG_DIR (~/.config/arey/arey.yml) on Linux or
+# ~/.arey on Windows.
+
+models:
+  openhermes25-mistral-7b:
+    path: TODO
+    type: mistral
+    template: chatml
+  # deepseek-coder-6.7b:
+  #   path: ~/docs/models/deepseek-coder-6.7b/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
+  #   type: deepseek
+  #   template: alpaca
+
+profiles:
+  # See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/
+  precise:
+    # factual responses and straightforward assistant answers
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+  creative:
+    # chatting, storywriting, and interesting assistant answers
+    temperature: 0.72
+    repeat_penalty: 1.1
+    top_k: 0
+    top_p: 0.73
+  sphinx:
+    # varied storywriting (on 30B/65B) and unconventional chatting
+    temperature: 1.99
+    repeat_penalty: 1.15
+    top_k: 30
+    top_p: 0.18
+
+chat:
+  model: openhermes25-mistral-7b
+  profile: precise
+  # settings:
+  #   n_threads: 11
+    # n_gpu_layers: 18
+task:
+  model: openhermes25-mistral-7b
+  profile: precise
+  # settings:
+  #   n_threads: 10
+  #   n_gpu_layers: 20

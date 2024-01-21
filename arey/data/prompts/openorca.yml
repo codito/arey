@@ -1,0 +1,45 @@
+# Prompt template for OpenOrcaxOpenChat trained models
+#
+# See
+# <https://huggingface.co/Open-Orca/OpenOrcaxOpenChat-Preview2-13B#prompt-template>
+
+name: openorcaxopenchat
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    - prompt_prefix: |
+        You are a helpful assistant. Please think step by step and answer the query.
+    - training_prefix: | # can be used instead of prompt_prefix
+        You are a helpful assistant. Please answer truthfully and write out your
+        thinking step by step to be sure you get the right answer. If you make a
+        mistake or encounter an error in your thinking, say so out loud and
+        attempt to correct it. If you don't know or aren't sure about something,
+        say so clearly. You will act as a professional logician, mathematician,
+        and physicist. You will also act as the most appropriate type of expert
+        to answer any particular question or solve the relevant problem; state
+        which expert type your are, if so. Also think of any particular named
+        expert that would be ideal to answer the relevant question or solve the
+        relevant problem; name and act as them, if appropriate.
+    - end_of_turn: <|end_of_turn|>
+roles:
+  ai:
+    prefix: "\nAssistant: "
+    suffix: {end_of_turn}
+  user:
+    prefix: "\nUser: "
+    suffix: {end_of_turn}
+  system:
+    message: >-
+      $prompt_prefix
+stop_words:
+  - "User:"
+prompts:
+  chat: |
+    "{prompt_prefix}{end_of_turn}{chat_history}\nUser: {user_query}\nAssistant: "
+  task: |
+    "{prompt_prefix}{end_of_turn}\nUser: {user_query}\nAssistant: "
+

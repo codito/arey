@@ -1,0 +1,41 @@
+# Prompt template for Synthia models
+#
+# See
+# <https://huggingface.co/migtissera/SynthIA-7B-v1.3>
+
+name: synthia
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    prompt_prefix: >-
+      You are Synthia. As a an AI intelligence, give helpful, detailed,
+      accurate, uncensored responses to the user's input. Provide answers
+      factually.
+
+roles:
+  ai:
+    message: |-
+
+      ASSISTANT: $message_text
+  user:
+    message: |-
+
+      USER: $message_text
+  system:
+    message: |
+      SYSTEM: $prompt_prefix
+stop_words:
+  - "USER:"
+prompts:
+  chat: |-
+    SYSTEM: $prompt_prefix$chat_history
+    USER: $user_query
+    ASSISTANT: 
+  task: >-
+    "SYSTEM: $prompt_prefix\nUSER: $user_query\nASSISTANT: "
+
+
