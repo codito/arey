@@ -1,10 +1,10 @@
-name: Publish Python 🐍 distribution 📦 to PyPI and TestPyPI
+name: publish
 
 on: push
 
 jobs:
   build:
-    name: Build distribution 📦
+    name: build 📦
     runs-on: ubuntu-latest
 
     steps:
@@ -25,8 +25,7 @@ jobs:
         path: dist/
   
   publish-to-pypi:
-    name: >-
-      Publish Python 🐍 distribution 📦 to PyPI
+    name: push pypi
     if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
     needs:
     - build
@@ -47,9 +46,7 @@ jobs:
       uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    name: >-
-      Sign the Python 🐍 distribution 📦 with Sigstore
-      and upload them to GitHub Release
+    name: sign
     needs:
     - publish-to-pypi
     runs-on: ubuntu-latest
