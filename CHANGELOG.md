@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v0.0.2 - 2024-01-21
+## v0.0.3 - 2024-01-21
 
 - Initial pre-alpha release 🚀
 - Chat mode for continuous learning with an AI model.
