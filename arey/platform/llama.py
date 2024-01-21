@@ -18,7 +18,7 @@ class LlamaSettings:
     n_threads: int = max(multiprocessing.cpu_count() // 2, 1)
     n_ctx: int = 4096
     n_batch: int = 512
-    n_gpu_lareyrs: int = 0
+    n_gpu_layers: int = 0
     verbose: bool = True
 
 
