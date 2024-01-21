@@ -1,7 +1,7 @@
 """Core data structures for the aye app."""
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union, Literal
 
 from aye.ai import CompletionMetrics, ModelMetrics
 
@@ -48,3 +48,20 @@ class Chat:
 
     messages: List[Message] = field(default_factory=list)
     context: ChatContext = field(default_factory=ChatContext)
+
+
+class AyeError(Exception):
+    """Error in Aye execution."""
+
+    category: Union[Literal["config"], Literal["template"], Literal["system"]]
+    message: str
+
+    def __init__(
+        self,
+        category: Union[Literal["config"], Literal["template"], Literal["system"]],
+        message: str,
+    ):
+        """Create an instance of AyeError with category and message."""
+        self.category = category
+        self.message = message
+        super().__init__(message)

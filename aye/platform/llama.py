@@ -2,18 +2,20 @@
 import dataclasses
 import os
 import time
+import multiprocessing
 from typing import Iterator, cast
 
 import llama_cpp
 
 from aye.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
+from aye.model import AyeError
 
 
 @dataclasses.dataclass
 class LlamaSettings:
     """Core model settings."""
 
-    n_threads: int
+    n_threads: int = max(multiprocessing.cpu_count() // 2, 1)
     n_ctx: int = 4096
     n_batch: int = 512
     n_gpu_layers: int = 0
@@ -44,6 +46,11 @@ class LlamaBaseModel(CompletionModel):
 
     def _get_model(self):
         model_path = os.path.join(os.path.expanduser(self._model_path))
+        if not os.path.exists(model_path):
+            raise AyeError(
+                "system",
+                f"Invalid model path: {model_path}.",
+            )
         if not self._llm:
             start_time = time.perf_counter()
             self._llm = llama_cpp.Llama(

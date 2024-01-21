@@ -4,34 +4,14 @@
 # ~/.aye on Windows.
 
 models:
-  speechless-13b:
-    path: ~/docs/models/speechless/speechless-llama2-hermes-orca-platypus-wizardlm-13b.Q5_K_S.gguf
-    type: llama2
-    template: alpaca
-  synthia-7b:
-    path: ~/docs/models/synthia-7b/synthia-7b-v1.3.Q5_K_M.gguf
-    type: mistral
-    template: synthia
-  mistral-openorca-7b:
-    path: ~/docs/models/mistral-openorca-7b/mistral-7b-openorca.Q5_K_M.gguf
-    type: mistral
-    template: chatml
-  openhermes-mistral-7b:
-    path: ~/docs/models/openhermes-2-mistral-7b/openhermes-2-mistral-7b.Q5_K_M.gguf
-    type: mistral
-    template: chatml
   openhermes25-mistral-7b:
-    path: ~/docs/models/openhermes-25-mistral-7b/openhermes-2.5-mistral-7b.Q5_K_M.gguf
+    path: TODO
     type: mistral
     template: chatml
-  magicoder-s-ds-6.7b: # doesn't work https://github.com/ggerganov/llama.cpp/issues/4419
-    path: ~/docs/models/magicoder-s-ds-6.7b/magicoder-s-ds-6.7b.Q4_K_M.gguf
-    type: deepseek
-    template: magicoder
-  deepseek-coder-6.7b:
-    path: ~/docs/models/deepseek-coder-6.7b/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
-    type: deepseek
-    template: alpaca
+  # deepseek-coder-6.7b:
+  #   path: ~/docs/models/deepseek-coder-6.7b/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
+  #   type: deepseek
+  #   template: alpaca
 
 profiles:
   # See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/
@@ -57,12 +37,12 @@ profiles:
 chat:
   model: openhermes25-mistral-7b
   profile: precise
-  settings:
-    n_threads: 11
-    n_gpu_layers: 18
+  # settings:
+  #   n_threads: 11
+    # n_gpu_layers: 18
 task:
-  model: mistral-openorca-7b
+  model: openhermes25-mistral-7b
   profile: precise
-  settings:
-    n_threads: 10
-    n_gpu_layers: 20
+  # settings:
+  #   n_threads: 10
+  #   n_gpu_layers: 20

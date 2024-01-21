@@ -1,5 +1,7 @@
 ---
-# A play file is a markdown format file with settings specified in yaml.
+# A play file is a markdown format file with settings specified in yaml
+# frontmatter (this section within `---`).
+#
 # You can open this file in an editor, aye will watch for any changes and apply
 # them immediately. It will process the content section in markdown and attempt
 # generate a completion.
@@ -14,6 +16,7 @@ profile: # profile update applies to every inference
   repeat_penalty: 1.176
   top_k: 40
   top_p: 0.1
+  max_tokens: 300
   stop_words: []
 ---
 

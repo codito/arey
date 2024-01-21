@@ -1,8 +1,9 @@
-"""Myl app cli entrypoint."""
+"""Aye app cli entrypoint."""
 #!/usr/bin/env python
 import click
 import signal
 import datetime
+from functools import wraps
 from typing import Callable, Iterable, Optional
 
 from rich.console import Console, Group
@@ -15,10 +16,8 @@ from rich.text import Text
 from watchfiles import watch
 
 from aye.ai import CompletionMetrics
-from aye.chat import create_chat, get_completion_metrics, stream_response
+from aye.model import AyeError
 from aye.platform.console import SignalContextManager, get_console
-from aye.task import create_task, run
-from aye.play import get_play_file, get_play_response, load_play_model
 
 
 def _generate_response(
@@ -73,71 +72,56 @@ def _generate_response(
     console.print(footer, style="message_footer")
 
 
-def _print_logs(console: Console, logs: Optional[str]) -> None:
-    if not logs:
+def _print_logs(console: Console, verbose: bool, logs: Optional[str]) -> None:
+    if not verbose or not logs:
         return
     console.print()
     console.print(logs)
     console.print()
 
 
-@click.command("play")
-@click.argument("file", required=False)
-@click.option(
-    "--no-watch",
-    is_flag=True,
-    default=False,
-    help="Watch the play file and regenerate response on save.",
-)
-def play(file: str, no_watch: bool) -> int:
-    """Watch FILE for model, prompt and generate response on edit.
+def error_handler(func):
+    """Global error handler for Aye."""
 
-    If FILE is not provided, a temporary file is created for edit.
-    """
-    console = get_console()
-    console.print()
-    console.print("Welcome to aye play!")
-    console.print()
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except AyeError as e:
+            console = get_console()
+            help_text: str = (
+                "Ouch! This appears to be a bug. Do you mind "
+                "connecting with us at "
+                "<https://github.com/codito/aye/issues/new>"
+            )
 
-    play_file = get_play_file(file)
+            match e.category:
+                case "template":
+                    help_text = "A template seems misconfigured. Check out the docs."
+                case "config":
+                    help_text = "Config file seems misconfigured. Check out the docs."
 
-    def run_play_file():
-        file_path = file or play_file.file_path
-        current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        console.print()
-        console.rule(current_date)
-        play_file_mod = get_play_file(file_path)
-        with console.status("[message_footer]Loading model..."):
-            model_metrics = load_play_model(play_file_mod)
-            footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
-            console.print(footer, style="message_footer")
-            console.print()
+            error_text = Group(
+                Markdown(f"ERROR: {e.args[0]}", style="error"),
+                Text(),
+                Markdown(help_text),
+            )
+            console.print(error_text)
 
-        _generate_response(
-            console,
-            lambda: get_play_response(play_file_mod),
-            lambda: (play_file_mod.result and play_file_mod.result.metrics),
-        )
-
-        _print_logs(console, play_file.result and play_file.result.logs)
-
-    if no_watch:
-        run_play_file()
-        return 0
-
-    console.print(f"Watching `{play_file.file_path}` for changes...")
-    for _ in watch(play_file.file_path):
-        run_play_file()
-        console.print()
-        console.print(f"Watching `{play_file.file_path}` for changes...")
-    return 0
+    return wrapper
 
 
-@click.command("task")
+@click.command("ask")
 @click.argument("instruction", nargs=-1)
 @click.option("-o", "--overrides-file", type=click.File())
-def task(instruction: str, overrides_file: str) -> int:
+@click.pass_context
+@error_handler
+def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
     """Run an instruction and generate response."""
+    from aye.task import create_task, run
+
+    verbose = ctx.obj["VERBOSE"]
+
     console = get_console()
     console.print()
     console.print("Welcome to aye task!")
@@ -155,13 +139,19 @@ def task(instruction: str, overrides_file: str) -> int:
         lambda: (task.result and task.result.metrics),
     )
 
-    _print_logs(console, task.result and task.result.logs)
+    _print_logs(console, verbose, task.result and task.result.logs)
     return 0
 
 
 @click.command("chat")
-def chat() -> int:
+@click.pass_context
+@error_handler
+def chat(ctx: click.Context) -> int:
     """Chat with an AI model."""
+    from aye.chat import create_chat, get_completion_metrics, stream_response
+
+    verbose = ctx.obj["VERBOSE"]
+
     console = get_console()
     console.print(("Welcome to aye chat!\nType 'q' to exit."))
     console.print()
@@ -201,6 +191,7 @@ def chat() -> int:
 
         _print_logs(
             console,
+            verbose,
             (
                 chat.messages[-1].context.logs
                 if chat.messages and chat.messages[-1].context
@@ -211,14 +202,79 @@ def chat() -> int:
     return 0
 
 
+@click.command("play")
+@click.argument("file", required=False)
+@click.option(
+    "--no-watch",
+    is_flag=True,
+    default=False,
+    help="Watch the play file and regenerate response on save.",
+)
+@click.pass_context
+@error_handler
+def play(ctx: click.Context, file: str, no_watch: bool) -> int:
+    """Watch FILE for model, prompt and generate response on edit.
+
+    If FILE is not provided, a temporary file is created for edit.
+    """
+    from aye.play import get_play_file, get_play_response, load_play_model
+
+    verbose = ctx.obj["VERBOSE"]
+
+    console = get_console()
+    console.print()
+    console.print(
+        "Welcome to aye play! Edit the play file below in your favorite editor "
+        "and I'll generate a response for you. Use `Ctrl+C` to abort play session."
+    )
+    console.print()
+
+    play_file = get_play_file(file)
+
+    def run_play_file():
+        file_path = file or play_file.file_path
+        current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        console.print()
+        console.rule(current_date)
+        play_file_mod = get_play_file(file_path)
+        with console.status("[message_footer]Loading model..."):
+            model_metrics = load_play_model(play_file_mod)
+            footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
+            console.print(footer, style="message_footer")
+            console.print()
+
+        _generate_response(
+            console,
+            lambda: get_play_response(play_file_mod),
+            lambda: (play_file_mod.result and play_file_mod.result.metrics),
+        )
+
+        _print_logs(console, verbose, play_file.result and play_file.result.logs)
+
+    if no_watch:
+        run_play_file()
+        return 0
+
+    console.print(f"Watching `{play_file.file_path}` for changes...")
+    for _ in watch(play_file.file_path):
+        run_play_file()
+        console.print()
+        console.print(f"Watching `{play_file.file_path}` for changes...")
+    return 0
+
+
 @click.group()
-def main():
-    """Myl - a simple large language model app."""
+@click.option("-v", "--verbose", default=False, help="Show verbose logs.")
+@click.pass_context
+def main(ctx: click.Context, verbose: bool):
+    """Aye - a simple large language model app."""
+    ctx.ensure_object(dict)
+    ctx.obj["VERBOSE"] = verbose
     pass
 
 
-main.add_command(chat)
 main.add_command(task)
+main.add_command(chat)
 main.add_command(play)
 
 if __name__ == "__main__":

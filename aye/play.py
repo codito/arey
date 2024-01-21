@@ -9,7 +9,9 @@ import tempfile
 import frontmatter
 from functools import lru_cache
 from aye.ai import CompletionMetrics, ModelMetrics, combine_metrics
-from aye.config import ModelConfig, get_config, get_asset_path
+from aye.config import ModelConfig, get_config
+from aye.model import AyeError
+from aye.platform.assets import get_asset_path
 from aye.platform.llama import LlamaBaseModel
 from aye.platform.console import capture_stderr
 from typing import Dict, Optional, Iterator
@@ -98,7 +100,7 @@ def get_play_response(play_file: PlayFile) -> Iterator[str]:
     """Run a task with user query."""
     model = play_file.model
     if not model:
-        raise Exception("Model is empty.")
+        raise AyeError("system", "Model is empty.")
 
     completion_settings = play_file.completion_profile
     prompt = play_file.prompt

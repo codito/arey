@@ -18,6 +18,7 @@ theme = Theme(
         "message_user": "blue",
         "message_ai": "bright_white",
         "message_footer": "dim white",
+        "error": "bold red",
     }
 )
 

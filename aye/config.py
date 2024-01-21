@@ -1,16 +1,12 @@
 """Configuration for aye."""
 import os
-from dataclasses import dataclass
-from typing import Dict, Optional, TypedDict
+from dataclasses import dataclass, field
+from typing import Dict, Optional, TypedDict, Tuple, Union, cast
 
 import yaml
 
-DEFAULT_DATA_DIR = os.path.expanduser(
-    "~/.local/share/aye" if os.name == "posix" else "~/.aye"
-)
-DEFAULT_CONFIG_DIR = os.path.expanduser(
-    "~/.config/aye" if os.name == "posix" else "~/.aye"
-)
+from aye.model import AyeError
+from aye.platform.assets import get_config_dir, get_default_config
 
 
 @dataclass
@@ -35,22 +31,36 @@ class ProfileConfig(TypedDict):
 class ChatConfig:
     """Configuration for chat mode."""
 
+    model_name: str
     model: ModelConfig
     profile: ProfileConfig
-    settings: Dict
+    settings: Dict = field(default_factory=dict)
+
+
+@dataclass
+class TaskConfig:
+    """Configuration for task mode."""
+
+    model_name: str
+    model: ModelConfig
+    profile: ProfileConfig
+    settings: Dict = field(default_factory=dict)
 
 
 @dataclass
 class Config:
-    """Myl Configuration."""
+    """Aye Configuration."""
 
     models: Dict[str, ModelConfig]
     profiles: Dict[str, ProfileConfig]
     chat: ChatConfig
+    task: TaskConfig
 
     @classmethod
     def from_dict(cls, config: dict):
         """Create a configuration from dictionary."""
+        from aye.prompt import has_prompt
+
         models = {
             key: ModelConfig(val["path"], val["template"], val.get("type", "llama2"))
             for key, val in config.get("models", {}).items()
@@ -58,63 +68,69 @@ class Config:
         profiles = {
             key: ProfileConfig(**val) for key, val in config.get("profiles", {}).items()
         }
+        default_profile: ProfileConfig = {
+            "temperature": 0.7,
+            "repeat_penalty": 1.176,
+            "top_k": 40,
+            "top_p": 0.1,
+        }
 
-        chat = ChatConfig(
-            models[config["chat"]["model"]],
-            profiles[config["chat"]["profile"]],
-            config["chat"]["settings"],
-        )
-        return cls(models, profiles, chat)
+        if "chat" not in config or "task" not in config:
+            raise AyeError(
+                "config", "`chat` and `task` sections are not available in config file."
+            )
+
+        def _get_config(key: str) -> Union[ChatConfig, TaskConfig]:
+            model_name = config[key].get("model", None)
+            if not model_name or model_name not in models:
+                raise AyeError(
+                    "config", f"Section '{key}' must have valid `model` entry."
+                )
+            model = models[model_name]
+            model.path = os.path.expanduser(model.path) if model.path else model.path
+            if not os.path.exists(model.path):
+                raise AyeError(
+                    "config", f"Model '{model_name}' has invalid path: {model.path}."
+                )
+            if not has_prompt(model.template):
+                raise AyeError(
+                    "config",
+                    f"Model '{model_name}' has invalid template: {model.template}.",
+                )
+
+            profile = profiles.get(
+                config[key].get("profile", "default"), default_profile
+            )
+            settings = config[key]["settings"] if "settings" in config[key] else {}
+            if key == "chat":
+                return ChatConfig(model_name, model, profile, settings)
+            return TaskConfig(model_name, model, profile, settings)
+
+        chat = _get_config("chat")
+        task = _get_config("task")
+        return cls(models, profiles, cast(ChatConfig, chat), cast(TaskConfig, task))
 
 
-def _make_dir(path: str) -> None:
-    if not os.path.exists(path):
-        os.mkdir(path)
+def create_or_get_config_file() -> Tuple[bool, str]:
+    """Get config file path if exists, create a default otherwise."""
+    config_file = os.path.join(get_config_dir(), "aye.yml")
+    if os.path.exists(config_file):
+        return (True, config_file)
 
-
-def _get_config_dir():
-    base_dir = os.environ.get("XDG_CONFIG_HOME")
-    config_dir = os.path.join(base_dir, "aye") if base_dir else DEFAULT_CONFIG_DIR
-    _make_dir(config_dir)
-    return config_dir
+    # Create a default config, ask user to update the model
+    with open(config_file, "w", encoding="utf-8") as f:
+        f.write(get_default_config())
+    return (False, config_file)
 
 
 def get_config() -> Config:
     """Get the app configuration if available."""
-    if getattr(get_config, "config", None):
-        return get_config.config
+    config = getattr(get_config, "config", None)
+    if config:
+        return config
 
-    config_file = os.path.join(_get_config_dir(), "aye.yml")
-    if os.path.exists(config_file):
-        with open(config_file, "r") as f:
-            try:
-                get_config.config = Config.from_dict(yaml.safe_load(f) or {})
-                return get_config.config
-            except Exception as _:
-                raise
-    raise Exception(f"No config found at '{config_file}'. Please run `aye setup`.")
-
-
-def get_asset_dir(suffix: str = "") -> str:
-    """Get path of the assets directory.
-
-    params:
-        suffix (str): suffix directory name to append
-    """
-    dir_path = os.path.dirname(os.path.realpath(__file__))
-    return os.path.join(dir_path, "data", suffix)
-
-
-def get_asset_path(asset_name: str) -> str:
-    """Get the full path to included asset.
-
-    params:
-        asset_name (str): relative path to the asset. E.g., prompts/alpaca.yml
-    """
-    dir_path = get_asset_dir()
-    file_path = os.path.join(dir_path, asset_name)
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(
-            f"Asset file {asset_name} not found. Resolved path: {file_path}"
-        )
-    return file_path
+    _, config_file = create_or_get_config_file()
+    with open(config_file, "r") as f:
+        config = Config.from_dict(yaml.safe_load(f) or {})
+        setattr(get_config, "config", config)
+        return config

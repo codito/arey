@@ -7,7 +7,8 @@ from typing import Dict, List, Literal
 
 import yaml
 
-from aye.config import get_asset_dir
+from aye.platform.assets import get_asset_dir
+from aye.model import AyeError
 
 SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
@@ -32,7 +33,9 @@ class Prompt:
         content = yaml.safe_load(yml) or {}
         name = content.get("name", "")
         if not name:
-            raise ValueError("`name` element in the prompt template is " "required.")
+            raise AyeError(
+                "template", "`name` element in the prompt template is " "required."
+            )
 
         tokens = content.get("tokens", {})
         system_tokens = tokens.get("system", [])
@@ -42,9 +45,10 @@ class Prompt:
 
         prompts = content.get("prompts", {})
         if not prompts.get("chat") or not prompts.get("task"):
-            raise ValueError(
+            raise AyeError(
+                "template",
                 "`prompts` element in the prompt template is required."
-                " It must define `chat` and `task` prompt formats."
+                " It must define `chat` and `task` prompt formats.",
             )
 
         roles = content.get("roles", {})
@@ -54,7 +58,9 @@ class Prompt:
             or not roles.get("user")
             or not roles.get("system")
         ):
-            raise ValueError("`roles` element in the prompt template is required.")
+            raise AyeError(
+                "template", "`roles` element in the prompt template is required."
+            )
         message_formats = {
             "ai": roles.get("ai").get("message"),
             "user": roles.get("user").get("message"),
@@ -71,11 +77,15 @@ class Prompt:
         content = yaml.safe_load(yml) or {}
         name = content.get("name", "")
         if not name:
-            raise ValueError("`name` element in the prompt template is required.")
+            raise AyeError(
+                "template", "`name` element in the prompt template is required."
+            )
 
         prompt_type = content.get("type", "")
         if not prompt_type:
-            raise ValueError("`type` element in the prompt template is required.")
+            raise AyeError(
+                "template", "`type` element in the prompt template is required."
+            )
 
         # Overrides are only supported for custom_tokens currently
         tokens = content.get("tokens", {})
@@ -117,6 +127,15 @@ def _get_oob_prompts() -> Dict[str, Prompt]:
             raise
 
     return result
+
+
+def has_prompt(template_name: str) -> bool:
+    """Check if prompt template is available."""
+    oob_prompts = getattr(has_prompt, "oob_prompts", set())
+    if not oob_prompts:
+        oob_prompts = set(_get_oob_prompts().keys())
+        setattr(has_prompt, "oob_prompts", oob_prompts)
+    return template_name in oob_prompts
 
 
 def get_prompt(template_name: str) -> Prompt:

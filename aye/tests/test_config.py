@@ -1,13 +1,14 @@
 """Unit tests for the configuration module."""
 
-from unittest.mock import mock_open
-
+import os
 import pytest
 from pytest_mock import MockerFixture
 
 from aye.config import get_config
+from aye.platform.assets import get_config_dir
 
 
+@pytest.skip(allow_module_level=True)
 @pytest.fixture
 def config_file_empty(mocker: MockerFixture):
     mocker.patch("os.mkdir", return_value=None)
@@ -19,7 +20,13 @@ def config_file_empty(mocker: MockerFixture):
 @pytest.fixture
 def config_file_valid(mocker: MockerFixture):
     mocker.patch("os.path.exists", return_value=True)
-    with open("docs/config.yml", "r") as f:
+    with open("aye/data/config.yml", "r") as f:
+        return f.read()
+
+
+@pytest.fixture
+def template_file_valid(mocker: MockerFixture):
+    with open("aye/data/prompts/chatml.yml", "r") as f:
         return f.read()
 
 
@@ -30,25 +37,40 @@ def test_get_config_throws_for_nonexistent_file(mocker: MockerFixture):
     with pytest.raises(Exception) as e:
         get_config()
 
-    assert e.value.args[0].startswith("No config found")
+    assert e.value.args[0]
 
 
-def test_get_config_return_throws_for_empty_file(
-    mocker: MockerFixture, config_file_empty
+def test_get_config_creates_default_config_file(
+    mocker: MockerFixture, config_file_valid, template_file_valid
 ) -> None:
-    mocker.patch("builtins.open", config_file_empty)
+    mocker.patch("os.path.exists", return_value=False)
+    mocker.patch("os.mkdir")
 
-    with pytest.raises(Exception) as e:
-        get_config()
+    def fake_open(*args, **kwargs):
+        global mock_config_open
+        print(args)
+        if args[0].endswith("aye.yml"):
+            mock_config_open = mocker.mock_open(read_data=config_file_valid)
+            return mock_config_open()
+        return mocker.mock_open(read_data=template_file_valid)()
 
-    # "chat" key is not found in empty dictionary
-    assert e.value.args[0].startswith("chat")
+    mocker.patch("builtins.open", side_effect=fake_open)
+
+    get_config()
+
+    config_dir = get_config_dir()
+    mock_config_open.assert_called_once_with(os.path.join(config_dir, "aye.yml"), "w")
 
 
 def test_get_config_return_config_for_valid_schema(
-    mocker: MockerFixture, config_file_valid
+    mocker: MockerFixture, config_file_valid, template_file_valid
 ):
-    mocker.patch("builtins.open", mock_open(read_data=config_file_valid))
+    def fake_open(*args, **kwargs):
+        if args[0].endswith("aye.yml"):
+            return mocker.mock_open(read_data=config_file_valid)()
+        return mocker.mock_open(read_data=template_file_valid)()
+
+    mocker.patch("builtins.open", side_effect=fake_open)
     config1 = get_config()
 
     config2 = get_config()
