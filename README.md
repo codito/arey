@@ -18,7 +18,9 @@ and `arey` will generate a completion on save.
 pipx install arey
 ```
 
-Windows installation issues: [here](docs/windows.md).
+Please use [WSL][] for Windows installation. Troubleshooting notes are [here](docs/windows.md).
+
+[WSL]: https://learn.microsoft.com/en-us/windows/wsl/install
 
 ## Usage
 
