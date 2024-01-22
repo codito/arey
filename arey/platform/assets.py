@@ -12,7 +12,7 @@ DEFAULT_CONFIG_DIR = os.path.expanduser(
 
 def _make_dir(path: str) -> None:
     if not os.path.exists(path):
-        os.mkdir(path)
+        os.makedirs(path, exist_ok=True)
 
 
 def get_asset_dir(suffix: str = "") -> str:
