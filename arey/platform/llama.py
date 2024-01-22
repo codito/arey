@@ -19,6 +19,7 @@ class LlamaSettings:
     n_ctx: int = 4096
     n_batch: int = 512
     n_gpu_layers: int = 0
+    use_mlock: bool = False
     verbose: bool = True
 
 

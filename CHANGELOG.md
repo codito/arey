@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.0.4 - 2024-01-22
+
+- Fix: create config dir on Windows when absent.
+- Fix: don't redirect stderr on Windows.
+
 ## v0.0.3 - 2024-01-21
 
 - Initial pre-alpha release 🚀
