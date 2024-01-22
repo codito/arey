@@ -4,6 +4,11 @@
 
 ## v0.0.4 - 2024-01-22
 
+This release focuses on fixing `arey play` command on Windows/WSL2 and multiple
+performance fixes.
+
+- Fix: don't reload model if settings remain unchanged.
+- Fix: apply completion settings correctly including stop words.
 - Fix: create config dir on Windows when absent.
 - Fix: don't redirect stderr on Windows.
 
