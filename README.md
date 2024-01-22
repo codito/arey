@@ -10,6 +10,8 @@ and `arey` will generate a completion on save.
 
 🚧 Much more to come... See **Roadmap** below.
 
+https://github.com/codito/arey/assets/28766/6b886e49-6124-4256-84d9-20449c783a34
+
 ## Installation
 
 ```sh
