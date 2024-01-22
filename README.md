@@ -6,7 +6,7 @@ Arey is a simple large language model app.
 ✓ Ask the AI model with a single command.  
 ✓ Supercharged in-context learning workflow ❤️ Edit your prompt in _any_ editor
 and `arey` will generate a completion on save.  
-✓ No telemetry, no internet, nothing to sell. Dedicated to the public domain.  
+✓ No telemetry, no internet, nothing to sell. Dedicated to the public domain.
 
 🚧 Much more to come... See **Roadmap** below.
 
@@ -17,6 +17,8 @@ and `arey` will generate a completion on save.
 # Ensure ~/.local/bin is available in system PATH
 pipx install arey
 ```
+
+Windows installation issues: [here](docs/windows.md).
 
 ## Usage
 

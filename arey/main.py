@@ -18,6 +18,7 @@ from watchfiles import watch
 from arey.ai import CompletionMetrics
 from arey.model import AreyError
 from arey.platform.console import SignalContextManager, get_console
+from arey.play import PlayFile
 
 
 def _generate_response(
@@ -229,19 +230,26 @@ def play(ctx: click.Context, file: str, no_watch: bool) -> int:
     )
     console.print()
 
-    play_file = get_play_file(file)
-
-    def run_play_file():
-        file_path = file or play_file.file_path
+    def run_play_file(play_file_old: PlayFile) -> PlayFile:
+        file_path = file or play_file_old.file_path
         current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         console.print()
         console.rule(current_date)
         play_file_mod = get_play_file(file_path)
-        with console.status("[message_footer]Loading model..."):
-            model_metrics = load_play_model(play_file_mod)
-            footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
-            console.print(footer, style="message_footer")
-            console.print()
+        play_file_mod.model = play_file_old.model
+
+        # Compare old playfile with current and reload model if settings have
+        # changed
+        if (
+            play_file_mod.model is None
+            or play_file_old.file_path != play_file_mod.file_path
+            or play_file_old.model_settings != play_file_mod.model_settings
+        ):
+            with console.status("[message_footer]Loading model..."):
+                model_metrics = load_play_model(play_file_mod)
+                footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
+                console.print(footer, style="message_footer")
+        console.print()
 
         _generate_response(
             console,
@@ -250,14 +258,16 @@ def play(ctx: click.Context, file: str, no_watch: bool) -> int:
         )
 
         _print_logs(console, verbose, play_file.result and play_file.result.logs)
+        return play_file_mod
 
+    play_file = get_play_file(file)
     if no_watch:
-        run_play_file()
+        run_play_file(play_file)
         return 0
 
     console.print(f"Watching `{play_file.file_path}` for changes...")
     for _ in watch(play_file.file_path):
-        run_play_file()
+        play_file = run_play_file(play_file)
         console.print()
         console.print(f"Watching `{play_file.file_path}` for changes...")
     return 0

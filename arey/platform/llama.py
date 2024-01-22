@@ -73,17 +73,19 @@ class LlamaBaseModel(CompletionModel):
         """Get a completion for the given text and settings."""
         prev_time = time.perf_counter()
         model = self._get_model()
+        completion_settings = {
+            "prompt": text,
+            "max_tokens": -1,
+            "temperature": 0.7,
+            "top_k": 40,
+            "top_p": 0.1,
+            "repeat_penalty": 1.176,
+            "echo": False,
+        } | settings
         output = cast(
             Iterator[llama_cpp.CompletionChunk],
             model.create_completion(
-                prompt=text,
-                max_tokens=-1,
-                temperature=0.7,
-                top_k=40,
-                top_p=0.1,
-                repeat_penalty=1.176,
-                echo=False,
-                **settings,
+                **completion_settings,
                 stream=True,
             ),
         )
