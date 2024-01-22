@@ -9,7 +9,6 @@ from typing import Generator
 
 from rich.console import Console
 from rich.theme import Theme
-from wurlitzer import pipes
 
 theme = Theme(
     {
@@ -51,7 +50,13 @@ class SignalContextManager:
 def capture_stderr() -> Generator[StringIO, None, None]:
     """Capture stderr for both python and c-functions."""
     stderr = io.StringIO()
-    with redirect_stderr(stderr) as err, pipes(
-        stdout=0, stderr=stderr, encoding="utf-8"
-    ):
-        yield err
+    try:
+        from wurlitzer import pipes
+
+        with redirect_stderr(stderr) as err, pipes(
+            stdout=0, stderr=stderr, encoding="utf-8"
+        ):
+            yield err
+    except Exception:
+        # Not supported on Windows. Disable stderr capture.
+        yield stderr

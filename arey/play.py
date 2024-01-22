@@ -14,7 +14,7 @@ from arey.model import AreyError
 from arey.platform.assets import get_asset_path
 from arey.platform.llama import LlamaBaseModel
 from arey.platform.console import capture_stderr
-from typing import Dict, Optional, Iterator
+from typing import Dict, Optional, Iterator, cast
 
 
 config = get_config()
@@ -72,8 +72,8 @@ def get_play_file(file_path: str) -> PlayFile:
         play_file = frontmatter.load(f)
 
     # FIXME validate settings
-    model_config = config.models[play_file.metadata["model"]]
-    model_settings = play_file.metadata["settings"]
+    model_config = config.models[cast(str, play_file.metadata["model"])]
+    model_settings: dict = cast(dict, play_file.metadata.get("settings", {}))
     return PlayFile(
         file_path=play_file_path,
         model_config=model_config,
