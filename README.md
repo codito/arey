@@ -1,5 +1,7 @@
 # arey
 
+> Arey (अरे, sanskrit) — ind. Interjection of calling.
+
 Arey is a simple large language model app.
 
 ✓ Chat with your favorite local models. CPU friendly 🍀  
@@ -49,14 +51,16 @@ On the first run, `arey` will create a configuration file in following location:
 
 Please update the `models` section in the config yml to your local model path.
 
-**Ask Arey something!**
+### 1. Ask Arey something!
 
 `arey ask "Who is Seneca? Tell me one of his teachings"`
 
-**Chat with Arey** using `arey chat`.
+### 2. Chat with Arey
 
-**Run Arey in play mode** to fine-tune a prompt in your editor while `arey` keeps
-completing your prompt on every save.
+`arey chat`
+
+### 3. Run Arey in play mode
+Use to fine-tune a prompt in your editor while `arey` keeps completing your prompt on every save.
 
 ```sh
 ❯ arey play /tmp/arey_playzl9igj3d.md
