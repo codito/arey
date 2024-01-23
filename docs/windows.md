@@ -40,3 +40,19 @@ Ensure that the `*.gguf` file is loaded from a native ext4 partition.
 
 # Now use ~/models/openhermes-2.5-mistral-7b.Q5_K_M.gguf in ~/.config/arey/arey.yml
 ```
+
+### Slow performance due to less memory and cpu
+
+Create a `C:\Users\<user>\.wslconfig` with appropriate CPU and Memory configuration.
+See <https://learn.microsoft.com/en-us/windows/wsl/wsl-config#wslconfig>.
+
+Before creating below file, ensure WSL is shutdown with `wsl --shutdown`.
+
+```sh
+# Contents of .wslconfig
+memory=32GB      # for a machine with 64GB ram, change based on your system
+processors=16    # for a machine with 16 logical processors
+swap=4GB
+```
+
+Save this file and start wsl.
