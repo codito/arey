@@ -16,7 +16,7 @@ from rich.text import Text
 from watchfiles import watch
 
 from arey.ai import CompletionMetrics
-from arey.model import AreyError
+from arey.error import AreyError
 from arey.platform.console import SignalContextManager, get_console
 from arey.play import PlayFile
 
@@ -125,7 +125,7 @@ def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
 
     console = get_console()
     console.print()
-    console.print("Welcome to arey task!")
+    console.print("Welcome to arey ask!")
     console.print()
 
     with console.status("[message_footer]Loading model..."):

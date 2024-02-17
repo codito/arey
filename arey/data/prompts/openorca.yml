@@ -26,7 +26,7 @@ tokens:
         relevant problem; name and act as them, if appropriate.
     - end_of_turn: <|end_of_turn|>
 roles:
-  ai:
+  assistant:
     prefix: "\nAssistant: "
     suffix: {end_of_turn}
   user:

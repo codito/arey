@@ -7,8 +7,14 @@ from typing import Iterator, cast
 
 import llama_cpp
 
-from arey.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
-from arey.model import AreyError
+from arey.ai import (
+    ChatMessage,
+    CompletionMetrics,
+    CompletionModel,
+    CompletionResponse,
+    ModelMetrics,
+)
+from arey.error import AreyError
 
 
 @dataclasses.dataclass
@@ -29,7 +35,6 @@ class LlamaBaseModel(CompletionModel):
     Wraps over the llama-cpp library.
     """
 
-    context_size: int = 4096
     _model_settings: LlamaSettings
     _metrics: ModelMetrics
 
@@ -38,7 +43,12 @@ class LlamaBaseModel(CompletionModel):
         self._llm = None
         self._model_path = model_path
         self._model_settings = LlamaSettings(**model_settings)
-        self.context_size = self._model_settings.n_ctx
+
+    @property
+    def context_size(self) -> int:
+        """Get context size for the model."""
+        assert self._llm, "Please load the model first with load()."
+        return self._llm.n_ctx()
 
     @property
     def metrics(self) -> ModelMetrics:
@@ -69,8 +79,12 @@ class LlamaBaseModel(CompletionModel):
         model = self._get_model()
         model.eval(model.tokenize(text.encode("utf-8")))
 
-    def complete(self, text: str, settings: dict = {}) -> Iterator[CompletionResponse]:
+    def complete(
+        self, text: str | list[ChatMessage], settings: dict = {}
+    ) -> Iterator[CompletionResponse]:
         """Get a completion for the given text and settings."""
+        assert isinstance(text, str)
+
         prev_time = time.perf_counter()
         model = self._get_model()
         completion_settings = {
@@ -118,3 +132,9 @@ class LlamaBaseModel(CompletionModel):
         """Get the token count for given text."""
         model = self._get_model()
         return len(model.tokenize(text.encode("utf-8")))
+
+    @staticmethod
+    def validate_config(config: dict) -> bool:
+        path = config["path"]
+        assert os.path.exists(path), f"Model path is invalid: '{path}'"
+        return True

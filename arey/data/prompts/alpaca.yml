@@ -12,7 +12,7 @@ tokens:
       Below is an instruction that describes a task. Write a response that
       appropriately completes the request
 roles:
-  ai:
+  assistant:
     message: >-
       \n\n### Response:\n\n$message_text
   user:

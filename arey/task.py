@@ -6,20 +6,20 @@ import os
 from dataclasses import dataclass, field
 from typing import Iterator, Optional, Tuple
 
-from arey.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from arey.ai import CompletionMetrics, CompletionModel, ModelMetrics, combine_metrics
 from arey.config import get_config
 from arey.platform.console import capture_stderr
-from arey.platform.llama import LlamaBaseModel
+from arey.platform.llm import get_completion_llm
 from arey.prompt import get_prompt, get_prompt_overrides
 
 config = get_config()
-model_path = config.chat.model.path
-prompt_template = config.chat.model.template
-model_settings = config.chat.settings
-completion_settings = config.chat.profile
+model_config = config.task.model
+prompt_template = config.task.model.template
+model_settings = config.task.settings
+completion_settings = config.task.profile
 
-model: LlamaBaseModel = LlamaBaseModel(
-    model_path=model_path, model_settings=model_settings
+model: CompletionModel = get_completion_llm(
+    model_config.asdict(), settings=model_settings
 )
 prompt_model = get_prompt(prompt_template)
 

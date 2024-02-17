@@ -12,7 +12,7 @@ tokens:
       You are an exceptionally intelligent coding assistant that consistently
       delivers accurate and reliable responses to user instructions.
 roles:
-  ai:
+  assistant:
     message: >-
       \n\n@@ Response\n$message_text
   user:

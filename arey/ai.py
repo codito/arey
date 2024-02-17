@@ -1,7 +1,30 @@
 """Models for AI."""
-from abc import ABC, ABCMeta, abstractmethod, abstractproperty
+from abc import ABC, ABCMeta, abstractmethod, abstractproperty, abstractstaticmethod
 from dataclasses import dataclass
-from typing import Optional, Iterator, List
+from enum import Enum
+from typing import cast, Optional, Iterator, List, Literal
+
+SenderTypeLiteral = Literal["assistant", "user", "system"]
+
+
+class SenderType(Enum):
+    """Chat message sender."""
+
+    SYSTEM = 1
+    ASSISTANT = 2
+    USER = 3
+
+    def role(self) -> SenderTypeLiteral:
+        """Convert the sender to role."""
+        return cast(SenderTypeLiteral, self.name.lower())
+
+
+@dataclass(kw_only=True)
+class ChatMessage:
+    """A chat message."""
+
+    text: str
+    sender: SenderType
 
 
 @dataclass
@@ -48,6 +71,11 @@ class CompletionModel(ABC, metaclass=ABCMeta):
     """A generative AI model."""
 
     @abstractproperty
+    def context_size(self) -> int:
+        """Get context size for the model."""
+        raise NotImplementedError
+
+    @abstractproperty
     def metrics(self) -> ModelMetrics:
         """Get metrics for the model."""
         raise NotImplementedError
@@ -58,13 +86,21 @@ class CompletionModel(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def complete(self, text: str) -> Iterator[CompletionResponse]:
+    def complete(
+        self, text: str | list[ChatMessage], settings: dict
+    ) -> Iterator[CompletionResponse]:
         """Create a completion for given text."""
         raise NotImplementedError
 
     @abstractmethod
     def count_tokens(self, text: str) -> int:
         """Count tokens for the given text."""
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def validate_config(config: dict) -> bool:
+        """Validate the model configuration."""
         raise NotImplementedError
 
 
@@ -91,7 +127,7 @@ def combine_metrics(usage_series: List[CompletionMetrics]) -> CompletionMetrics:
         response_latency += u.completion_latency_ms
         response_tokens += u.completion_tokens
     return CompletionMetrics(
-        prompt_tokens=usage_series[0].prompt_tokens,
+        prompt_tokens=usage_series[-1].prompt_tokens,
         prompt_eval_latency_ms=usage_series[0].prompt_eval_latency_ms,
         completion_tokens=response_tokens,
         completion_runs=len(usage_series),

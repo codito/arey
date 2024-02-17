@@ -8,11 +8,11 @@ import os
 import tempfile
 import frontmatter
 from functools import lru_cache
-from arey.ai import CompletionMetrics, ModelMetrics, combine_metrics
+from arey.ai import CompletionModel, CompletionMetrics, ModelMetrics, combine_metrics
 from arey.config import ModelConfig, get_config
-from arey.model import AreyError
+from arey.error import AreyError
 from arey.platform.assets import get_asset_path
-from arey.platform.llama import LlamaBaseModel
+from arey.platform.llm import get_completion_llm
 from arey.platform.console import capture_stderr
 from typing import Dict, Optional, Iterator, cast
 
@@ -42,7 +42,7 @@ class PlayFile:
     prompt: str
     completion_profile: Dict
 
-    model: Optional[LlamaBaseModel] = None
+    model: Optional[CompletionModel] = None
     result: Optional[PlayResult] = None
 
 
@@ -89,8 +89,8 @@ def load_play_model(play_file: PlayFile) -> ModelMetrics:
     model_config = play_file.model_config
     model_settings = play_file.model_settings
     with capture_stderr():
-        model: LlamaBaseModel = LlamaBaseModel(
-            model_path=model_config.path, model_settings=model_settings
+        model: CompletionModel = get_completion_llm(
+            model_config=model_config.asdict(), settings=model_settings
         )
         model.load("")
         play_file.model = model

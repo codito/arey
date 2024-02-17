@@ -9,14 +9,17 @@ requires-python = '>=3.10'
 description = 'Simple large language model app.'
 authors = [{ name = 'codito', email = 'codito@codito.in' }]
 dependencies = [
-    "click",
-    "llama-cpp-python",
-    "markdown",
-    "python-frontmatter",
-    "pyyaml",
-    "rich",
-    "watchfiles",
-    "wurlitzer",
+    "click>=8.1.7",
+    "llama-cpp-python>=0.2.31",
+    "markdown>=3.5.2",
+    "ollama>=0.1.6",
+    "openai>=1.12.0",
+    "python-frontmatter>=1.1.0",
+    "pyyaml>=6.0.1",
+    "rich>=13.7.0",
+    "tiktoken>=0.6.0",
+    "watchfiles>=0.21.0",
+    "wurlitzer>=3.0.3",
 ]
 classifiers = [
     'Development Status :: 2 - Pre-Alpha',
@@ -77,10 +80,12 @@ addopts = "--cov=arey --cov-report=term-missing --quiet"
 
 [tool.ruff]
 exclude = [".venv", "venv"]
-ignore = ["D203", "D212"]
 line-length = 88
+
+[tool.ruff.lint]
+ignore = []
 select = ["D", "E", "F", "W"]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "arey/tests/**/*.py" = ["D101", "D102", "D103"]
 "**/*.py" = ["F405", "D203", "D213"]

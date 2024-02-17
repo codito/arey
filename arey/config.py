@@ -1,21 +1,27 @@
 """Configuration for arey."""
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Dict, Optional, TypedDict, Tuple, Union, cast
 
 import yaml
 
-from arey.model import AreyError
+from arey.error import AreyError
 from arey.platform.assets import get_config_dir, get_default_config
+from arey.platform.llm import validate_config
 
 
 @dataclass
 class ModelConfig:
     """Configuration for a given model."""
 
-    path: str
-    template: str
+    name: str = ""
+    path: str = ""
+    template: str = "chatml"
     type: Optional[str] = "llama2"
+
+    def asdict(self) -> dict:
+        """Get dict for this object."""
+        return asdict(self)
 
 
 class ProfileConfig(TypedDict):
@@ -62,7 +68,12 @@ class Config:
         from arey.prompt import has_prompt
 
         models = {
-            key: ModelConfig(val["path"], val["template"], val.get("type", "llama2"))
+            key: ModelConfig(
+                val.get("name", ""),
+                val.get("path", ""),
+                val["template"],
+                val.get("type", "llama2"),
+            )
             for key, val in config.get("models", {}).items()
         }
         profiles = {
@@ -88,9 +99,9 @@ class Config:
                 )
             model = models[model_name]
             model.path = os.path.expanduser(model.path) if model.path else model.path
-            if not os.path.exists(model.path):
+            if not validate_config(asdict(model)):
                 raise AreyError(
-                    "config", f"Model '{model_name}' has invalid path: {model.path}."
+                    "config", f"Model '{model_name}' has invalid config: {model}."
                 )
             if not has_prompt(model.template):
                 raise AreyError(

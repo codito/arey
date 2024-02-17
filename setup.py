@@ -1,4 +1,4 @@
-"""Setup for myl app."""
+"""Setup for arey app."""
 from setuptools import setup
 
 setup()

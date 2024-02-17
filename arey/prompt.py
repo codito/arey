@@ -6,9 +6,10 @@ from string import Template
 from typing import Dict, List, Literal
 
 import yaml
+from arey.ai import SenderTypeLiteral
 
 from arey.platform.assets import get_asset_dir
-from arey.model import AreyError
+from arey.error import AreyError
 
 SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
@@ -54,7 +55,7 @@ class Prompt:
         roles = content.get("roles", {})
         if (
             not roles
-            or not roles.get("ai")
+            or not roles.get("assistant")
             or not roles.get("user")
             or not roles.get("system")
         ):
@@ -62,7 +63,7 @@ class Prompt:
                 "template", "`roles` element in the prompt template is required."
             )
         message_formats = {
-            "ai": roles.get("ai").get("message"),
+            "assistant": roles.get("assistant").get("message"),
             "user": roles.get("user").get("message"),
             "system": roles.get("system").get("message"),
         }
@@ -100,7 +101,7 @@ class Prompt:
 
     def get_message(
         self,
-        role: Literal["ai", "user", "system"],
+        role: SenderTypeLiteral,
         text: str,
         token_overrides: Dict[str, str] = {},
     ) -> str:

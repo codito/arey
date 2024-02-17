@@ -17,7 +17,7 @@ tokens:
       factually.
 
 roles:
-  ai:
+  assistant:
     message: |-
 
       ASSISTANT: $message_text

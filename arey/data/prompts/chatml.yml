@@ -14,7 +14,7 @@ tokens:
     prompt_prefix: >-
       You are a helpful assistant. Please think step by step and answer the query.
 roles:
-  ai:
+  assistant:
     message: |+
       <|im_start|>assistant
       $message_text<|im_end|>
