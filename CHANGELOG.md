@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.0.5 - 2024-02-17
+
+- Feature: ollama support for ask, chat and play commands.
+
 ## v0.0.4 - 2024-01-22
 
 This release focuses on fixing `arey play` command on Windows/WSL2 and multiple
