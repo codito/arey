@@ -1,5 +1,5 @@
 """Models for AI."""
-from abc import ABC, ABCMeta, abstractmethod, abstractproperty, abstractstaticmethod
+from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 from dataclasses import dataclass
 from enum import Enum
 from typing import cast, Optional, Iterator, List, Literal
