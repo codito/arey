@@ -72,6 +72,7 @@ class OllamaBaseModel(CompletionModel):
             "top_k": 40,
             "top_p": 0.1,
             "repeat_penalty": 1.176,
+            "raw": True,  # do not preserve context in the server
         } | settings
         output = cast(
             Iterator[Mapping[str, Any]],
@@ -141,5 +142,8 @@ class OllamaBaseModel(CompletionModel):
         penalize_newline: bool
         stop: Sequence[str]
         """
-        result = Options(**data)
+        result = Options()
+        for key, val in data.items():
+            if key in result:
+                result[key] = val
         return result
