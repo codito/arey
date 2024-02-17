@@ -60,6 +60,7 @@ Please update the `models` section in the config yml to your local model path.
 `arey chat`
 
 ### 3. Run Arey in play mode
+
 Use to fine-tune a prompt in your editor while `arey` keeps completing your prompt on every save.
 
 ```sh
@@ -84,7 +85,7 @@ Watching `/tmp/arey_playzl9igj3d.md` for changes...
 ## Development
 
 ```sh
-# Install myl locally in editable mode.
+# Install arey locally in editable mode.
 > pip install -e .
 > pip install -e .\[test\] # optional, if you wish to run tests
 

@@ -57,7 +57,7 @@ We will build upon following concepts.
   - Models can support one or both of these modes.
   - TODO: more clarification on where and how to use modes.
 - **Tasks** are the primary interaction model for this app.
-  - E.g., `myl <task>` will perform the task.
+  - E.g., `arey <task>` will perform the task.
   - Task is the highest level of abstraction this library will provide.
   - Task will own and manage a prompt. E.g., it will understand the prompt
     parameters and will fill those at runtime.
@@ -100,7 +100,7 @@ Let's enumerate few example scenarios to validate the mental model.
 - Output: a summary of the provided text.
 - Task can support various tweaks like summarize in bullets, or a paragraph.
   Optionally, extract keywords etc.
-- E.g., `myl summarize --keywords <text blob>` or `cat essay.md | myl summarize`
+- E.g., `arey summarize --keywords <text blob>` or `cat essay.md | arey summarize`
 - Implementation
   - Prompt can use zero shot or few shot mechanism.
   - Prompt response can be JSON. We can dynamically provide instruction to

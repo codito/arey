@@ -9,7 +9,7 @@ from io import StringIO
 import frontmatter
 from rich.console import Console
 
-from myl.task import Task, create_task, run
+from arey.task import Task, create_task, run
 
 console = Console()
 
