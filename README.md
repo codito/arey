@@ -2,18 +2,22 @@
 
 > Arey (अरे, sanskrit) — ind. Interjection of calling.
 
-Arey is a simple large language model app.
+Arey is a simple large language model playground in your terminal.
 
+✨ Command line interface, works everywhere python is available.  
 🤖 Use any llama.cpp or ollama model.  
 💬 Chat with your favorite local models. CPU friendly 🍀  
-🙋 Ask the AI model with a single command.  
-📋 Supercharged in-context learning workflow ❤️ Edit your prompt in _any_ editor
+🙋 Ask anything to AI models with a single command.  
+📋 Supercharged prompt fine-tuning workflow ❤️ Edit your prompt in _any_ editor
 and `arey` will generate a completion on save.  
-🔓 No telemetry, no internet, nothing to sell. Dedicated to the public domain.
+🔓 No telemetry, no internet, nothing to sell.  
+🙏 Dedicated to the public domain.
 
-🚧 Much more to come... See **Roadmap** below.
+See [Get Started](https://apps.codito.in/arey) or notes below for a quick guide.
 
 https://github.com/codito/arey/assets/28766/6b886e49-6124-4256-84d9-20449c783a34
+
+🚧 Much more to come... See **Roadmap** below.
 
 ## Installation
 
@@ -23,7 +27,7 @@ https://github.com/codito/arey/assets/28766/6b886e49-6124-4256-84d9-20449c783a34
 pipx install arey
 ```
 
-Please use [WSL][] for Windows installation. Troubleshooting notes are [here](docs/windows.md).
+Windows troubleshooting notes are [here](docs/windows.md).
 
 [WSL]: https://learn.microsoft.com/en-us/windows/wsl/install
 
@@ -85,29 +89,7 @@ Watching `/tmp/arey_playzl9igj3d.md` for changes...
 
 ## Development
 
-```sh
-# Install arey locally in editable mode.
-> pip install -e .
-> pip install -e .\[test\] # optional, if you wish to run tests
-
-# Install with samples dependency if you wish to run them
-> pip install -e .\[samples\]
-```
-
-With OPENBLAS, loading time for models is much smaller and inference is about
-4-5% faster. Here's how to install `llama-cpp-python` with OPENBLAS support:
-
-```sh
-> pip uninstall llama-cpp-python
-> CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" FORCE_CMAKE=1 pip install llama-cpp-python --force-reinstall --upgrade --verbose
-```
-
-If you've a GPU, try the following installation instead.
-
-```sh
-> pip uninstall llama-cpp-python
-> CMAKE_ARGS="-DLLAMA_CUBLAS=ON" FORCE_CMAKE=1 pip install llama-cpp-python --force-reinstall --upgrade --verbose
-```
+See <https://apps.codito.in/arey/contribute>.
 
 ## Roadmap
 

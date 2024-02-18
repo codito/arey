@@ -1,7 +1,7 @@
 # Example configuration for arey app
 #
 # Looked up from XDG_CONFIG_DIR (~/.config/arey/arey.yml) on Linux or
-# ~/.arey on Windows.
+# C:\Users\<username>\.arey\arey.yml on Windows.
 
 models:
   openhermes25-mistral-7b:

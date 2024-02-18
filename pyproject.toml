@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "arey"
 version = "0.0.5"
 requires-python = '>=3.10'
-description = 'Simple large language model app.'
+description = 'Simple large language model playground.'
 authors = [{ name = 'codito', email = 'codito@codito.in' }]
 dependencies = [
     "click>=8.1.7",
@@ -45,7 +45,15 @@ classifiers = [
 readme = { file = "README.md", content-type = "text/markdown" }
 
 [project.optional-dependencies]
-test = ["pre-commit", "pytest", "pytest-mock", "pytest-cov", "ruff"]
+test = [
+    "mkdocs",
+    "mkdocs-material",
+    "pre-commit",
+    "pytest",
+    "pytest-mock",
+    "pytest-cov",
+    "ruff",
+]
 samples = ["beautifulsoup4", "lxml"]
 
 [project.scripts]
@@ -53,7 +61,7 @@ arey = "arey.main:main"
 
 [project.urls]
 Homepage = 'https://github.com/codito/arey'
-# Documentation = 'https://apps.codito.in/arey'
+Documentation = 'https://apps.codito.in/arey'
 Source = 'https://github.com/codito/arey'
 Changelog = 'https://github.com/codito/arey/blob/master/CHANGELOG.md'
 
