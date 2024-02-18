@@ -1,0 +1,14 @@
+# An example of a prompt to override the model template with custom contexts.
+# How to use:
+# arey task "Classify the text into one of the categories in JSON format: {\"category\": [\"Technology\", \"Life\", \"Philosophy\"]}. Here's the text:" <path to this file>
+
+name: summarize
+version: 1
+type: override
+tokens:
+  custom:
+    prompt_prefix: |
+      You are a SEO expert. Follow the instructions and provide an answer.
+
+      #Carefully read the summary and keywords. Choose one category from "Technology", "Life", "Philosophy" in this JSON format: {"category": []}.
+

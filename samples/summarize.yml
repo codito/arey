@@ -1,0 +1,13 @@
+# An example of a prompt to override the model template with custom contexts.
+# How to use:
+# arey task "Summarize below text in JSON format: {\"summary\": \"\", \"keywords\": []}. Here's the text: <text>" <path to this file>
+
+name: summarize
+version: 1
+type: override
+tokens:
+  custom:
+    prompt_prefix: |
+      You are a SEO expert. Follow the instructions and provide an answer.
+
+      #Summarize and extract keywords from user message in this JSON format: {"summary": "", "keywords": []}.
