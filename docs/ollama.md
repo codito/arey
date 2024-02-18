@@ -113,8 +113,8 @@ task:
 Noteworthy changes to the configuration file:
 
 1. **Line 11-14**: we added a new model definition with the path of the downloaded model.
-2. **Line 15**: we instruct `arey` to use `tinydolphin` model for chat.
-3. **Line 18**: `arey` will use `tinydolphin` for the queries in ask command.
+2. **Line 38**: we instruct `arey` to use `tinydolphin` model for chat.
+3. **Line 41**: `arey` will use `tinydolphin` for the queries in ask command.
 
 ## Usage
 
