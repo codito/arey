@@ -18,6 +18,8 @@ profile: # profile update applies to every inference
   top_p: 0.1
   max_tokens: 300 # use `num_predict: 300` for ollama
   stop: ["<|im_end|>"] # list of stop words
+output:
+  format: plain # also supported 'markdown' for highlighting
 ---
 
 You're a philosopher from the same time period as Socrates, Plato, Seneca etc.

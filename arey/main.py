@@ -23,6 +23,7 @@ from arey.play import PlayFile
 
 def _generate_response(
     console: Console,
+    output_settings: dict,
     run: Callable[[], Iterable[str]],
     get_metrics: Callable[[], Optional[CompletionMetrics]],
 ) -> None:
@@ -52,7 +53,12 @@ def _generate_response(
                     break
                 text.append(response)
 
-    console.print(Markdown(text.plain))
+    # Default output in markdown
+    output_format = output_settings.get("format", "markdown")
+    if output_format == "plain":
+        console.print(text.plain)
+    else:
+        console.print(Markdown(text.plain))
 
     console.print()
     metrics = get_metrics()
@@ -71,6 +77,7 @@ def _generate_response(
 
     console.print()
     console.print(footer, style="message_footer")
+    console.print()
 
 
 def _print_logs(console: Console, verbose: bool, logs: Optional[str]) -> None:
@@ -112,16 +119,33 @@ def error_handler(func):
     return wrapper
 
 
-@click.command("ask")
+def common_options(func):
+    """Get common options for arey commands."""
+
+    @click.option(
+        "-v", "--verbose", is_flag=True, default=False, help="Show verbose logs."
+    )
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@click.group()
+def main():
+    """Arey - a simple large language model app."""
+    pass
+
+
+@main.command("ask")
 @click.argument("instruction", nargs=-1)
 @click.option("-o", "--overrides-file", type=click.File())
-@click.pass_context
 @error_handler
-def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
+@common_options
+def task(instruction: str, overrides_file: str, verbose: bool) -> int:
     """Run an instruction and generate response."""
     from arey.task import create_task, run
-
-    verbose = ctx.obj["VERBOSE"]
 
     console = get_console()
     console.print()
@@ -136,6 +160,7 @@ def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
 
     _generate_response(
         console,
+        {},
         lambda: run(task, instruction),
         lambda: (task.result and task.result.metrics),
     )
@@ -144,14 +169,12 @@ def task(ctx: click.Context, instruction: str, overrides_file: str) -> int:
     return 0
 
 
-@click.command("chat")
-@click.pass_context
+@main.command("chat")
 @error_handler
-def chat(ctx: click.Context) -> int:
+@common_options
+def chat(verbose: bool) -> int:
     """Chat with an AI model."""
     from arey.chat import create_chat, get_completion_metrics, stream_response
-
-    verbose = ctx.obj["VERBOSE"]
 
     console = get_console()
     console.print(("Welcome to arey chat!\nType 'q' to exit."))
@@ -186,6 +209,7 @@ def chat(ctx: click.Context) -> int:
         console.print()
         _generate_response(
             console,
+            {},
             lambda: stream_response(chat, user_input),
             lambda: get_completion_metrics(chat),
         )
@@ -203,7 +227,7 @@ def chat(ctx: click.Context) -> int:
     return 0
 
 
-@click.command("play")
+@main.command("play")
 @click.argument("file", required=False)
 @click.option(
     "--no-watch",
@@ -211,16 +235,14 @@ def chat(ctx: click.Context) -> int:
     default=False,
     help="Watch the play file and regenerate response on save.",
 )
-@click.pass_context
 @error_handler
-def play(ctx: click.Context, file: str, no_watch: bool) -> int:
+@common_options
+def play(file: str, no_watch: bool, verbose: bool) -> int:
     """Watch FILE for model, prompt and generate response on edit.
 
     If FILE is not provided, a temporary file is created for edit.
     """
     from arey.play import get_play_file, get_play_response, load_play_model
-
-    verbose = ctx.obj["VERBOSE"]
 
     console = get_console()
     console.print()
@@ -250,9 +272,11 @@ def play(ctx: click.Context, file: str, no_watch: bool) -> int:
                 footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
                 console.print(footer, style="message_footer")
         console.print()
+        output_settings = play_file_mod.output_settings
 
         _generate_response(
             console,
+            output_settings,
             lambda: get_play_response(play_file_mod),
             lambda: (play_file_mod.result and play_file_mod.result.metrics),
         )
@@ -273,19 +297,5 @@ def play(ctx: click.Context, file: str, no_watch: bool) -> int:
     return 0
 
 
-@click.group()
-@click.option("-v", "--verbose", default=False, help="Show verbose logs.")
-@click.pass_context
-def main(ctx: click.Context, verbose: bool):
-    """Arey - a simple large language model app."""
-    ctx.ensure_object(dict)
-    ctx.obj["VERBOSE"] = verbose
-    pass
-
-
-main.add_command(task)
-main.add_command(chat)
-main.add_command(play)
-
-if __name__ == "__main__":
+if __name__ == "__common__":
     main()

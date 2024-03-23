@@ -42,6 +42,8 @@ class PlayFile:
     prompt: str
     completion_profile: Dict
 
+    output_settings: Dict
+
     model: Optional[CompletionModel] = None
     result: Optional[PlayResult] = None
 
@@ -75,12 +77,14 @@ def get_play_file(file_path: str) -> PlayFile:
     model_config = config.models[cast(str, play_file.metadata["model"])]
     model_settings: dict = cast(dict, play_file.metadata.get("settings", {}))
     completion_profile: dict = cast(dict, play_file.metadata.get("profile", {}))
+    output_settings: dict = cast(dict, play_file.metadata.get("output", {}))
     return PlayFile(
         file_path=play_file_path,
         model_config=model_config,
         model_settings=model_settings,
         prompt=play_file.content,
         completion_profile=completion_profile,
+        output_settings=output_settings,
     )
 
 
