@@ -1,0 +1,44 @@
+# Prompt template for Llama 3 from Meta
+
+name: llama3
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    prompt_prefix: >-
+      You are a helpful, kind and knowledgeable AI assistant. Write a response
+      that appropriately completes the request to the best of your expertise.
+roles:
+  assistant:
+    message: >+
+      <|start_header_id|>assistant<|end_header_id|>
+      $message_text<|eot_id|>
+  user:
+    message: >+
+      <|start_header_id|>user<|end_header_id|>
+      $message_text<|eot_id|>
+  system:
+    message: >-
+      <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+      $prompt_prefix<|eot_id|>
+stop_words:
+  - <|start_header_id|>
+  - <|eot_id|>
+prompts:
+  chat: |
+    <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    $prompt_prefix<|eot_id|>
+    $chat_history<|start_header_id|>user<|end_header_id|>
+    $user_query<|eot_id|>
+    <|start_header_id|>assistant<|end_header_id|>
+    
+  task: |
+    <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    $prompt_prefix<|eot_id|>
+    <|start_header_id|>user<|end_header_id|>
+    $user_query<|eot_id|>
+    <|start_header_id|>assistant<|end_header_id|>
+

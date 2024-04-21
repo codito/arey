@@ -97,6 +97,11 @@ class CompletionModel(ABC, metaclass=ABCMeta):
         """Count tokens for the given text."""
         raise NotImplementedError
 
+    @abstractmethod
+    def free(self) -> None:
+        """Free any resources for the model."""
+        raise NotImplementedError
+
     @staticmethod
     @abstractmethod
     def validate_config(config: dict) -> bool:

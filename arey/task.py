@@ -2,6 +2,7 @@
 
 A task is stateless execution of a single instruction.
 """
+
 import os
 from dataclasses import dataclass, field
 from typing import Iterator, Optional, Tuple
@@ -80,3 +81,4 @@ def run(task: Task, user_input: str) -> Iterator[str]:
         finish_reason=finish_reason,
         logs=stderr.getvalue(),
     )
+    model.free()

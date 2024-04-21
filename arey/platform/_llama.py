@@ -133,6 +133,10 @@ class LlamaBaseModel(CompletionModel):
         model = self._get_model()
         return len(model.tokenize(text.encode("utf-8")))
 
+    def free(self) -> None:
+        if self._llm:
+            del self._llm
+
     @staticmethod
     def validate_config(config: dict) -> bool:
         path = config["path"]
