@@ -1,0 +1,37 @@
+# Prompt template for Phi 3 models.
+#
+# See <https://huggingface.co/microsoft/Phi-3-medium-128k-instruct> and others.
+
+name: phi3
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+roles:
+  system:
+    message: ""
+  assistant:
+    message: |+
+      <|assistant|>
+      $message_text<|end|>
+  user:
+    message: |+
+      <|user|>
+      $message_text<|end|>
+stop_words:
+  - <|user|>
+  - <|assistant|>
+  - <|end|>
+prompts:
+  chat: |
+    $chat_history<|user|>
+    $user_query<|end|>
+    <|assistant|>
+    
+  task: |
+    <|user|>
+    $user_query<|end|>
+    <|assistant|>
+
