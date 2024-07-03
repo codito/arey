@@ -1,0 +1,36 @@
+# Prompt template for Gemma 2 models.
+#
+# See <https://huggingface.co/microsoft/Phi-3-medium-128k-instruct> and others.
+
+name: gemma2
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+roles:
+  system:
+    message: ""
+  assistant:
+    message: |+
+      <start_of_turn>model
+      $message_text<end_of_turn>
+  user:
+    message: |+
+      <start_of_turn>user
+      $message_text<end_of_turn>
+stop_words:
+  - <start_of_turn>
+  - <end_of_turn>
+prompts:
+  chat: |
+    $chat_history<start_of_turn>user
+    $user_query<end_of_turn>
+    <start_of_turn>model
+    
+  task: |
+    <start_of_turn>user
+    $user_query<end_of_turn>
+    <start_of_turn>model
+
