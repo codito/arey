@@ -1,0 +1,42 @@
+# Prompt template for Gemma 2 models.
+#
+# See <https://huggingface.co/bartowski/codegeex4-all-9b-GGUF> and others.
+
+name: codegeex4
+version: 1
+tokens:
+  system:
+    - message_text
+    - chat_history
+    - user_query
+  custom:
+    prompt_prefix: >-
+      You are an intelligent programming assistant named CodeGeeX. You will answer any questions users have about programming, coding, and computers, and provide code that is formatted correctly, executable, accurate, and secure, and offer detailed explanations when necessary. Please answer in English.
+roles:
+  system:
+    message: |-
+      [gMASK] <sop> <|system|>
+      $prompt_prefix
+  assistant:
+    message: |-1
+      <|assistant|>
+     $message_text
+  user:
+    message: |-1
+      <|user|>
+     $message_text
+stop_words:
+  - <|user|>
+  - <|assistant|>
+  - <|system|>
+prompts:
+  chat: |
+    [gMASK] <sop> <|system|>
+    $prompt_prefix$chat_history <|user|>
+    $user_query <|assistant|>
+    
+  task: |
+    [gMASK] <sop> <|system|>
+    $prompt_prefix <|user|>
+    $user_query <|assistant|>
+
