@@ -1,4 +1,5 @@
 """Arey app cli entrypoint."""
+
 #!/usr/bin/env python
 import click
 import signal
@@ -67,12 +68,23 @@ def _generate_response(
         tokens_per_sec = (
             metrics.completion_tokens * 1000 / metrics.completion_latency_ms
         )
+        tokens = f" {tokens_per_sec:.2f} tokens/s." if tokens_per_sec > 0 else ""
+        completion_tokens = (
+            f" {metrics.completion_tokens} tokens."
+            if metrics.completion_tokens > 0
+            else ""
+        )
+        prompt_tokens = (
+            f" {metrics.prompt_tokens} prompt tokens."
+            if metrics.prompt_tokens > 0
+            else ""
+        )
         footer += (
             f" {metrics.prompt_eval_latency_ms / 1000:.2f}s to first token."
             f" {metrics.completion_latency_ms / 1000:.2f}s total."
-            f" {tokens_per_sec:.2f} tokens/s."
-            f" {metrics.completion_tokens} tokens."
-            f" {metrics.prompt_tokens} prompt tokens."
+            f"{tokens}"
+            f"{completion_tokens}"
+            f"{prompt_tokens}"
         )
 
     console.print()

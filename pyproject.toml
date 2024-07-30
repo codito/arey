@@ -10,7 +10,7 @@ description = 'Simple large language model playground.'
 authors = [{ name = 'codito', email = 'codito@codito.in' }]
 dependencies = [
     "click>=8.1.7",
-    "llama-cpp-python>=0.2.83",
+    "llama-cpp-python>=0.2.84",
     "markdown>=3.5.2",
     "ollama>=0.1.6",
     "openai>=1.12.0",
@@ -87,7 +87,7 @@ show_missing = "true"
 addopts = "--cov=arey --cov-report=term-missing --quiet"
 
 [tool.ruff]
-exclude = [".venv", "venv"]
+extend-exclude = [".venv", "venv"]
 line-length = 88
 
 [tool.ruff.lint]

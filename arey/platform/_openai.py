@@ -1,11 +1,19 @@
 """OpenAI API based models."""
+
 import dataclasses
 import time
 from functools import reduce
-from typing import Iterator
+from typing import Iterator, Optional
 from openai import OpenAI
+from openai.types.chat import (
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
 from arey.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
-from arey.model import Message
+from arey.ai import ChatMessage
+from arey.error import AreyError
 
 
 @dataclasses.dataclass
@@ -13,7 +21,7 @@ class OpenAISettings:
     """Core model settings."""
 
     base_url: str
-    api_key: str
+    api_key: Optional[str] = "DUMMY KEY"
 
 
 class OpenAIBaseModel(CompletionModel):
@@ -29,6 +37,10 @@ class OpenAIBaseModel(CompletionModel):
         self._client = OpenAI(**dataclasses.asdict(self._model_settings))
 
     @property
+    def context_size(self) -> int:
+        return 0
+
+    @property
     def metrics(self) -> ModelMetrics:
         """Get metrics for model initialization."""
         return ModelMetrics(init_latency_ms=0)
@@ -38,35 +50,31 @@ class OpenAIBaseModel(CompletionModel):
         # No-op since these are remote models.
         pass
 
-    def chat_complete(
-        self, messages: list[Message], settings: dict = {}
+    def complete(
+        self, text: str | list[ChatMessage], settings: dict = {}
     ) -> Iterator[CompletionResponse]:
         """Get a completion for the given text and settings."""
         assert self._client
 
         prev_time = time.perf_counter()
-        # completion_settings = {
-        #     "prompt": text,
-        #     "max_tokens": -1,
-        #     "temperature": 0.7,
-        #     "top_k": 40,
-        #     "top_p": 0.1,
-        #     "repeat_penalty": 1.176,
-        #     "echo": False,
-        # } | settings
+        completion_settings = {
+            "temperature": 0.7,
+        } | settings
 
         # FIXME invalid code
+        if isinstance(text, str):
+            messages = [self._get_message_from_text(text)]
+        else:
+            messages = [self._get_message_from_chat(m) for m in text]
         output = self._client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Hello!"},
-            ],
+            model=self._model_name,
+            messages=messages,
             stream=True,
+            temperature=completion_settings["temperature"],
         )
         prompt_token_count = reduce(
-            lambda val, text: val + self.count_tokens(text),
-            [m.text for m in messages],
+            lambda val, content: val + self.count_tokens(str(content)),
+            [m["content"] for m in messages if "content" in m],
             0,
         )
         prompt_eval_latency = -1
@@ -96,7 +104,41 @@ class OpenAIBaseModel(CompletionModel):
 
     def count_tokens(self, text: str) -> int:
         """Get the token count for given text."""
-        import tiktoken
+        try:
+            import tiktoken
 
-        enc = tiktoken.encoding_for_model(self._model_name)
-        return len(enc.encode(text))
+            enc = tiktoken.encoding_for_model(self._model_name)
+            return len(enc.encode(text))
+        except KeyError:
+            # Allow OpenAI compatible server endpoints
+            pass
+        return 0
+
+    def free(self) -> None:
+        if self._client:
+            del self._client
+
+    @staticmethod
+    def validate_config(config: dict) -> bool:
+        assert config["name"], "Model name is required for OpenAI models."
+        return True
+
+    def _get_message_from_text(self, text: str) -> ChatCompletionMessageParam:
+        return ChatCompletionUserMessageParam({"role": "user", "content": text})
+
+    def _get_message_from_chat(
+        self, message: ChatMessage
+    ) -> ChatCompletionMessageParam:
+        if message.sender.role() == "system":
+            return ChatCompletionSystemMessageParam(
+                {"role": "system", "content": message.text}
+            )
+        if message.sender.role() == "user":
+            return ChatCompletionUserMessageParam(
+                {"role": "user", "content": message.text}
+            )
+        if message.sender.role() == "assistant":
+            return ChatCompletionAssistantMessageParam(
+                {"role": "assistant", "content": message.text}
+            )
+        raise AreyError("system", f"Unknown message role: {message.sender.role()}")

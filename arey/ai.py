@@ -1,5 +1,6 @@
 """Models for AI."""
-from abc import ABC, ABCMeta, abstractmethod, abstractproperty
+
+from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import cast, Optional, Iterator, List, Literal
@@ -70,12 +71,14 @@ class CompletionResponse:
 class CompletionModel(ABC, metaclass=ABCMeta):
     """A generative AI model."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def context_size(self) -> int:
         """Get context size for the model."""
         raise NotImplementedError
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def metrics(self) -> ModelMetrics:
         """Get metrics for the model."""
         raise NotImplementedError

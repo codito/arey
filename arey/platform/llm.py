@@ -3,6 +3,7 @@
 from arey.ai import CompletionModel
 from arey.platform._llama import LlamaBaseModel
 from arey.platform._ollama import OllamaBaseModel
+from arey.platform._openai import OpenAIBaseModel
 
 
 def get_completion_llm(model_config: dict, settings: dict) -> CompletionModel:
@@ -11,6 +12,8 @@ def get_completion_llm(model_config: dict, settings: dict) -> CompletionModel:
     model_path = model_config["path"]
     if model_config["type"] == "ollama":
         return OllamaBaseModel(model_name, settings)
+    if model_config["type"] == "openai":
+        return OpenAIBaseModel(model_name, settings)
     return LlamaBaseModel(model_path, settings)
 
 
@@ -18,4 +21,6 @@ def validate_config(model_config: dict) -> bool:
     """Validate the model configuration."""
     if model_config["type"] == "ollama":
         return OllamaBaseModel.validate_config(model_config)
+    if model_config["type"] == "openai":
+        return OpenAIBaseModel.validate_config(model_config)
     return LlamaBaseModel.validate_config(model_config)

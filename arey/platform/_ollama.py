@@ -1,4 +1,5 @@
 """Ollama based completion model."""
+
 import dataclasses
 import time
 from typing import Any, Iterator, cast, Mapping
@@ -114,6 +115,10 @@ class OllamaBaseModel(CompletionModel):
     def count_tokens(self, text: str) -> int:
         """Get the token count for given text."""
         return 0
+
+    def free(self) -> None:
+        if self._llm:
+            del self._llm
 
     @staticmethod
     def validate_config(config: dict) -> bool:

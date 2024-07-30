@@ -12,6 +12,10 @@ models:
     name: tinydolphin:latest   # name of the model, see http://localhost:11434/api/tags
     type: ollama
     template: chatml
+  openai-example:
+    name: "gemma2-9b-it"
+    type: openai
+    template: gemma2
   # deepseek-coder-6.7b:
   #   path: ~/docs/models/deepseek-coder-6.7b/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
   #   type: deepseek
