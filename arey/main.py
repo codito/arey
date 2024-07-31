@@ -44,11 +44,10 @@ def _generate_response(
     )
 
     with SignalContextManager(signal.SIGINT, stop_completion_handler):
-        with Live(
-            output,
-            console=console,
-            transient=True,
-        ):
+        # Using transient renderable since we replace content with Markdown
+        # rendering upon complete. Vertical overflow allows auto scrolling text
+        # beyond the terminal height.
+        with Live(output, console=console, transient=True, vertical_overflow="visible"):
             for response in run():
                 if stop_completion:
                     break
