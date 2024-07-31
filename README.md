@@ -4,20 +4,19 @@
 
 Arey is a simple large language model playground in your terminal.
 
-✨ Command line interface, works everywhere python is available.  
-🤖 Use any llama.cpp or ollama model.  
-💬 Chat with your favorite local models. CPU friendly 🍀  
-🙋 Ask anything to AI models with a single command.  
-📋 Supercharged prompt fine-tuning workflow ❤️ Edit your prompt in _any_ editor
+- ✨ Command line interface, works everywhere python is available.  
+- 🤖 Use any llama.cpp, ollama model or an openai compatible endpoint.  
+- 💬 Chat with your favorite local models. CPU friendly 🍀  
+- 🙋 Ask anything to AI models with a single command.  
+- 📋 Supercharged prompt fine-tuning workflow ❤️ Edit your prompt in _any_ editor
 and `arey` will generate a completion on save.  
-🔓 No telemetry, no internet, nothing to sell.  
-🙏 Dedicated to the public domain.
+- 🔓 No telemetry, no internet, nothing to sell.
 
 See [Get Started](https://apps.codito.in/arey) or notes below for a quick guide.
 
 https://github.com/codito/arey/assets/28766/6b886e49-6124-4256-84d9-20449c783a34
 
-🚧 Much more to come... See **Roadmap** below.
+🚧 See **Roadmap** below.
 
 ## Installation
 
@@ -98,6 +97,7 @@ See <https://apps.codito.in/arey/contribute>.
       for examples.
 - [x] Markdown formatting for chat mode.
 - [x] Ollama support.
+- [ ] OpenAI server support.
 - [ ] Command support in chat. E.g., logs, change model, copy, clear, etc.
 - [ ] Discover prompts from user directory
 - [ ] Manage prompts and create new interactively
@@ -109,7 +109,4 @@ See <https://apps.codito.in/arey/contribute>.
 
 ## License
 
-Dedicated to the public domain with [CC0][].
-We'll be delighted if this tool helps you positively 💖
-
-[CC0]: https://creativecommons.org/publicdomain/zero/1.0/
+MIT
