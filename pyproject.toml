@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arey"
-version = "0.0.5"
+version = "0.0.6"
 requires-python = '>=3.10'
 description = 'Simple large language model playground.'
 authors = [{ name = 'codito', email = 'codito@codito.in' }]
@@ -32,7 +32,7 @@ classifiers = [
     'Programming Language :: Python :: 3.12',
     'Intended Audience :: Developers',
     'Intended Audience :: Information Technology',
-    'License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication',
+    "License :: OSI Approved :: MIT License",
     'Operating System :: POSIX :: Linux',
     'Operating System :: Microsoft :: Windows',
     'Operating System :: MacOS',
