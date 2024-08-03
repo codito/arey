@@ -10,7 +10,6 @@ from typing import Callable, Iterable, Optional
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
@@ -34,15 +33,11 @@ def _generate_response(
         nonlocal stop_completion
         stop_completion = True
 
-    spinner = Spinner(
-        text="[message_footer]Generating...", name="dots", style="message_footer"
-    )
     text = Text()
-    output = Group(
-        Padding(text, pad=(0, 0, 2, 0)),
-        spinner,
+    status = Spinner(
+        "dots", text="[message_footer]Generating...", style="message_footer"
     )
-
+    output = Group(status, text)
     with SignalContextManager(signal.SIGINT, stop_completion_handler):
         # Using transient renderable since we replace content with Markdown
         # rendering upon complete. Vertical overflow allows auto scrolling text
@@ -51,16 +46,18 @@ def _generate_response(
             for response in run():
                 if stop_completion:
                     break
+                if len(text) < 1:
+                    output.renderables.remove(status)
                 text.append(response)
 
     # Default output in markdown
+    plain_text = text.plain.rstrip("\r\n")
     output_format = output_settings.get("format", "markdown")
     if output_format == "plain":
-        console.print(text.plain)
+        console.print(plain_text)
     else:
-        console.print(Markdown(text.plain))
+        console.print(Markdown(plain_text))
 
-    console.print()
     metrics = get_metrics()
     footer = "◼ Canceled." if stop_completion else "◼ Completed."
     if metrics:
@@ -185,6 +182,7 @@ def task(instruction: str, overrides_file: str, verbose: bool) -> int:
 @common_options
 def chat(verbose: bool) -> int:
     """Chat with an AI model."""
+    import readline  # noqa enable GNU readline capabilities
     from arey.chat import create_chat, get_completion_metrics, stream_response
 
     console = get_console()
