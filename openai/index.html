@@ -9,8 +9,10 @@
       
       
       
-        <link rel="prev" href="../config/">
+        <link rel="prev" href="../ollama/">
       
+      
+        <link rel="next" href="../config/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -18,7 +20,7 @@
     
     
       
-        <title>Contribute - Arey</title>
+        <title>OpenAI - Arey</title>
       
     
     
@@ -104,7 +106,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#contribute" class="md-skip">
+        <a href="#working-with-openai-compatible-servers" class="md-skip">
           Skip to content
         </a>
       
@@ -140,7 +142,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Contribute
+              OpenAI
             
           </span>
         </div>
@@ -274,17 +276,19 @@
       
   
   
+    
   
   
+  
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -298,7 +302,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             Guides
@@ -351,10 +355,30 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../openai/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    OpenAI
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
@@ -363,6 +387,77 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running the server
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Usage
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#completion-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Completion settings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chatting-with-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Chatting with the model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -399,30 +494,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    Contribute
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../contribute/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -431,59 +506,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#development-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Development notes
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Development notes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#cuda-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      CUDA support
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cpu-with-blas-library" class="md-nav__link">
-    <span class="md-ellipsis">
-      CPU with BLAS library
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -515,28 +537,46 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#development-notes" class="md-nav__link">
+  <a href="#running-the-server" class="md-nav__link">
     <span class="md-ellipsis">
-      Development notes
+      Running the server
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Development notes">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Usage
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#cuda-support" class="md-nav__link">
+  <a href="#completion-settings" class="md-nav__link">
     <span class="md-ellipsis">
-      CUDA support
+      Completion settings
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#cpu-with-blas-library" class="md-nav__link">
+  <a href="#chatting-with-the-model" class="md-nav__link">
     <span class="md-ellipsis">
-      CPU with BLAS library
+      Chatting with the model
     </span>
   </a>
   
@@ -565,32 +605,167 @@
   
 
 
-<h1 id="contribute">Contribute</h1>
-<p>Arey is under active development. We're building this app under a permissive
-license to enable usage anywhere and in any shape or form.</p>
-<p>We gladly accept contributions from the community.</p>
-<p>Please create <a href="https://github.com/codito/arey/issues/new">an issue</a> to share
-your feedback, any feature requests or bug reports.</p>
-<p>Thank you ❤️</p>
-<h2 id="development-notes">Development notes</h2>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Install arey locally in editable mode.</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>&gt;<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>&gt;<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="se">\[</span>test<span class="se">\]</span><span class="w"> </span><span class="c1"># optional, if you wish to run tests</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># Install with samples dependency if you wish to run them</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>&gt;<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="se">\[</span>samples<span class="se">\]</span>
+<h1 id="working-with-openai-compatible-servers">Working with OpenAI compatible servers</h1>
+<p>This guide provides step-by-step guidance on using an OpenAI chat compatible
+server endpoint with <code>arey</code>.</p>
+<p>For other ways to run a local LLM, you can try one of the following:</p>
+<ul>
+<li><a href="https://github.com/ggerganov/llama.cpp">Llama.cpp</a> for loading GGUF models downloaded locally. See our <a href="../llama/">Llama guide</a> if you prefer more customizable way to
+  manage your models.</li>
+<li><a href="https://ollama.com">Ollama</a> for managing local models. Please refer to the <a href="../ollama/">Ollama
+  guide</a>.</li>
+</ul>
+<h2 id="running-the-server">Running the server</h2>
+<p>If you've <a href="https://github.com/ggerganov/llama.cpp">Llama.cpp</a> installed on your machine, you can try the
+<code>llama-server</code> binary to start a server.</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>&gt;<span class="w"> </span>./llama-server<span class="w"> </span>-co<span class="w"> </span>-m<span class="w"> </span>~/docs/models/gemma-2/gemma-2-2b-it-Q6_K_L.gguf<span class="w"> </span>-ngl<span class="w"> </span><span class="m">99</span><span class="w"> </span>--threads<span class="w"> </span><span class="m">11</span><span class="w"> </span>-c<span class="w"> </span><span class="m">2048</span>
 </span></code></pre></div>
-<h3 id="cuda-support">CUDA support</h3>
-<p>If you've a GPU, try the following installation instead.</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>&gt;<span class="w"> </span>pip<span class="w"> </span>uninstall<span class="w"> </span>llama-cpp-python
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>&gt;<span class="w"> </span><span class="nv">CMAKE_ARGS</span><span class="o">=</span><span class="s2">&quot;-DGGML_CUDA=on&quot;</span><span class="w"> </span><span class="nv">FORCE_CMAKE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>llama-cpp-python<span class="w"> </span>--force
+<p>Change the parameters as necessary. In this example, <code>ngl</code> offloads all model
+layers to run on the GPU, <code>--threads</code> uses 11 threads on the machine and we use
+context size of <code>2048</code> with <code>-c</code> parameter.</p>
+<h2 id="configure">Configure</h2>
+<p>Let's add an entry for this model in arey's config file.</p>
+<div class="language-yaml highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-1-1"> 1</a></span>
+<span class="normal"><a href="#__codelineno-1-2"> 2</a></span>
+<span class="normal"><a href="#__codelineno-1-3"> 3</a></span>
+<span class="normal"><a href="#__codelineno-1-4"> 4</a></span>
+<span class="normal"><a href="#__codelineno-1-5"> 5</a></span>
+<span class="normal"><a href="#__codelineno-1-6"> 6</a></span>
+<span class="normal"><a href="#__codelineno-1-7"> 7</a></span>
+<span class="normal"><a href="#__codelineno-1-8"> 8</a></span>
+<span class="normal"><a href="#__codelineno-1-9"> 9</a></span>
+<span class="normal"><a href="#__codelineno-1-10">10</a></span>
+<span class="normal"><a href="#__codelineno-1-11">11</a></span>
+<span class="normal"><a href="#__codelineno-1-12">12</a></span>
+<span class="normal"><a href="#__codelineno-1-13">13</a></span>
+<span class="normal"><a href="#__codelineno-1-14">14</a></span>
+<span class="normal"><a href="#__codelineno-1-15">15</a></span>
+<span class="normal"><a href="#__codelineno-1-16">16</a></span>
+<span class="normal"><a href="#__codelineno-1-17">17</a></span>
+<span class="normal"><a href="#__codelineno-1-18">18</a></span>
+<span class="normal"><a href="#__codelineno-1-19">19</a></span>
+<span class="normal"><a href="#__codelineno-1-20">20</a></span>
+<span class="normal"><a href="#__codelineno-1-21">21</a></span>
+<span class="normal"><a href="#__codelineno-1-22">22</a></span>
+<span class="normal"><a href="#__codelineno-1-23">23</a></span>
+<span class="normal"><a href="#__codelineno-1-24">24</a></span>
+<span class="normal"><a href="#__codelineno-1-25">25</a></span>
+<span class="normal"><a href="#__codelineno-1-26">26</a></span>
+<span class="normal"><a href="#__codelineno-1-27">27</a></span>
+<span class="normal"><a href="#__codelineno-1-28">28</a></span>
+<span class="normal"><a href="#__codelineno-1-29">29</a></span>
+<span class="normal"><a href="#__codelineno-1-30">30</a></span>
+<span class="normal"><a href="#__codelineno-1-31">31</a></span>
+<span class="normal"><a href="#__codelineno-1-32">32</a></span>
+<span class="normal"><a href="#__codelineno-1-33">33</a></span>
+<span class="normal"><a href="#__codelineno-1-34">34</a></span>
+<span class="normal"><a href="#__codelineno-1-35">35</a></span>
+<span class="normal"><a href="#__codelineno-1-36">36</a></span>
+<span class="normal"><a href="#__codelineno-1-37">37</a></span>
+<span class="normal"><a href="#__codelineno-1-38">38</a></span>
+<span class="normal"><a href="#__codelineno-1-39">39</a></span>
+<span class="normal"><a href="#__codelineno-1-40">40</a></span>
+<span class="normal"><a href="#__codelineno-1-41">41</a></span>
+<span class="normal"><a href="#__codelineno-1-42">42</a></span>
+<span class="normal"><a href="#__codelineno-1-43">43</a></span>
+<span class="normal"><a href="#__codelineno-1-44">44</a></span>
+<span class="normal"><a href="#__codelineno-1-45">45</a></span>
+<span class="normal"><a href="#__codelineno-1-46">46</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="c1"># Example configuration for arey app</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2"></a><span class="c1">#</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="c1"># Looked up from XDG_CONFIG_DIR (~/.config/arey/arey.yml) on Linux or</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4"></a><span class="c1"># ~/.arey on Windows.</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6"></a><span class="nt">models</span><span class="p">:</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7"></a><span class="w">  </span><span class="nt">tinydolphin</span><span class="p">:</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8"></a><span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/models/tinydolphin-2.8-1.1b.Q4_K_M.gguf</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10"></a><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">chatml</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11"></a><span class="hll"><span class="w">  </span><span class="nt">llamacpp-server</span><span class="p">:</span>
+</span></span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12"></a><span class="hll"><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemma-2-2b-it</span><span class="w"> </span><span class="c1"># model name</span>
+</span></span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13"></a><span class="hll"><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
+</span></span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14"></a><span class="hll"><span class="w">    </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gemma2</span>
+</span></span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15"></a>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16"></a><span class="nt">profiles</span><span class="p">:</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17"></a><span class="w">  </span><span class="c1"># See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18"></a><span class="w">  </span><span class="nt">precise</span><span class="p">:</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19"></a><span class="w">    </span><span class="c1"># factual responses and straightforward assistant answers</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.7</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21"></a><span class="w">    </span><span class="nt">repeat_penalty</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.176</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22"></a><span class="w">    </span><span class="nt">top_k</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">40</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23"></a><span class="w">    </span><span class="nt">top_p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24"></a><span class="w">  </span><span class="nt">creative</span><span class="p">:</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25"></a><span class="w">    </span><span class="c1"># chatting, storywriting, and interesting assistant answers</span>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.72</span>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27"></a><span class="w">    </span><span class="nt">repeat_penalty</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.1</span>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28"></a><span class="w">    </span><span class="nt">top_k</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29"></a><span class="w">    </span><span class="nt">top_p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.73</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30"></a><span class="w">  </span><span class="nt">sphinx</span><span class="p">:</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31"></a><span class="w">    </span><span class="c1"># varied storywriting (on 30B/65B) and unconventional chatting</span>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.99</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33"></a><span class="w">    </span><span class="nt">repeat_penalty</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.15</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34"></a><span class="w">    </span><span class="nt">top_k</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35"></a><span class="w">    </span><span class="nt">top_p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.18</span>
+</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36"></a>
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37"></a><span class="nt">chat</span><span class="p">:</span>
+</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38"></a><span class="hll"><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llamacpp-server</span>
+</span></span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39"></a><span class="w">  </span><span class="nt">profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">precise</span>
+</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40"></a><span class="w">  </span><span class="nt">settings</span><span class="p">:</span>
+</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41"></a><span class="hll"><span class="w">    </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8080/</span>
+</span></span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42"></a><span class="nt">task</span><span class="p">:</span>
+</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llamacpp-server</span>
+</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44"></a><span class="w">  </span><span class="nt">profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">precise</span>
+</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45"></a><span class="w">  </span><span class="nt">settings</span><span class="p">:</span>
+</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46"></a><span class="w">    </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8080/</span>
+</span></code></pre></div></td></tr></table></div>
+<p>Noteworthy changes to the configuration file:</p>
+<ol>
+<li><strong>Line 11-14</strong>: we added a new model definition with openai type.</li>
+<li><strong>Line 38</strong>: we instruct <code>arey</code> to use <code>llamacpp-server</code> model for chat.</li>
+<li><strong>Line 41</strong>: <code>arey</code> will use <code>llamacpp-server</code> for the queries in ask command.</li>
+</ol>
+<h2 id="usage">Usage</h2>
+<p>You can use <code>chat</code>, <code>ask</code> or <code>play</code> commands to run this model.</p>
+<h3 id="completion-settings">Completion settings</h3>
+<p>You can use <strong>profiles</strong> to configure <code>arey</code>. A profile is a collection of
+settings used for tuning the AI model's response. Usually it includes following
+parameters:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>temperature</td>
+<td>0.0-1.0</td>
+<td>Lower temperature implies precise response</td>
+</tr>
+</tbody>
+</table>
+<p>Currently, only <code>temperature</code> is supported for <code>openai</code> models. Watch this space
+for more support soon!</p>
+<h3 id="chatting-with-the-model">Chatting with the model</h3>
+<p>Let's run <code>arey chat</code> to start a chat session. See below for an illustration.</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>❯<span class="w"> </span>arey<span class="w"> </span>chat
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>Welcome<span class="w"> </span>to<span class="w"> </span>arey<span class="w"> </span>chat!
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>Type<span class="w"> </span><span class="s1">&#39;q&#39;</span><span class="w"> </span>to<span class="w"> </span>exit.
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>✓<span class="w"> </span>Model<span class="w"> </span>loaded.<span class="w"> </span><span class="m">0</span>.0s.
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>How<span class="w"> </span>can<span class="w"> </span>I<span class="w"> </span><span class="nb">help</span><span class="w"> </span>you<span class="w"> </span>today?
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>&gt;<span class="w"> </span>Who<span class="w"> </span>are<span class="w"> </span>you?
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>I<span class="w"> </span>am<span class="w"> </span>an<span class="w"> </span>artificial<span class="w"> </span>intelligence<span class="w"> </span>model<span class="w"> </span>that<span class="w"> </span>has<span class="w"> </span>been<span class="w"> </span>programmed<span class="w"> </span>to<span class="w"> </span>simulate<span class="w"> </span>human<span class="w"> </span>behavior,<span class="w"> </span>emotions,<span class="w"> </span>and<span class="w"> </span>responses<span class="w"> </span>based<span class="w"> </span>on<span class="w"> </span>data<span class="w"> </span>gathered<span class="w"> </span>from<span class="w"> </span>various<span class="w"> </span>sources.<span class="w"> </span>My<span class="w"> </span>primary<span class="w"> </span>goal<span class="w"> </span>is<span class="w"> </span>to<span class="w"> </span>provide
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>assistance<span class="w"> </span><span class="k">in</span><span class="w"> </span>various<span class="w"> </span>areas<span class="w"> </span>of<span class="w"> </span>life,<span class="w"> </span>including<span class="w"> </span>communication,<span class="w"> </span>problem-solving,<span class="w"> </span>decision-making,<span class="w"> </span>and<span class="w"> </span>learning.
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>◼<span class="w"> </span>Completed.<span class="w"> </span><span class="m">0</span>.49s<span class="w"> </span>to<span class="w"> </span>first<span class="w"> </span>token.<span class="w"> </span><span class="m">2</span>.10s<span class="w"> </span>total.
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>&gt;
 </span></code></pre></div>
-<h3 id="cpu-with-blas-library">CPU with BLAS library</h3>
-<p>With OPENBLAS, loading time for models is much smaller and inference is about
-4-5% faster. Here's how to install <code>llama-cpp-python</code> with OPENBLAS support:</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>&gt;<span class="w"> </span>pip<span class="w"> </span>uninstall<span class="w"> </span>llama-cpp-python
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>&gt;<span class="w"> </span><span class="nv">CMAKE_ARGS</span><span class="o">=</span><span class="s2">&quot;-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS&quot;</span><span class="w"> </span><span class="nv">FORCE_CMAKE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>llama-cpp-python<span class="w"> </span>--force-reinstall<span class="w"> </span>--upgrade<span class="w"> </span>--verbose<span class="w"> </span>--no-cache
-</span></code></pre></div>
+<p>See <a href="../">quickstart</a> for an example of <code>ask</code> and <code>play</code> commands.</p>
 
 
 
