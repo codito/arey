@@ -1,10 +1,13 @@
 # Welcome to Arey
 
 Arey is a command line playground app for local large language models. It
-supports all the models supported by [Llama.cpp][] and [Ollama][].
+supports all the models supported by [Llama.cpp][] and [Ollama][]. If you have
+your own LLM service with an [OpenAI][] compatible chat endpoint, we got you
+covered too!
 
 [Llama.cpp]: https://github.com/ggerganov/llama.cpp
 [Ollama]: https://ollama.com
+[OpenAI]: https://platform.openai.com/docs/api-reference/chat
 
 ## Install
 

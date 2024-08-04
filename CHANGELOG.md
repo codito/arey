@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.0.6 - 2024-08-04
+
+- Feature: initial support for openai compatible servers.
+- Feature: new models - Gemma 2, Llama 3.1, Codegeex 4.
+- Fix: add readline support, update to latest llama-cpp for newer models
+  including Gemma2 and so on.
+
 ## v0.0.5 - 2024-02-17
 
 - Feature: ollama support for ask, chat and play commands.
