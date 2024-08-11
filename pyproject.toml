@@ -10,7 +10,7 @@ description = 'Simple large language model playground.'
 authors = [{ name = 'codito', email = 'codito@codito.in' }]
 dependencies = [
     "click>=8.1.7",
-    "llama-cpp-python>=0.2.85",
+    "llama-cpp-python>=0.2.87",
     "markdown>=3.5.2",
     "ollama>=0.1.6",
     "openai>=1.12.0",
