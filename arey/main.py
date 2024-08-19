@@ -19,6 +19,7 @@ from arey.ai import CompletionMetrics
 from arey.error import AreyError
 from arey.platform.console import SignalContextManager, get_console
 from arey.play import PlayFile
+from arey.task import close
 
 
 def _generate_response(
@@ -173,6 +174,7 @@ def task(instruction: str, overrides_file: str, verbose: bool) -> int:
         lambda: (task.result and task.result.metrics),
     )
 
+    close(task)
     _print_logs(console, verbose, task.result and task.result.logs)
     return 0
 

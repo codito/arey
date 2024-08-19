@@ -81,4 +81,9 @@ def run(task: Task, user_input: str) -> Iterator[str]:
         finish_reason=finish_reason,
         logs=stderr.getvalue(),
     )
-    model.free()
+
+
+def close(task: Task):
+    """Close a task and free the model."""
+    if model:
+        model.free()

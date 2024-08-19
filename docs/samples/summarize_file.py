@@ -1,4 +1,5 @@
 """Summarize sample script."""
+
 #!/usr/bin/env python
 import argparse
 import glob
@@ -41,8 +42,9 @@ def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
         text = StringIO()
         for response in run(task, instruction):
             text.write(response)
+        formatted_text = text.getvalue().replace("```json", "").replace("```", "")
         try:
-            summary = json.loads(text.getvalue())
+            summary = json.loads(formatted_text)
             post["auto_summary"] = summary["summary"]
             post["auto_keywords"] = summary["keywords"]
             if write:
@@ -53,7 +55,7 @@ def summarize_markdown_file(task: Task, path: str, write: bool) -> None:
             console.print("---")
             console.print(f"[dim]{task.result and task.result.metrics}[/dim]")
         except Exception:
-            console.print(text.getvalue())
+            console.print(formatted_text)
             console.print_exception()
 
 

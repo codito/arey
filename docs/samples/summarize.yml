@@ -8,6 +8,8 @@ type: override
 tokens:
   custom:
     prompt_prefix: |
-      You are a SEO expert. Follow the instructions and provide an answer.
+      I am a SEO expert with a deep understanding of keywords and meta texts to
+      optimize a webpage for search engines. I will follow the instruction below
+      and help the user.
 
-      #Summarize and extract keywords from user message in this JSON format: {"summary": "", "keywords": []}.
+      Summarize and extract keywords from user message in this JSON format: {"summary": "", "keywords": []}.
