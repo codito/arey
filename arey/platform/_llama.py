@@ -1,4 +1,5 @@
 """Llama.cpp based models."""
+
 import dataclasses
 import os
 import time
@@ -74,40 +75,56 @@ class LlamaBaseModel(CompletionModel):
             self._metrics = ModelMetrics(init_latency_ms=latency_ms)
         return self._llm
 
+    def _get_message_from_chat(
+        self, message: ChatMessage
+    ) -> llama_cpp.ChatCompletionRequestMessage:
+        if message.sender.role() == "system":
+            return llama_cpp.ChatCompletionRequestSystemMessage(
+                {"role": "system", "content": message.text}
+            )
+        if message.sender.role() == "user":
+            return llama_cpp.ChatCompletionRequestUserMessage(
+                {"role": "user", "content": message.text}
+            )
+        if message.sender.role() == "assistant":
+            return llama_cpp.ChatCompletionRequestAssistantMessage(
+                {"role": "assistant", "content": message.text}
+            )
+        raise AreyError("system", f"Unknown message role: {message.sender.role()}")
+
     def load(self, text: str):
         """Load a model into memory."""
         model = self._get_model()
         model.eval(model.tokenize(text.encode("utf-8")))
 
     def complete(
-        self, text: str | list[ChatMessage], settings: dict = {}
+        self, messages: list[ChatMessage], settings: dict = {}
     ) -> Iterator[CompletionResponse]:
         """Get a completion for the given text and settings."""
-        assert isinstance(text, str)
-
         prev_time = time.perf_counter()
         model = self._get_model()
         completion_settings = {
-            "prompt": text,
             "max_tokens": -1,
             "temperature": 0.7,
             "top_k": 40,
             "top_p": 0.1,
             "repeat_penalty": 1.176,
-            "echo": False,
         } | settings
+
+        formatted_messages = [self._get_message_from_chat(m) for m in messages]
         output = cast(
             Iterator[llama_cpp.CompletionChunk],
-            model.create_completion(
+            model.create_chat_completion(
+                messages=formatted_messages,
                 **completion_settings,
                 stream=True,
             ),
         )
-
-        prompt_token_count = self.count_tokens(text)
+        prompt_token_count = sum(self.count_tokens(m.text) for m in messages)
         prompt_eval_latency = -1
         for chunk in output:
-            chunk_text = chunk["choices"][0]["text"]
+            # chunk_text = chunk["choices"][0]["text"]
+            chunk_text = chunk["choices"][0]["delta"].get("content", "")
 
             current_time = time.perf_counter()
             latency = current_time - prev_time

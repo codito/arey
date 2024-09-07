@@ -2,7 +2,6 @@
 
 import dataclasses
 import time
-from functools import reduce
 from typing import Iterator, Optional
 from openai import OpenAI
 from openai.types.chat import (
@@ -51,7 +50,7 @@ class OpenAIBaseModel(CompletionModel):
         pass
 
     def complete(
-        self, text: str | list[ChatMessage], settings: dict = {}
+        self, messages: list[ChatMessage], settings: dict = {}
     ) -> Iterator[CompletionResponse]:
         """Get a completion for the given text and settings."""
         assert self._client
@@ -62,21 +61,14 @@ class OpenAIBaseModel(CompletionModel):
         } | settings
 
         # FIXME invalid code
-        if isinstance(text, str):
-            messages = [self._get_message_from_text(text)]
-        else:
-            messages = [self._get_message_from_chat(m) for m in text]
+        formatted_messages = [self._get_message_from_chat(m) for m in messages]
         output = self._client.chat.completions.create(
             model=self._model_name,
-            messages=messages,
+            messages=formatted_messages,
             stream=True,
             temperature=completion_settings["temperature"],
         )
-        prompt_token_count = reduce(
-            lambda val, content: val + self.count_tokens(str(content)),
-            [m["content"] for m in messages if "content" in m],
-            0,
-        )
+        prompt_token_count = sum(self.count_tokens(m.text) for m in messages)
         prompt_eval_latency = -1
         for chunk in output:
             chunk_text = chunk.choices[0].delta.content or ""

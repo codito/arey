@@ -1,0 +1,35 @@
+models:
+  dummy-7b:
+    path: ~/models/dummy_model.gguf
+    type: gguf
+    template: chatml
+
+profiles:
+  precise:
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+  creative:
+    temperature: 0.72
+    repeat_penalty: 1.1
+    top_k: 0
+    top_p: 0.73
+  sphinx:
+    temperature: 1.99
+    repeat_penalty: 1.15
+    top_k: 30
+    top_p: 0.18
+
+chat:
+  model: dummy-7b
+  profile: precise
+  settings:
+    n_threads: 11
+    n_gpu_layers: 18
+task:
+  model: dummy-7b
+  profile: precise
+  # settings:
+  #   n_threads: 10
+  #   n_gpu_layers: 20

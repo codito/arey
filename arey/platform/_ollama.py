@@ -13,6 +13,7 @@ from arey.ai import (
     CompletionResponse,
     ModelMetrics,
 )
+from arey.error import AreyError
 
 
 @dataclasses.dataclass
@@ -48,6 +49,15 @@ class OllamaBaseModel(CompletionModel):
     def metrics(self) -> ModelMetrics:
         return self._metrics
 
+    def _get_message_from_chat(self, message: ChatMessage) -> dict[str, str]:
+        if message.sender.role() == "system":
+            return {"role": "system", "content": message.text}
+        if message.sender.role() == "user":
+            return {"role": "user", "content": message.text}
+        if message.sender.role() == "assistant":
+            return {"role": "assistant", "content": message.text}
+        raise AreyError("system", f"Unknown message role: {message.sender.role()}")
+
     def load(self, text: str) -> None:
         self.client = Client(**dataclasses.asdict(self._model_settings))
         # response = self.client.show(self._model_name)
@@ -61,11 +71,9 @@ class OllamaBaseModel(CompletionModel):
         self._metrics = ModelMetrics(init_latency_ms=load_latency_ms)
 
     def complete(
-        self, text: str | list[ChatMessage], settings: dict = {}
+        self, messages: list[ChatMessage], settings: dict = {}
     ) -> Iterator[CompletionResponse]:
         # TODO: add chat completion support
-        assert isinstance(text, str)
-
         prev_time = time.perf_counter()
         completion_settings = {
             "num_predict": -1,
@@ -77,9 +85,9 @@ class OllamaBaseModel(CompletionModel):
         } | settings
         output = cast(
             Iterator[Mapping[str, Any]],
-            self.client.generate(
+            self.client.chat(
                 model=self._model_name,
-                prompt=text,
+                messages=[self._get_message_from_chat(m) for m in messages],
                 options=self._get_options(completion_settings),
                 stream=True,
             ),

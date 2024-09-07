@@ -49,6 +49,7 @@ test = [
     "mkdocs",
     "mkdocs-material",
     "pre-commit",
+    "pyfakefs",
     "pytest",
     "pytest-mock",
     "pytest-cov",
@@ -84,6 +85,7 @@ omit = []
 show_missing = "true"
 
 [tool.pytest.ini_options]
+testpaths = ["arey"]
 addopts = "--cov=arey --cov-report=term-missing --quiet"
 
 [tool.ruff]

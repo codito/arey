@@ -90,9 +90,9 @@ class CompletionModel(ABC, metaclass=ABCMeta):
 
     @abstractmethod
     def complete(
-        self, text: str | list[ChatMessage], settings: dict
+        self, messages: list[ChatMessage], settings: dict
     ) -> Iterator[CompletionResponse]:
-        """Create a completion for given text."""
+        """Create a completion for given messages."""
         raise NotImplementedError
 
     @abstractmethod

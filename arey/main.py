@@ -47,7 +47,7 @@ def _generate_response(
             for response in run():
                 if stop_completion:
                     break
-                if len(text) < 1:
+                if len(text) < 1 and status in output.renderables:
                     output.renderables.remove(status)
                 text.append(response)
 

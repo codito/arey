@@ -5,58 +5,38 @@ import pytest
 from pytest_mock import MockerFixture
 
 from arey.config import create_or_get_config_file, get_config
+from arey.tests.doubles.config import get_dummy_config
 
-
-@pytest.fixture(scope="session")
-def test_dir(tmpdir_factory):
-    tmp = tmpdir_factory.mktemp("arey").join("arey")
-    return tmp
-
-
-@pytest.fixture
-def config_file_not_exist(test_dir, mocker: MockerFixture):
-    mocker.patch("arey.config.get_config_dir", return_value=test_dir)
-    return test_dir
+DEFAULT_CONFIG_DIR = os.path.expanduser("~/.config/arey")
+DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_CONFIG_DIR, "arey.yml")
 
 
 @pytest.fixture
-def config_file_empty(test_dir, mocker: MockerFixture):
-    mocker.patch("arey.config.get_config_dir", return_value=test_dir)
-    mocker.patch("os.mkdir", return_value=None)
-    mocker.patch("os.path.exists", return_value=True)
-    mock_file = mocker.mock_open(read_data="")
-    return mock_file, test_dir
+def default_config_file(fs, mocker: MockerFixture):
+    config_file_content = get_dummy_config(fs)
+    mocker.patch("arey.config.get_default_config", return_value=config_file_content)
 
 
-@pytest.fixture
-def config_file_valid(test_dir, mocker: MockerFixture):
-    mocker.patch("arey.config.get_config_dir", return_value=test_dir)
-    mocker.patch("os.path.exists", return_value=True)
-    config_path = os.path.join(test_dir, "arey.yml")
-    with open("arey/data/config.yml", "r") as f:
-        return f.read(), test_dir, config_path
-
-
-def test_create_or_get_config_file_when_exists(config_file_valid):
-    _, _, test_file = config_file_valid
+def test_create_or_get_config_file_when_exists(fs):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(DEFAULT_CONFIG_FILE)
+    with open(DEFAULT_CONFIG_FILE, "w") as f:
+        f.write("dummy content")
 
     exists, file = create_or_get_config_file()
 
     assert exists is True
-    assert file == test_file
+    assert file == DEFAULT_CONFIG_FILE
 
 
-def test_create_or_get_config_file_when_not_exist(config_file_not_exist, mocker):
-    mocker.patch("arey.config.open", mocker.mock_open())
-    test_file = os.path.join(config_file_not_exist, "arey.yml")
-
+def test_create_or_get_config_file_when_not_exist(fs, default_config_file):
     exists, file = create_or_get_config_file()
 
     assert exists is False
-    assert file == test_file
+    assert file == DEFAULT_CONFIG_FILE
 
 
-def test_get_config_throws_for_nonexistent_file(mocker: MockerFixture):
+def test_get_config_throws_for_nonexistent_file(fs, mocker: MockerFixture):
     mocker.patch("os.path.exists", return_value=False)
     mocker.patch("os.mkdir")
 
@@ -66,11 +46,7 @@ def test_get_config_throws_for_nonexistent_file(mocker: MockerFixture):
     assert e.value.args[0]
 
 
-def test_get_config_return_config_for_valid_schema(
-    mocker: MockerFixture, config_file_valid
-):
-    test_data, _, _ = config_file_valid
-    mocker.patch("arey.config.open", mocker.mock_open(read_data=test_data))
+def test_get_config_return_config_for_valid_schema(fs, default_config_file):
     config1 = get_config()
 
     config2 = get_config()

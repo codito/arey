@@ -1,4 +1,5 @@
 """Services for the chat command."""
+
 from dataclasses import dataclass, field
 from typing import List, Optional, Iterator, Tuple
 
@@ -23,7 +24,7 @@ completion_settings = config.chat.profile
 model: CompletionModel = get_completion_llm(
     config.chat.model.asdict(), settings=model_settings
 )
-prompt_model = get_prompt(prompt_template)
+prompt_model = get_prompt(prompt_template) if prompt_template else None
 
 
 @dataclass
@@ -72,7 +73,7 @@ def _get_max_tokens(model: CompletionModel, prompt_model: Prompt, text: str) -> 
 
 def create_chat() -> Tuple[Chat, ModelMetrics]:
     """Create a new chat session."""
-    system_prompt = prompt_model.get_message("system", "")
+    system_prompt = prompt_model.get_message("system", "") if prompt_model else ""
     with capture_stderr() as stderr:
         model.load(system_prompt)
     chat = Chat()
@@ -111,12 +112,12 @@ def create_response(chat: Chat, message: str) -> str:
 
 def stream_response(chat: Chat, message: str) -> Iterator[str]:
     """Stream a chat response."""
-    max_tokens = _get_max_tokens(model, prompt_model, message)
-    context = {
-        "user_query": message,
-        "chat_history": get_history(model, chat, prompt_model, max_tokens),
-    }
-    prompt = prompt_model.get("chat", context)
+    # max_tokens = _get_max_tokens(model, prompt_model, message)
+    # context = {
+    #     "user_query": message,
+    #     "chat_history": get_history(model, chat, prompt_model, max_tokens),
+    # }
+    # prompt = prompt_model.get("chat", context)
 
     user_msg = Message(text=message, sender=SenderType.USER, timestamp=0, context=None)
     chat.messages.append(user_msg)
@@ -125,14 +126,15 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
     usage_series = []
     finish_reason = ""
     with capture_stderr() as stderr:
-        for chunk in model.complete(prompt, {"stop": prompt_model.stop_words}):
+        # for chunk in model.complete(chat.messages, {"stop": prompt_model.stop_words}):
+        for chunk in model.complete(chat.messages, {}):
             ai_msg_text += chunk.text
             finish_reason = chunk.finish_reason
             usage_series.append(chunk.metrics)
             yield chunk.text
 
     msg_context = MessageContext(
-        prompt=prompt,
+        prompt="",
         finish_reason=finish_reason,
         metrics=combine_metrics(usage_series),
         logs=stderr.getvalue(),

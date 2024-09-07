@@ -22,7 +22,7 @@ completion_settings = config.task.profile
 model: CompletionModel = get_completion_llm(
     model_config.asdict(), settings=model_settings
 )
-prompt_model = get_prompt(prompt_template)
+prompt_model = get_prompt(prompt_template) if prompt_template else None
 
 
 @dataclass

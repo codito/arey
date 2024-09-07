@@ -1,4 +1,5 @@
 """Configuration for arey."""
+
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Optional, TypedDict, Tuple, Union, cast
@@ -16,7 +17,7 @@ class ModelConfig:
 
     name: str = ""
     path: str = ""
-    template: str = "chatml"
+    template: Optional[str] = ""
     type: Optional[str] = "llama2"
 
     def asdict(self) -> dict:
@@ -65,13 +66,11 @@ class Config:
     @classmethod
     def from_dict(cls, config: dict):
         """Create a configuration from dictionary."""
-        from arey.prompt import has_prompt
-
         models = {
             key: ModelConfig(
                 val.get("name", ""),
                 val.get("path", ""),
-                val["template"],
+                val.get("template", ""),
                 val.get("type", "llama2"),
             )
             for key, val in config.get("models", {}).items()
@@ -102,11 +101,6 @@ class Config:
             if not validate_config(asdict(model)):
                 raise AreyError(
                     "config", f"Model '{model_name}' has invalid config: {model}."
-                )
-            if not has_prompt(model.template):
-                raise AreyError(
-                    "config",
-                    f"Model '{model_name}' has invalid template: {model.template}.",
                 )
 
             profile = profiles.get(
