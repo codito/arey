@@ -86,7 +86,7 @@ show_missing = "true"
 
 [tool.pytest.ini_options]
 testpaths = ["arey"]
-addopts = "--cov=arey --cov-report=term-missing --quiet"
+addopts = "--cov=arey --cov-report=term-missing --cov-report=json --quiet"
 
 [tool.ruff]
 extend-exclude = [".venv", "venv"]
