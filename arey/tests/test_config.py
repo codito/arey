@@ -5,9 +5,9 @@ import pytest
 from pytest_mock import MockerFixture
 
 from arey.config import create_or_get_config_file, get_config
+from arey.platform.assets import DEFAULT_CONFIG_DIR
 from arey.tests.doubles.config import get_dummy_config
 
-DEFAULT_CONFIG_DIR = os.path.expanduser("~/.config/arey")
 DEFAULT_CONFIG_FILE = os.path.join(DEFAULT_CONFIG_DIR, "arey.yml")
 
 
