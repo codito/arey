@@ -1,26 +1,32 @@
 """Llama.cpp based models."""
+# pyright: strict, reportUnknownVariableType=false, reportUnknownMemberType=false
 
-import dataclasses
+import multiprocessing
 import os
 import time
-import multiprocessing
-from typing import Iterator, cast
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any, Self, cast, override
 
 import llama_cpp
+from pydantic import BaseModel, model_validator
 
-from arey.ai import (
+from arey.core import (
+    AreyError,
     ChatMessage,
     CompletionMetrics,
     CompletionModel,
     CompletionResponse,
+    ModelConfig,
     ModelMetrics,
 )
-from arey.error import AreyError
 
 
-@dataclasses.dataclass
-class LlamaSettings:
+class LlamaSettings(BaseModel):
     """Core model settings."""
+
+    path: Path
+    """Path of the GGUF file."""
 
     n_threads: int = max(multiprocessing.cpu_count() // 2, 1)
     n_ctx: int = 4096
@@ -29,6 +35,16 @@ class LlamaSettings:
     use_mlock: bool = False
     verbose: bool = True
 
+    @model_validator(mode="after")
+    def validate_path(self) -> Self:
+        """Ensure path is valid."""
+        if self.path:
+            self.path = self.path.expanduser()
+            if self.path.exists():
+                return self
+
+        raise AreyError("config", f"Model path '{self.path}' for is invalid.")
+
 
 class LlamaBaseModel(CompletionModel):
     """Base local completion model.
@@ -36,27 +52,37 @@ class LlamaBaseModel(CompletionModel):
     Wraps over the llama-cpp library.
     """
 
+    _model_path: Path
     _model_settings: LlamaSettings
     _metrics: ModelMetrics
 
-    def __init__(self, model_path: str, model_settings: dict = {}) -> None:
+    def __init__(self, model_config: ModelConfig) -> None:
         """Create an instance of local completion model."""
+        # FIXME
+        # if llama_cpp is None:
+        #     raise AreyError(
+        #         "config",
+        #         f"Invalid configuration. Need `llama-cpp-python` for {model_path}",
+        #     )
+
         self._llm = None
-        self._model_path = model_path
-        self._model_settings = LlamaSettings(**model_settings)
+        self._model_settings = LlamaSettings(**model_config.settings)  # pyright: ignore[reportAny]
+        self._model_path = self._model_settings.path
 
     @property
+    @override
     def context_size(self) -> int:
         """Get context size for the model."""
         assert self._llm, "Please load the model first with load()."
         return self._llm.n_ctx()
 
     @property
+    @override
     def metrics(self) -> ModelMetrics:
         """Get metrics for model initialization."""
         return self._metrics
 
-    def _get_model(self):
+    def _get_model(self) -> llama_cpp.Llama:
         model_path = os.path.join(os.path.expanduser(self._model_path))
         if not os.path.exists(model_path):
             raise AreyError(
@@ -67,7 +93,7 @@ class LlamaBaseModel(CompletionModel):
             start_time = time.perf_counter()
             self._llm = llama_cpp.Llama(
                 model_path=model_path,
-                **dataclasses.asdict(self._model_settings),
+                **self._model_settings.model_dump(),  # pyright: ignore[reportAny]
             )
             # self._llm.set_cache(llama_cpp.LlamaCache(2 << 33))
 
@@ -92,18 +118,23 @@ class LlamaBaseModel(CompletionModel):
             )
         raise AreyError("system", f"Unknown message role: {message.sender.role()}")
 
+    @override
     def load(self, text: str):
         """Load a model into memory."""
         model = self._get_model()
         model.eval(model.tokenize(text.encode("utf-8")))
 
+    @override
     def complete(
-        self, messages: list[ChatMessage], settings: dict = {}
+        self, messages: list[ChatMessage], settings: dict[str, Any] | None = None
     ) -> Iterator[CompletionResponse]:
         """Get a completion for the given text and settings."""
+        if settings is None:
+            settings = {}
+
         prev_time = time.perf_counter()
         model = self._get_model()
-        completion_settings = {
+        completion_settings: dict[str, Any] = {
             "max_tokens": -1,
             "temperature": 0.7,
             "top_k": 40,
@@ -113,18 +144,17 @@ class LlamaBaseModel(CompletionModel):
 
         formatted_messages = [self._get_message_from_chat(m) for m in messages]
         output = cast(
-            Iterator[llama_cpp.CompletionChunk],
+            Iterator[llama_cpp.CreateChatCompletionStreamResponse],
             model.create_chat_completion(
                 messages=formatted_messages,
-                **completion_settings,
+                **completion_settings,  # pyright: ignore[reportAny]
                 stream=True,
             ),
         )
         prompt_token_count = sum(self.count_tokens(m.text) for m in messages)
         prompt_eval_latency = -1
         for chunk in output:
-            # chunk_text = chunk["choices"][0]["text"]
-            chunk_text = chunk["choices"][0]["delta"].get("content", "")
+            chunk_text: str = cast(str, chunk["choices"][0]["delta"].get("content", ""))
 
             current_time = time.perf_counter()
             latency = current_time - prev_time
@@ -145,17 +175,13 @@ class LlamaBaseModel(CompletionModel):
                 ),
             )
 
+    @override
     def count_tokens(self, text: str) -> int:
         """Get the token count for given text."""
         model = self._get_model()
         return len(model.tokenize(text.encode("utf-8")))
 
+    @override
     def free(self) -> None:
         if self._llm:
             del self._llm
-
-    @staticmethod
-    def validate_config(config: dict) -> bool:
-        path = config["path"]
-        assert os.path.exists(path), f"Model path is invalid: '{path}'"
-        return True

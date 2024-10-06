@@ -1,22 +1,21 @@
 """Arey app cli entrypoint."""
 
 #!/usr/bin/env python
-import click
-import signal
 import datetime
+import signal
+from collections.abc import Iterable
 from functools import wraps
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable
 
+import click
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.spinner import Spinner
 from rich.text import Text
-
 from watchfiles import watch
 
-from arey.ai import CompletionMetrics
-from arey.error import AreyError
+from arey.core import AreyError, CompletionMetrics
 from arey.platform.console import SignalContextManager, get_console
 from arey.play import PlayFile
 from arey.task import close
@@ -24,13 +23,13 @@ from arey.task import close
 
 def _generate_response(
     console: Console,
-    output_settings: dict,
+    output_settings: dict[str, str],
     run: Callable[[], Iterable[str]],
-    get_metrics: Callable[[], Optional[CompletionMetrics]],
+    get_metrics: Callable[[], CompletionMetrics | None],
 ) -> None:
     stop_completion = False
 
-    def stop_completion_handler(signal, frame):
+    def stop_completion_handler(_signal: signal.Signals, _frame: Any):
         nonlocal stop_completion
         stop_completion = True
 
@@ -89,7 +88,7 @@ def _generate_response(
     console.print()
 
 
-def _print_logs(console: Console, verbose: bool, logs: Optional[str]) -> None:
+def _print_logs(console: Console, verbose: bool, logs: str | None) -> None:
     if not verbose or not logs:
         return
     console.print()
@@ -97,7 +96,7 @@ def _print_logs(console: Console, verbose: bool, logs: Optional[str]) -> None:
     console.print()
 
 
-def error_handler(func):
+def error_handler(func: Callable[..., Any]):
     """Global error handler for Arey."""
 
     @wraps(func)
@@ -117,6 +116,8 @@ def error_handler(func):
                     help_text = "A template seems misconfigured. Check out the docs."
                 case "config":
                     help_text = "Config file seems misconfigured. Check out the docs."
+                case _:
+                    help_text = "Unknown error."
 
             error_text = Group(
                 Markdown(f"ERROR: {e.args[0]}", style="error"),
@@ -128,7 +129,7 @@ def error_handler(func):
     return wrapper
 
 
-def common_options(func):
+def common_options(func: Callable[..., Any]):
     """Get common options for arey commands."""
 
     @click.option(
@@ -184,7 +185,7 @@ def task(instruction: str, overrides_file: str, verbose: bool) -> int:
 @common_options
 def chat(verbose: bool) -> int:
     """Chat with an AI model."""
-    import readline  # noqa enable GNU readline capabilities
+    import readline  # noqa enable GNU readline capabilities. # pyright: ignore[reportUnusedImport]
     from arey.chat import create_chat, get_completion_metrics, stream_response
 
     console = get_console()
@@ -258,8 +259,10 @@ def play(file: str, no_watch: bool, verbose: bool) -> int:
     console = get_console()
     console.print()
     console.print(
-        "Welcome to arey play! Edit the play file below in your favorite editor "
-        "and I'll generate a response for you. Use `Ctrl+C` to abort play session."
+        (
+            "Welcome to arey play! Edit the play file below in your favorite editor "
+            "and I'll generate a response for you. Use `Ctrl+C` to abort play session."
+        )
     )
     console.print()
 

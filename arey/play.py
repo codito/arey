@@ -3,19 +3,30 @@
 Play reads the model details from a markdown file, and the prompt. It will watch
 the file for any changes and run a completion for the prompt.
 """
-from dataclasses import dataclass
+
 import os
 import tempfile
-import frontmatter
+from collections.abc import Iterator
+from dataclasses import dataclass
 from functools import lru_cache
-from arey.ai import CompletionModel, CompletionMetrics, ModelMetrics, combine_metrics
-from arey.config import ModelConfig, get_config
-from arey.error import AreyError
-from arey.platform.assets import get_asset_path
-from arey.platform.llm import get_completion_llm
-from arey.platform.console import capture_stderr
-from typing import Dict, Optional, Iterator, cast
+from typing import Any, cast
 
+import frontmatter  # pyright: ignore[reportMissingTypeStubs]
+
+from arey.config import get_config
+from arey.core import (
+    AreyError,
+    ChatMessage,
+    CompletionMetrics,
+    CompletionModel,
+    ModelConfig,
+    ModelMetrics,
+    SenderType,
+    combine_metrics,
+)
+from arey.platform.assets import get_asset_path
+from arey.platform.console import capture_stderr
+from arey.platform.llm import get_completion_llm
 
 config = get_config()
 
@@ -26,8 +37,8 @@ class PlayResult:
 
     response: str
     metrics: CompletionMetrics
-    finish_reason: Optional[str]
-    logs: Optional[str]
+    finish_reason: str | None
+    logs: str | None
 
 
 @dataclass
@@ -37,15 +48,15 @@ class PlayFile:
     file_path: str
 
     model_config: ModelConfig
-    model_settings: Dict
+    model_settings: dict[str, str]
 
     prompt: str
-    completion_profile: Dict
+    completion_profile: dict[str, Any]
 
-    output_settings: Dict
+    output_settings: dict[str, str]
 
-    model: Optional[CompletionModel] = None
-    result: Optional[PlayResult] = None
+    model: CompletionModel | None = None
+    result: PlayResult | None = None
 
 
 @lru_cache(maxsize=1)
@@ -75,9 +86,9 @@ def get_play_file(file_path: str) -> PlayFile:
 
     # FIXME validate settings
     model_config = config.models[cast(str, play_file.metadata["model"])]
-    model_settings: dict = cast(dict, play_file.metadata.get("settings", {}))
-    completion_profile: dict = cast(dict, play_file.metadata.get("profile", {}))
-    output_settings: dict = cast(dict, play_file.metadata.get("output", {}))
+    model_settings = cast(dict[str, Any], play_file.metadata.get("settings", {}))
+    completion_profile = cast(dict[str, Any], play_file.metadata.get("profile", {}))
+    output_settings = cast(dict[str, str], play_file.metadata.get("output", {}))
     return PlayFile(
         file_path=play_file_path,
         model_config=model_config,
@@ -94,7 +105,7 @@ def load_play_model(play_file: PlayFile) -> ModelMetrics:
     model_settings = play_file.model_settings
     with capture_stderr():
         model: CompletionModel = get_completion_llm(
-            model_config=model_config.asdict(), settings=model_settings
+            model_config=model_config, settings=model_settings
         )
         model.load("")
         play_file.model = model
@@ -110,10 +121,12 @@ def get_play_response(play_file: PlayFile) -> Iterator[str]:
     completion_settings = play_file.completion_profile
     prompt = play_file.prompt
     ai_msg_text = ""
-    usage_series = []
+    usage_series: list[CompletionMetrics] = []
     finish_reason = ""
     with capture_stderr() as stderr:
-        for chunk in model.complete(prompt, completion_settings):
+        for chunk in model.complete(
+            [ChatMessage(sender=SenderType.USER, text=prompt)], completion_settings
+        ):
             ai_msg_text += chunk.text
             finish_reason = chunk.finish_reason
             usage_series.append(chunk.metrics)

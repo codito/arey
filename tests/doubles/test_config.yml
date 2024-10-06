@@ -1,8 +1,15 @@
 models:
   dummy-7b:
-    path: ~/models/dummy_model.gguf
     type: gguf
-    template: chatml
+    path: ~/models/dummy_model.gguf
+    n_threads: 11
+    n_gpu_layers: 18
+  dummy-openai:
+    type: openai
+    base_url: "http://dummy/url"
+  dummy-ollama:
+    type: ollama
+    host: "http://localhost:112233"
 
 profiles:
   precise:
@@ -24,12 +31,6 @@ profiles:
 chat:
   model: dummy-7b
   profile: precise
-  settings:
-    n_threads: 11
-    n_gpu_layers: 18
 task:
-  model: dummy-7b
+  model: dummy-openai
   profile: precise
-  # settings:
-  #   n_threads: 10
-  #   n_gpu_layers: 20

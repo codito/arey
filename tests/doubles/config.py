@@ -1,12 +1,15 @@
 """Test configuration."""
+# pyright: strict, reportUnknownMemberType=false
 
 import os
+
+from pyfakefs.fake_filesystem import FakeFilesystem
 
 DUMMY_MODELS_DIR = "~/models"
 DUMMY_7B_MODEL = "~/models/dummy_model.gguf"
 
 
-def get_dummy_config(fs) -> str:
+def get_dummy_config(fs: FakeFilesystem) -> str:
     """Get the dummy test config.
 
     Args:

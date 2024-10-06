@@ -1,6 +1,7 @@
 """Summarize sample script."""
-
 #!/usr/bin/env python
+
+# pyright: basic, reportAny=false
 import argparse
 import glob
 import json

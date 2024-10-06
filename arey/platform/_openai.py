@@ -1,8 +1,9 @@
 """OpenAI API based models."""
 
-import dataclasses
 import time
-from typing import Iterator, Optional
+from collections.abc import Iterator
+from typing import Any, override
+
 from openai import OpenAI
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
@@ -10,17 +11,24 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
 )
-from arey.ai import CompletionMetrics, CompletionModel, CompletionResponse, ModelMetrics
-from arey.ai import ChatMessage
-from arey.error import AreyError
+from pydantic import BaseModel
+
+from arey.core import (
+    AreyError,
+    ChatMessage,
+    CompletionMetrics,
+    CompletionModel,
+    CompletionResponse,
+    ModelConfig,
+    ModelMetrics,
+)
 
 
-@dataclasses.dataclass
-class OpenAISettings:
+class OpenAISettings(BaseModel):
     """Core model settings."""
 
     base_url: str
-    api_key: Optional[str] = "DUMMY KEY"
+    api_key: str = "DUMMY KEY"
 
 
 class OpenAIBaseModel(CompletionModel):
@@ -29,28 +37,33 @@ class OpenAIBaseModel(CompletionModel):
     _client: OpenAI
     _model_settings: OpenAISettings
 
-    def __init__(self, model_name: str, model_settings: dict = {}) -> None:
+    def __init__(self, model_config: ModelConfig) -> None:
         """Create an instance of openai completion model."""
-        self._model_name = model_name
-        self._model_settings = OpenAISettings(**model_settings)
-        self._client = OpenAI(**dataclasses.asdict(self._model_settings))
+        self._model_name = model_config.name
+        self._model_settings = OpenAISettings(**model_config.settings)  # pyright: ignore[reportAny]
+
+        self._client = OpenAI(**self._model_settings.model_dump())  # pyright: ignore[reportAny]
 
     @property
+    @override
     def context_size(self) -> int:
         return 0
 
     @property
+    @override
     def metrics(self) -> ModelMetrics:
         """Get metrics for model initialization."""
         return ModelMetrics(init_latency_ms=0)
 
+    @override
     def load(self, text: str):
         """Load a model into memory."""
         # No-op since these are remote models.
         pass
 
+    @override
     def complete(
-        self, messages: list[ChatMessage], settings: dict = {}
+        self, messages: list[ChatMessage], settings: dict[str, Any]
     ) -> Iterator[CompletionResponse]:
         """Get a completion for the given text and settings."""
         assert self._client
@@ -94,6 +107,7 @@ class OpenAIBaseModel(CompletionModel):
             )
         pass
 
+    @override
     def count_tokens(self, text: str) -> int:
         """Get the token count for given text."""
         try:
@@ -106,13 +120,15 @@ class OpenAIBaseModel(CompletionModel):
             pass
         return 0
 
+    @override
     def free(self) -> None:
         if self._client:
             del self._client
 
     @staticmethod
-    def validate_config(config: dict) -> bool:
-        assert config["name"], "Model name is required for OpenAI models."
+    @override
+    def validate_config(config: ModelConfig) -> bool:
+        assert config.name, "Model name is required for OpenAI models."
         return True
 
     def _get_message_from_text(self, text: str) -> ChatCompletionMessageParam:

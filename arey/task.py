@@ -4,25 +4,28 @@ A task is stateless execution of a single instruction.
 """
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Iterator, Optional, Tuple
 
-from arey.ai import CompletionMetrics, CompletionModel, ModelMetrics, combine_metrics
 from arey.config import get_config
+from arey.core import (
+    ChatMessage,
+    CompletionMetrics,
+    CompletionModel,
+    ModelMetrics,
+    SenderType,
+    combine_metrics,
+)
 from arey.platform.console import capture_stderr
 from arey.platform.llm import get_completion_llm
-from arey.prompt import get_prompt, get_prompt_overrides
+from arey.prompt import get_prompt_overrides
 
 config = get_config()
 model_config = config.task.model
-prompt_template = config.task.model.template
-model_settings = config.task.settings
 completion_settings = config.task.profile
 
-model: CompletionModel = get_completion_llm(
-    model_config.asdict(), settings=model_settings
-)
-prompt_model = get_prompt(prompt_template) if prompt_template else None
+model: CompletionModel = get_completion_llm(model_config)
+prompt_model = None  # get_prompt(prompt_template) if prompt_template else None
 
 
 @dataclass
@@ -31,8 +34,8 @@ class TaskResult:
 
     response: str
     metrics: CompletionMetrics
-    finish_reason: Optional[str]
-    logs: Optional[str]
+    finish_reason: str | None
+    logs: str | None
 
 
 @dataclass
@@ -40,17 +43,19 @@ class Task:
     """A task is a stateless script invocation with a prompt."""
 
     prompt_overrides: dict = field(default_factory=dict)
-    result: Optional[TaskResult] = None
+    result: TaskResult | None = None
 
 
-def create_task(prompt_file: Optional[str]) -> Tuple[Task, ModelMetrics]:
+def create_task(prompt_file: str | None) -> tuple[Task, ModelMetrics]:
     """Create a task with given prompt file."""
-    token_overrides = (
-        get_prompt_overrides(prompt_file).custom_tokens
-        if prompt_file and os.path.exists(prompt_file)
-        else {}
-    )
-    system_prompt = prompt_model.get_message("system", "", token_overrides)
+    system_prompt = ""
+    if prompt_model:
+        token_overrides = (
+            get_prompt_overrides(prompt_file).custom_tokens
+            if prompt_file and os.path.exists(prompt_file)
+            else {}
+        )
+        system_prompt = prompt_model.get_message("system", "", token_overrides)
     with capture_stderr():
         model.load(system_prompt)
     task = Task()
@@ -59,17 +64,22 @@ def create_task(prompt_file: Optional[str]) -> Tuple[Task, ModelMetrics]:
 
 def run(task: Task, user_input: str) -> Iterator[str]:
     """Run a task with user query."""
-    context = {
-        "user_query": user_input,
-        "chat_history": "",
-    }
-    prompt = prompt_model.get("task", context)
+    # FIXME
+    # context = {
+    #     "user_query": user_input,
+    #     "chat_history": "",
+    # }
+    prompt = [
+        ChatMessage(sender=SenderType.USER, text=user_input[0])
+    ]  # prompt_model.get("task", context)
 
     ai_msg_text = ""
     usage_series = []
     finish_reason = ""
     with capture_stderr() as stderr:
-        for chunk in model.complete(prompt, {"stop": prompt_model.stop_words}):
+        for chunk in model.complete(
+            messages=prompt, settings={"stop": []}
+        ):  # prompt_model.stop_words}):
             ai_msg_text += chunk.text
             finish_reason = chunk.finish_reason
             usage_series.append(chunk.metrics)

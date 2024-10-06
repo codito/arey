@@ -1,9 +1,10 @@
 """Services for the chat command."""
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import List, Optional, Iterator, Tuple
 
-from arey.ai import (
+from arey.config import get_config
+from arey.core import (
     ChatMessage,
     CompletionMetrics,
     CompletionModel,
@@ -11,20 +12,14 @@ from arey.ai import (
     SenderType,
     combine_metrics,
 )
-from arey.config import get_config
 from arey.platform.console import capture_stderr
 from arey.platform.llm import get_completion_llm
-from arey.prompt import Prompt, get_prompt
+from arey.prompt import Prompt
 
 config = get_config()
-prompt_template = config.chat.model.template
-model_settings = config.chat.settings
 completion_settings = config.chat.profile
 
-model: CompletionModel = get_completion_llm(
-    config.chat.model.asdict(), settings=model_settings
-)
-prompt_model = get_prompt(prompt_template) if prompt_template else None
+model: CompletionModel = get_completion_llm(config.chat.model)
 
 
 @dataclass
@@ -32,7 +27,7 @@ class MessageContext:
     """Context associated with a single chat message."""
 
     prompt: str
-    finish_reason: Optional[str]
+    finish_reason: str | None
     metrics: CompletionMetrics
     logs: str = ""
 
@@ -42,14 +37,14 @@ class Message(ChatMessage):
     """A chat message with context."""
 
     timestamp: int  # unix timestamp
-    context: Optional[MessageContext]
+    context: MessageContext | None
 
 
 @dataclass
 class ChatContext:
     """Context associated with a chat."""
 
-    metrics: Optional[ModelMetrics] = None
+    metrics: ModelMetrics | None = None
     logs: str = ""
 
 
@@ -57,7 +52,7 @@ class ChatContext:
 class Chat:
     """A chat conversation between human and AI model."""
 
-    messages: List[Message] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=list)
     context: ChatContext = field(default_factory=ChatContext)
 
 
@@ -71,9 +66,11 @@ def _get_max_tokens(model: CompletionModel, prompt_model: Prompt, text: str) -> 
     return context_size - prompt_tokens_without_history - buffer
 
 
-def create_chat() -> Tuple[Chat, ModelMetrics]:
+def create_chat() -> tuple[Chat, ModelMetrics]:
     """Create a new chat session."""
-    system_prompt = prompt_model.get_message("system", "") if prompt_model else ""
+    # FIXME
+    # system_prompt = prompt_model.get_message("system", "") if prompt_model else ""
+    system_prompt = ""
     with capture_stderr() as stderr:
         model.load(system_prompt)
     chat = Chat()
@@ -145,7 +142,7 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
     chat.messages.append(ai_msg)
 
 
-def get_completion_metrics(chat: Chat) -> Optional[CompletionMetrics]:
+def get_completion_metrics(chat: Chat) -> CompletionMetrics | None:
     """Get completion metrics for the chat."""
     msg = next(
         filter(lambda m: m.sender == SenderType.ASSISTANT, reversed(chat.messages)),

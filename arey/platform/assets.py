@@ -1,4 +1,5 @@
 """Abstraction for various data and config assets in Arey."""
+
 import os
 
 

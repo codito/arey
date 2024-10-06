@@ -1,5 +1,7 @@
 """A classification sample script."""
 #!/usr/bin/env python
+# pyright: basic
+
 import argparse
 import glob
 import json

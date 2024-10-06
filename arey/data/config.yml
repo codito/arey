@@ -6,7 +6,7 @@
 models:
   openhermes25-mistral-7b:
     path: TODO
-    type: mistral
+    type: gguf
     template: chatml
   ollama-tinydolphin:
     name: tinydolphin:latest   # name of the model, see http://localhost:11434/api/tags

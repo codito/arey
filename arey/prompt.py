@@ -1,15 +1,15 @@
 """Create a abstract class for chat prompts."""
+
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from string import Template
-from typing import Dict, List, Literal
+from typing import Literal
 
 import yaml
-from arey.ai import SenderTypeLiteral
 
+from arey.core import AreyError, SenderType
 from arey.platform.assets import get_asset_dir
-from arey.error import AreyError
 
 SYSTEM_TOKENS = set(["message_text", "chat_history", "user_query"])
 
@@ -22,11 +22,11 @@ class Prompt:
     """
 
     name: str
-    system_tokens: List[str] = field(default_factory=list)
-    custom_tokens: Dict[str, str] = field(default_factory=dict)
-    stop_words: List[str] = field(default_factory=list)
-    prompts: Dict[str, str] = field(default_factory=dict)  # task: prompt
-    message_formats: Dict[str, str] = field(default_factory=dict)  # role: format
+    system_tokens: list[str] = field(default_factory=list)
+    custom_tokens: dict[str, str] = field(default_factory=dict)
+    stop_words: list[str] = field(default_factory=list)
+    prompts: dict[str, str] = field(default_factory=dict)  # task: prompt
+    message_formats: dict[str, str] = field(default_factory=dict)  # role: format
 
     @classmethod
     def create(cls, yml: str) -> "Prompt":
@@ -48,8 +48,10 @@ class Prompt:
         if not prompts.get("chat") or not prompts.get("task"):
             raise AreyError(
                 "template",
-                "`prompts` element in the prompt template is required."
-                " It must define `chat` and `task` prompt formats.",
+                (
+                    "`prompts` element in the prompt template is required."
+                    " It must define `chat` and `task` prompt formats."
+                ),
             )
 
         roles = content.get("roles", {})
@@ -94,16 +96,16 @@ class Prompt:
 
         return cls(name, custom_tokens=custom_tokens)
 
-    def get(self, task: Literal["chat", "task"], context: Dict[str, str]) -> str:
+    def get(self, task: Literal["chat", "task"], context: dict[str, str]) -> str:
         """Get a prompt with tokens resolved from the context."""
         merged_context = {**context, **self.custom_tokens}
         return Template(self.prompts[task]).substitute(merged_context)
 
     def get_message(
         self,
-        role: SenderTypeLiteral,
+        role: SenderType,
         text: str,
-        token_overrides: Dict[str, str] = {},
+        token_overrides: dict[str, str] = {},
     ) -> str:
         """Get a chat message for given role and text."""
         merged_context = {"message_text": text} | self.custom_tokens | token_overrides
@@ -111,9 +113,9 @@ class Prompt:
 
 
 @lru_cache(maxsize=1)
-def _get_oob_prompts() -> Dict[str, Prompt]:
+def _get_oob_prompts() -> dict[str, Prompt]:
     # get list of yml files in arey/prompts
-    result: Dict[str, Prompt] = {}
+    result: dict[str, Prompt] = {}
     dir_path = get_asset_dir("prompts")
     for file_path in os.listdir(dir_path):
         if not file_path.endswith(".yml"):

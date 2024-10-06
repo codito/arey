@@ -1,9 +1,12 @@
-"""Models for AI."""
+"""Completion models."""
 
 from abc import ABC, ABCMeta, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
-from typing import cast, Optional, Iterator, List, Literal
+from typing import Any, Literal, cast
+
+from arey.core._model import ModelConfig, ModelMetrics
 
 SenderTypeLiteral = Literal["assistant", "user", "system"]
 
@@ -29,34 +32,27 @@ class ChatMessage:
 
 
 @dataclass
-class ModelMetrics:
-    """Metrics for the model."""
-
-    init_latency_ms: float
-
-
-@dataclass
 class CompletionMetrics:
     """Metrics related to a single completion."""
 
-    """Number of tokens in the prompt for this completion."""
     prompt_tokens: int
+    """Number of tokens in the prompt for this completion."""
 
-    """Time taken for prompt evaluation."""
     prompt_eval_latency_ms: float
+    """Time taken for prompt evaluation."""
 
-    """Number of tokens in this completion."""
     completion_tokens: int  # number of tokens in completions
+    """Number of tokens in this completion."""
 
+    completion_runs: int
     """Number of runs required to generate above tokens. Each run can generate
     more than one token.
 
     1 for streaming response. N for completed response.
     """
-    completion_runs: int
 
-    """Time taken for this completion."""
     completion_latency_ms: float
+    """Time taken for this completion."""
 
 
 @dataclass
@@ -64,7 +60,7 @@ class CompletionResponse:
     """Response from a generative ai model."""
 
     text: str
-    finish_reason: Optional[str]  # stop, length, none
+    finish_reason: str | None  # stop, length, none
     metrics: CompletionMetrics
 
 
@@ -84,13 +80,13 @@ class CompletionModel(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def load(self, text: str):
+    def load(self, text: str) -> None:
         """Load the model with a warm up system prompt."""
         raise NotImplementedError
 
     @abstractmethod
     def complete(
-        self, messages: list[ChatMessage], settings: dict
+        self, messages: list[ChatMessage], settings: dict[str, Any]
     ) -> Iterator[CompletionResponse]:
         """Create a completion for given messages."""
         raise NotImplementedError
@@ -106,28 +102,12 @@ class CompletionModel(ABC, metaclass=ABCMeta):
         raise NotImplementedError
 
     @staticmethod
-    @abstractmethod
-    def validate_config(config: dict) -> bool:
+    def validate_config(_config: ModelConfig) -> bool:
         """Validate the model configuration."""
-        raise NotImplementedError
+        return True
 
 
-class EmbeddingModel(ABC, metaclass=ABCMeta):
-    """An embedding AI model."""
-
-    @property
-    @abstractmethod
-    def dimensions(self) -> int:
-        """Count of dimensions supported by the model."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def embed(self, text: str) -> List[float]:
-        """Create an embedding for given text."""
-        raise NotImplementedError
-
-
-def combine_metrics(usage_series: List[CompletionMetrics]) -> CompletionMetrics:
+def combine_metrics(usage_series: list[CompletionMetrics]) -> CompletionMetrics:
     """Join a series of completion metrics into one."""
     response_latency = 0
     response_tokens = 0
