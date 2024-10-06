@@ -16,22 +16,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
         with:
-          python-version: 3.12
+          # Install a specific version of uv.
+          version: "0.4.18"
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - name: Install the project
+        run: uv sync --all-extras --dev
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .\[test\]
-          pip install codecov
-          pip freeze
+          uv pip install codecov
+          uv pip freeze
       - name: Lint with ruff
         run: |
-          ruff check
+          uv run ruff check
       - name: Test with pytest
         run: |
-          pytest
+          uv run pytest
       - name: Upload coverage results
         run: |
-          codecov
+          uv run codecov
