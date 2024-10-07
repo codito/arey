@@ -1,4 +1,5 @@
 """Create a abstract class for chat prompts."""
+# pyright: basic
 
 import os
 from dataclasses import dataclass, field

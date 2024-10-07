@@ -282,7 +282,14 @@ def play(file: str, no_watch: bool, verbose: bool) -> int:
             or play_file_old.model_settings != play_file_mod.model_settings
         ):
             with console.status("[message_footer]Loading model..."):
-                model_metrics = load_play_model(play_file_mod)
+                try:
+                    model_metrics = load_play_model(play_file_mod)
+                except AreyError as ae:
+                    if ae.category == "config":
+                        console.print(ae.message)
+                        return play_file_mod
+                    raise
+
                 footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
                 console.print(footer, style="message_footer")
         console.print()

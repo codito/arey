@@ -47,7 +47,7 @@ class PlayFile:
 
     file_path: str
 
-    model_config: ModelConfig
+    model_config: ModelConfig | None
     model_settings: dict[str, str]
 
     prompt: str
@@ -85,7 +85,7 @@ def get_play_file(file_path: str) -> PlayFile:
         play_file = frontmatter.load(f)
 
     # FIXME validate settings
-    model_config = config.models[cast(str, play_file.metadata["model"])]
+    model_config = config.models.get(cast(str, play_file.metadata["model"]), None)
     model_settings = cast(dict[str, Any], play_file.metadata.get("settings", {}))
     completion_profile = cast(dict[str, Any], play_file.metadata.get("profile", {}))
     output_settings = cast(dict[str, str], play_file.metadata.get("output", {}))
@@ -102,11 +102,14 @@ def get_play_file(file_path: str) -> PlayFile:
 def load_play_model(play_file: PlayFile) -> ModelMetrics:
     """Load a model from play file."""
     model_config = play_file.model_config
-    model_settings = play_file.model_settings
-    with capture_stderr():
-        model: CompletionModel = get_completion_llm(
-            model_config=model_config, settings=model_settings
+    if model_config is None:
+        raise AreyError(
+            "config", "Please specify a valid model configuration in play file."
         )
+
+    model_config.settings |= play_file.model_settings
+    with capture_stderr():
+        model: CompletionModel = get_completion_llm(model_config=model_config)
         model.load("")
         play_file.model = model
         return model.metrics

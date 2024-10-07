@@ -7,7 +7,7 @@
 # generate a completion.
 
 # Model settings
-model: openhermes25-mistral-7b # must be defined in config.yml
+model: TODO # must be defined in config.yml
 #settings: # settings update reloads the model for non ollama models
 #  n_threads: 11      # default: cpu_count/2
 #  n_gpu_layers: 18   # default: 0, run on cpu

@@ -57,7 +57,7 @@ def capture_stderr() -> Generator[StringIO, None, None]:
 
         with (
             redirect_stderr(stderr) as err,
-            pipes(stdout=0, stderr=stderr, encoding="utf-8"),
+            pipes(stdout=0, stderr=stderr, encoding="utf-8"),  # pyright: ignore[reportCallIssue, reportArgumentType]
         ):
             yield err
     except Exception:

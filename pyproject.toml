@@ -105,4 +105,5 @@ select = ["D", "E", "F", "W"]
 "**/*.py" = ["F405", "D203", "D213"]
 
 [tool.basedpyright]
+include = ["arey", "tests", "docs"]
 reportUnusedCallResult = "none"
