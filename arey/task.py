@@ -42,7 +42,7 @@ class TaskResult:
 class Task:
     """A task is a stateless script invocation with a prompt."""
 
-    prompt_overrides: dict = field(default_factory=dict)
+    prompt_overrides: dict[str, str] = field(default_factory=dict)
     result: TaskResult | None = None
 
 
@@ -74,7 +74,7 @@ def run(task: Task, user_input: str) -> Iterator[str]:
     ]  # prompt_model.get("task", context)
 
     ai_msg_text = ""
-    usage_series = []
+    usage_series: list[CompletionMetrics] = []
     finish_reason = ""
     with capture_stderr() as stderr:
         for chunk in model.complete(
@@ -93,7 +93,7 @@ def run(task: Task, user_input: str) -> Iterator[str]:
     )
 
 
-def close(task: Task):
+def close(_task: Task):
     """Close a task and free the model."""
     if model:
         model.free()

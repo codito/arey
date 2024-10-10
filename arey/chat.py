@@ -14,7 +14,6 @@ from arey.core import (
 )
 from arey.platform.console import capture_stderr
 from arey.platform.llm import get_completion_llm
-from arey.prompt import Prompt
 
 config = get_config()
 completion_settings = config.chat.profile
@@ -39,6 +38,10 @@ class Message(ChatMessage):
     timestamp: int  # unix timestamp
     context: MessageContext | None
 
+    def to_chat(self):
+        """Convert to a chat message."""
+        return ChatMessage(sender=self.sender, text=self.text)
+
 
 @dataclass
 class ChatContext:
@@ -56,14 +59,14 @@ class Chat:
     context: ChatContext = field(default_factory=ChatContext)
 
 
-def _get_max_tokens(model: CompletionModel, prompt_model: Prompt, text: str) -> int:
-    context_size = model.context_size
-    prompt_tokens_without_history = model.count_tokens(
-        prompt_model.get("chat", {"user_query": text, "chat_history": ""})
-    )
-    buffer = 200
-
-    return context_size - prompt_tokens_without_history - buffer
+# def _get_max_tokens(model: CompletionModel, prompt_model: Prompt, text: str) -> int:
+#     context_size = model.context_size
+#     prompt_tokens_without_history = model.count_tokens(
+#         prompt_model.get("chat", {"user_query": text, "chat_history": ""})
+#     )
+#     buffer = 200
+#
+#     return context_size - prompt_tokens_without_history - buffer
 
 
 def create_chat() -> tuple[Chat, ModelMetrics]:
@@ -79,23 +82,23 @@ def create_chat() -> tuple[Chat, ModelMetrics]:
     return chat, model.metrics
 
 
-def get_history(
-    model: CompletionModel, chat: Chat, prompt_model: Prompt, max_tokens: int
-) -> str:
-    """Get the messages for a chat."""
-    messages = []
-    token_count = 0
-    for message in reversed(chat.messages):
-        role = message.sender.role()
-        formatted_message = prompt_model.get_message(role, message.text)
-        message_tokens = model.count_tokens(formatted_message)
-        messages.insert(0, formatted_message)
-
-        token_count += message_tokens
-        if message.sender == SenderType.USER and token_count >= max_tokens:
-            break
-
-    return "".join(messages)
+# def get_history(
+#     model: CompletionModel, chat: Chat, prompt_model: Prompt, max_tokens: int
+# ) -> str:
+#     """Get the messages for a chat."""
+#     messages = []
+#     token_count = 0
+#     for message in reversed(chat.messages):
+#         role = message.sender.role()
+#         formatted_message = prompt_model.get_message(role, message.text)
+#         message_tokens = model.count_tokens(formatted_message)
+#         messages.insert(0, formatted_message)
+#
+#         token_count += message_tokens
+#         if message.sender == SenderType.USER and token_count >= max_tokens:
+#             break
+#
+#     return "".join(messages)
 
 
 def create_response(chat: Chat, message: str) -> str:
@@ -120,11 +123,12 @@ def stream_response(chat: Chat, message: str) -> Iterator[str]:
     chat.messages.append(user_msg)
 
     ai_msg_text = ""
-    usage_series = []
+    usage_series: list[CompletionMetrics] = []
     finish_reason = ""
     with capture_stderr() as stderr:
         # for chunk in model.complete(chat.messages, {"stop": prompt_model.stop_words}):
-        for chunk in model.complete(chat.messages, {}):
+        chat_messages = [m.to_chat() for m in chat.messages]
+        for chunk in model.complete(chat_messages, {}):
             ai_msg_text += chunk.text
             finish_reason = chunk.finish_reason
             usage_series.append(chunk.metrics)

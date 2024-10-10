@@ -5,6 +5,7 @@ import datetime
 import signal
 from collections.abc import Iterable
 from functools import wraps
+from types import FrameType
 from typing import Any, Callable
 
 import click
@@ -29,7 +30,7 @@ def _generate_response(
 ) -> None:
     stop_completion = False
 
-    def stop_completion_handler(_signal: signal.Signals, _frame: Any):
+    def stop_completion_handler(_signal: signal.Signals, _frame: FrameType):
         nonlocal stop_completion
         stop_completion = True
 
@@ -96,11 +97,11 @@ def _print_logs(console: Console, verbose: bool, logs: str | None) -> None:
     console.print()
 
 
-def error_handler(func: Callable[..., Any]):
+def error_handler(func: Callable[..., int]):
     """Global error handler for Arey."""
 
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: list[Any], **kwargs: dict[str, Any]) -> int:
         try:
             return func(*args, **kwargs)
         except AreyError as e:
@@ -125,18 +126,19 @@ def error_handler(func: Callable[..., Any]):
                 Markdown(help_text),
             )
             console.print(error_text)
+            return 1
 
     return wrapper
 
 
-def common_options(func: Callable[..., Any]):
+def common_options(func: Callable[..., int]):
     """Get common options for arey commands."""
 
     @click.option(
         "-v", "--verbose", is_flag=True, default=False, help="Show verbose logs."
     )
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: list[Any], **kwargs: dict[str, Any]) -> int:
         return func(*args, **kwargs)
 
     return wrapper

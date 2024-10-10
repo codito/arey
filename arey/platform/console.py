@@ -33,7 +33,7 @@ def get_console() -> Console:
 class SignalContextManager:
     """Context manager for console signals."""
 
-    def __init__(self, signal_num: int, handler: Callable[..., Any]):
+    def __init__(self, signal_num: int, handler: Callable[..., None]):
         """Create a signal context instance."""
         self.signal_num = signal_num
         self.handler = handler

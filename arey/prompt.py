@@ -110,7 +110,7 @@ class Prompt:
     ) -> str:
         """Get a chat message for given role and text."""
         merged_context = {"message_text": text} | self.custom_tokens | token_overrides
-        return Template(self.message_formats[role]).substitute(merged_context)
+        return Template(self.message_formats[role.role()]).substitute(merged_context)
 
 
 @lru_cache(maxsize=1)

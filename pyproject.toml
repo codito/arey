@@ -107,3 +107,5 @@ select = ["D", "E", "F", "W"]
 [tool.basedpyright]
 include = ["arey", "tests", "docs"]
 reportUnusedCallResult = "none"
+venvPath = "."
+venv = ".venv"
