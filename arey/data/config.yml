@@ -7,19 +7,24 @@ models:
   openhermes25-mistral-7b:
     path: TODO
     type: gguf
-    template: chatml
+    # uncomment to specify configuration for llama-cpp
+    # n_threads: 10
+    # n_gpu_layers: 20
   ollama-tinydolphin:
     name: tinydolphin:latest   # name of the model, see http://localhost:11434/api/tags
     type: ollama
-    template: chatml
-  openai-example:
+  openai-example: # locally hosted openai compatible server, e.g. ollama server
     name: "gemma2-9b-it"
     type: openai
-    template: gemma2
+    base_url: "http://localhost:8080"
+  groq: # remote openai compatible server
+    name: llama-3.1-70b-versatile
+    type: openai
+    base_url: https://api.groq.com/openai/v1
+    api_key: env:GROQ_API_KEY # defined as env variable
   # deepseek-coder-6.7b:
   #   path: ~/docs/models/deepseek-coder-6.7b/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
   #   type: deepseek
-  #   template: alpaca
 
 profiles:
   # See https://www.reddit.com/r/LocalLLaMA/comments/1343bgz/what_model_parameters_is_everyone_using/
@@ -45,12 +50,6 @@ profiles:
 chat:
   model: openhermes25-mistral-7b
   profile: precise
-  # settings:
-  #   n_threads: 11
-    # n_gpu_layers: 18
 task:
   model: openhermes25-mistral-7b
   profile: precise
-  # settings:
-  #   n_threads: 10
-  #   n_gpu_layers: 20

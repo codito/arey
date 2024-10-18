@@ -1,5 +1,6 @@
 """OpenAI API based models."""
 
+import os
 import time
 from collections.abc import Iterator
 from typing import Any, override
@@ -28,7 +29,7 @@ class OpenAISettings(BaseModel):
     """Core model settings."""
 
     base_url: str
-    api_key: str = "DUMMY KEY"
+    api_key: str = "DUMMY KEY"  # or env:MY_API_KEY to read for env var
 
 
 class OpenAIBaseModel(CompletionModel):
@@ -41,6 +42,11 @@ class OpenAIBaseModel(CompletionModel):
         """Create an instance of openai completion model."""
         self._model_name = model_config.name
         self._model_settings = OpenAISettings(**model_config.settings)  # pyright: ignore[reportAny]
+
+        # Fill the api key
+        if self._model_settings.api_key.startswith("env:"):
+            env_key = self._model_settings.api_key[4:]
+            self._model_settings.api_key = os.environ[env_key]
 
         self._client = OpenAI(**self._model_settings.model_dump())  # pyright: ignore[reportAny]
 

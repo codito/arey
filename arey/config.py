@@ -58,8 +58,9 @@ class Config(BaseModel):
         # Fill in the model name if not explicitly provided
         if "models" not in values:
             raise AreyError("config", "`models` is not provided in configuration.")
-        for k, _ in values["models"].items():  # pyright: ignore[reportAny]
-            values["models"][k]["name"] = k
+        for k, v in values["models"].items():  # pyright: ignore[reportAny]
+            if "name" not in v:
+                values["models"][k]["name"] = k
 
         # For chat and task config, let's fill the model config
         for mode in ["chat", "task"]:
