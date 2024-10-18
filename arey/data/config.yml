@@ -2,6 +2,9 @@
 #
 # Looked up from XDG_CONFIG_DIR (~/.config/arey/arey.yml) on Linux or
 # C:\Users\<username>\.arey\arey.yml on Windows.
+#
+# Please refer to below arey configuration for more examples:
+# https://github.com/codito/dotfiles/blob/master/.config/arey/arey.yml
 
 models:
   openhermes25-mistral-7b:
