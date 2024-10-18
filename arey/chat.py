@@ -69,11 +69,15 @@ class Chat:
 #     return context_size - prompt_tokens_without_history - buffer
 
 
-def create_chat() -> tuple[Chat, ModelMetrics]:
+def create_chat(model_name: str | None) -> tuple[Chat, ModelMetrics]:
     """Create a new chat session."""
     # FIXME
     # system_prompt = prompt_model.get_message("system", "") if prompt_model else ""
+    global model
     system_prompt = ""
+    if model_name is not None and model_name in config.models:
+        model = get_completion_llm(config.models[model_name])
+
     with capture_stderr() as stderr:
         model.load(system_prompt)
     chat = Chat()

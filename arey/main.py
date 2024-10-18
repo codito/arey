@@ -183,9 +183,15 @@ def task(instruction: str, overrides_file: str, verbose: bool) -> int:
 
 
 @main.command("chat")
+@click.option(
+    "-m",
+    "--model",
+    default=None,
+    help="Model to use for chat, must be defined in the config.",
+)
 @error_handler
 @common_options
-def chat(verbose: bool) -> int:
+def chat(verbose: bool, model: str | None) -> int:
     """Chat with an AI model."""
     import readline  # noqa enable GNU readline capabilities. # pyright: ignore[reportUnusedImport]
     from arey.chat import create_chat, get_completion_metrics, stream_response
@@ -195,7 +201,7 @@ def chat(verbose: bool) -> int:
     console.print()
 
     with console.status("[message_footer]Loading model..."):
-        chat, model_metrics = create_chat()
+        chat, model_metrics = create_chat(model)
         footer = f"✓ Model loaded. {model_metrics.init_latency_ms / 1000:.2f}s."
         console.print(footer, style="message_footer")
         console.print()
