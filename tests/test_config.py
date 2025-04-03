@@ -57,3 +57,109 @@ def test_get_config_return_config_for_valid_schema(fs, default_config_file):
     assert config1 is not None
     assert config1 == config2
     assert len(config1.profiles) == 3
+
+
+def test_get_config_throws_for_invalid_yaml(fs, mocker: MockerFixture):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(DEFAULT_CONFIG_FILE, contents="invalid yaml content")
+
+    with pytest.raises(AreyError) as e:
+        get_config()
+
+    assert "Configuration is invalid" in e.value.args[0]
+
+
+def test_get_config_throws_for_missing_models(fs, mocker: MockerFixture):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(DEFAULT_CONFIG_FILE, contents="profiles: {}\nchat: {}\ntask: {}")
+
+    with pytest.raises(AreyError) as e:
+        get_config()
+
+    assert "`models` is not provided in configuration." in e.value.args[0]
+
+
+def test_get_config_throws_for_missing_chat_section(fs, mocker: MockerFixture):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(
+        DEFAULT_CONFIG_FILE,
+        contents="""
+models:
+  dummy_model:
+    name: dummy_model
+task: {}
+""",
+    )
+
+    with pytest.raises(AreyError) as e:
+        get_config()
+
+    assert "`chat` and `task` sections are not available in config file." in e.value.args[0]
+
+
+def test_get_config_throws_for_missing_task_section(fs, mocker: MockerFixture):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(
+        DEFAULT_CONFIG_FILE,
+        contents="""
+models:
+  dummy_model:
+    name: dummy_model
+chat: {}
+""",
+    )
+
+    with pytest.raises(AreyError) as e:
+        get_config()
+
+    assert "`chat` and `task` sections are not available in config file." in e.value.args[0]
+
+
+def test_get_config_throws_for_invalid_model_reference(fs, mocker: MockerFixture):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(
+        DEFAULT_CONFIG_FILE,
+        contents="""
+models:
+  dummy_model:
+    name: dummy_model
+chat:
+  model: non_existent_model
+task:
+  model: non_existent_model
+""",
+    )
+
+    with pytest.raises(AreyError) as e:
+        get_config()
+
+    assert "Configuration is invalid" in e.value.args[0]
+
+
+def test_get_config_throws_for_invalid_profile_reference(fs, mocker: MockerFixture):
+    fs.create_dir(DEFAULT_CONFIG_DIR)
+    fs.create_file(
+        DEFAULT_CONFIG_FILE,
+        contents="""
+models:
+  dummy_model:
+    name: dummy_model
+profiles:
+  default_profile:
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+chat:
+  model: dummy_model
+  profile: non_existent_profile
+task:
+  model: dummy_model
+  profile: non_existent_profile
+""",
+    )
+
+    with pytest.raises(AreyError) as e:
+        get_config()
+
+    assert "Configuration is invalid" in e.value.args[0]
