@@ -3,6 +3,10 @@ name = "arey"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "arey"
+path = "src/main.rs"
+
 [dependencies]
 async-trait = "0.1.77"
 serde = { version = "1.0", features = ["derive"] }
