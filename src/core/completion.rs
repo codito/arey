@@ -76,3 +76,22 @@ pub fn combine_metrics(usage_series: &[CompletionMetrics]) -> CompletionMetrics 
         completion_latency_ms: response_latency,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_combine_metrics_empty() {
+        let combined = combine_metrics(&[]);
+        assert_eq!(combined.prompt_tokens, 0);
+        assert_eq!(combined.completion_tokens, 0);
+    }
+
+    #[test]
+    fn test_sender_type_role() {
+        assert_eq!(SenderType::System.role(), "system");
+        assert_eq!(SenderType::User.role(), "user");
+        assert_eq!(SenderType::Assistant.role(), "assistant");
+    }
+}

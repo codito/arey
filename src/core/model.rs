@@ -1,6 +1,23 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_config_default_capabilities() {
+        let config = ModelConfig {
+            name: "test".into(),
+            r#type: ModelProvider::Gguf,
+            capabilities: default_capabilities(),
+            settings: HashMap::new(),
+        };
+        assert_eq!(config.capabilities.len(), 1);
+        assert!(matches!(config.capabilities[0], ModelCapability::Completion));
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelProvider {
