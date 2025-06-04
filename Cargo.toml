@@ -32,6 +32,7 @@ dirs = "5.0"
 path-absolutize = "3.1"
 indicatif = "0.17"
 console = "0.15.11"
+ctrlc = "3.4"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 llama-cpp-2 = { version = "0.1.*", features = ["cuda"] }

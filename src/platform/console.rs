@@ -1,4 +1,5 @@
 use console::{Style, StyledObject, Term};
+use ctrlc;
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
