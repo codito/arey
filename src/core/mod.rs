@@ -1,3 +1,4 @@
+pub mod config;
 pub mod completion;
 pub mod model;
 
