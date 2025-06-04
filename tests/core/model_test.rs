@@ -1,4 +1,4 @@
-use crate::core::model::{ModelCapability, ModelConfig, ModelProvider};
+use arey::core::model::{ModelCapability, ModelConfig, ModelProvider};
 use serde_yaml;
 use std::collections::HashMap;
 

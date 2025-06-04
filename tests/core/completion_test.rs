@@ -1,5 +1,5 @@
-use crate::core::completion::{combine_metrics, CompletionMetrics, SenderType};
-use crate::core::model::ModelMetrics;
+use arey::core::completion::{combine_metrics, CompletionMetrics, SenderType};
+use arey::core::model::ModelMetrics;
 
 #[test]
 fn test_combine_metrics() {
@@ -39,12 +39,12 @@ fn test_sender_type_roles() {
 pub struct MockCompletionModel;
 
 #[async_trait::async_trait]
-impl super::CompletionModel for MockCompletionModel {
+impl arey::core::completion::CompletionModel for MockCompletionModel {
     fn context_size(&self) -> usize { 4096 }
     fn metrics(&self) -> ModelMetrics { ModelMetrics { init_latency_ms: 0.0 } }
     async fn load(&mut self, _text: &str) -> anyhow::Result<()> { Ok(()) }
-    async fn complete(&mut self, _messages: &[super::ChatMessage], _settings: &std::collections::HashMap<String, String>) 
-        -> futures::stream::BoxStream<'_, super::CompletionResponse> 
+    async fn complete(&mut self, _messages: &[arey::core::completion::ChatMessage], _settings: &std::collections::HashMap<String, String>) 
+        -> futures::stream::BoxStream<'_, arey::core::completion::CompletionResponse> 
     {
         unimplemented!()
     }
