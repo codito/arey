@@ -1,0 +1,169 @@
+use arey::core::config::{create_or_get_config_file, get_config, AreyConfigError};
+use std::fs;
+use std::path::PathBuf;
+use tempfile::tempdir;
+
+// Dummy config content for tests
+const DUMMY_CONFIG_CONTENT: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+    n_ctx: 4096
+    path: /path/to/dummy_model.gguf
+  dummy-13b:
+    name: dummy-13b
+    type: gguf
+    n_ctx: 8192
+    path: /path/to/another_dummy.gguf
+profiles:
+  default:
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+  creative:
+    temperature: 0.9
+    repeat_penalty: 1.1
+    top_k: 50
+    top_p: 0.9
+  concise:
+    temperature: 0.5
+    repeat_penalty: 1.2
+    top_k: 30
+    top_p: 0.05
+chat:
+  model: dummy-7b
+  profile: default
+task:
+  model: dummy-13b
+  profile: concise
+"#;
+
+// Helper to set up a temporary config directory and file
+fn setup_temp_config_env(content: Option<&str>) -> PathBuf {
+    let temp_dir = tempdir().unwrap();
+    let config_dir = temp_dir.path().join(".config").join("arey");
+    let config_file = config_dir.join("arey.yml");
+
+    // Set XDG_CONFIG_HOME to our temporary directory to control get_config_dir
+    std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+
+    if let Some(c) = content {
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(&config_file, c).unwrap();
+    }
+
+    config_file
+}
+
+// Helper to clean up the temporary config environment
+fn teardown_temp_config_env() {
+    std::env::remove_var("XDG_CONFIG_HOME");
+}
+
+#[test]
+fn test_create_or_get_config_file_when_exists() {
+    let config_file = setup_temp_config_env(Some(DUMMY_CONFIG_CONTENT));
+    let config_dir = config_file.parent().unwrap().to_path_buf();
+
+    let (exists, file_path) = create_or_get_config_file().unwrap();
+
+    assert!(exists);
+    assert_eq!(file_path, config_file);
+    assert!(config_dir.exists());
+    assert!(config_file.exists());
+
+    teardown_temp_config_env();
+}
+
+#[test]
+fn test_create_or_get_config_file_when_not_exist() {
+    let temp_dir = tempdir().unwrap();
+    let config_dir = temp_dir.path().join(".config").join("arey");
+    let config_file = config_dir.join("arey.yml");
+    std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+
+    // Ensure the directory and file do not exist initially
+    assert!(!config_dir.exists());
+    assert!(!config_file.exists());
+
+    let (exists, file_path) = create_or_get_config_file().unwrap();
+
+    assert!(!exists);
+    assert_eq!(file_path, config_file);
+    assert!(config_dir.exists()); // Directory should be created
+    assert!(config_file.exists()); // File should be created
+
+    teardown_temp_config_env();
+}
+
+#[test]
+fn test_get_config_return_config_for_valid_schema() {
+    let _config_file = setup_temp_config_env(Some(DUMMY_CONFIG_CONTENT));
+
+    let config = get_config().unwrap();
+
+    assert_eq!(config.models.len(), 2);
+    assert_eq!(config.profiles.len(), 3);
+    assert_eq!(config.chat.model.name, "dummy-7b");
+    assert_eq!(config.chat.profile.temperature, 0.7);
+    assert_eq!(config.task.model.name, "dummy-13b");
+    assert_eq!(config.task.profile.temperature, 0.5);
+
+    teardown_temp_config_env();
+}
+
+#[test]
+fn test_get_config_throws_for_invalid_yaml() {
+    let _config_file = setup_temp_config_env(Some("invalid yaml content: - ["));
+
+    let err = get_config().unwrap_err();
+    assert!(matches!(err, AreyConfigError::YAMLError(_)));
+    assert!(format!("{}", err).contains("YAML parsing error"));
+
+    teardown_temp_config_env();
+}
+
+#[test]
+fn test_get_config_throws_for_missing_referenced_model() {
+    let invalid_config_content = r#"
+models: {} # Empty models map
+profiles: {}
+chat:
+  model: non-existent-model # References a model not in the map
+task:
+  model: non-existent-model
+"#;
+    let _config_file = setup_temp_config_env(Some(invalid_config_content));
+
+    let err = get_config().unwrap_err();
+    assert!(matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found")));
+
+    teardown_temp_config_env();
+}
+
+#[test]
+fn test_get_config_throws_for_missing_referenced_profile() {
+    let invalid_config_content = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+    n_ctx: 4096
+    path: /path/to/dummy_model.gguf
+profiles: {} # Empty profiles map
+chat:
+  model: dummy-7b
+  profile: non-existent-profile # References a profile not in the map
+task:
+  model: dummy-7b
+  profile: default # This one is fine, will use default if not found in map
+"#;
+    let _config_file = setup_temp_config_env(Some(invalid_config_content));
+
+    let err = get_config().unwrap_err();
+    assert!(matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found")));
+
+    teardown_temp_config_env();
+}
