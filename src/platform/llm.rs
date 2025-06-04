@@ -1,6 +1,6 @@
 use crate::core::ModelProvider;
 use crate::core::completion::CompletionModel;
-use crate::core::model::{ModelConfig, ModelMetrics};
+use crate::core::model::ModelConfig;
 use crate::platform::{llama, ollama, openai};
 use anyhow::Result;
 

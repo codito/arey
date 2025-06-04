@@ -1,5 +1,5 @@
 use crate::core::ChatMessage;
-use crate::core::completion::{CompletionMetrics, CompletionModel, CompletionResponse};
+use crate::core::completion::{CompletionModel, CompletionResponse};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;

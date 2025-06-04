@@ -1,5 +1,5 @@
 use crate::core::completion::{
-    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+    ChatMessage, CompletionModel, CompletionResponse,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 pub struct LlamaSettings {

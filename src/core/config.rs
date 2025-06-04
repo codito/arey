@@ -94,15 +94,16 @@ impl RawConfig {
             models_with_names.insert(k, v);
         }
 
-        let resolve_model = |model: StringOrObject<ModelConfig>| -> Result<ModelConfig, AreyConfigError> {
-            match model {
-                StringOrObject::String(s) => models_with_names
-                    .get(&s)
-                    .cloned()
-                    .ok_or_else(|| AreyConfigError::Config(format!("Model '{}' not found", s))),
-                StringOrObject::Object(m) => Ok(m),
-            }
-        };
+        let resolve_model =
+            |model: StringOrObject<ModelConfig>| -> Result<ModelConfig, AreyConfigError> {
+                match model {
+                    StringOrObject::String(s) => models_with_names
+                        .get(&s)
+                        .cloned()
+                        .ok_or_else(|| AreyConfigError::Config(format!("Model '{}' not found", s))),
+                    StringOrObject::Object(m) => Ok(m),
+                }
+            };
 
         let resolve_profile = |profile: Option<StringOrObject<ProfileConfig>>| -> Result<ProfileConfig, AreyConfigError> {
             match profile {
