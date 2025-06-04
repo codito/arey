@@ -24,7 +24,7 @@ impl OllamaBaseModel {
     pub fn new(config: ModelConfig) -> Result<Self> {
         let settings: OllamaSettings = serde_yaml::from_value(
             serde_yaml::to_value(&config.settings)
-                .map_err(|e| anyhow!("Invalid settings structure"))?,
+                .map_err(|_e| anyhow!("Invalid settings structure"))?,
         )?;
 
         Ok(Self {
@@ -48,21 +48,21 @@ impl CompletionModel for OllamaBaseModel {
         self.metrics.clone()
     }
 
-    async fn load(&mut self, text: &str) -> Result<()> {
+    async fn load(&mut self, _text: &str) -> Result<()> {
         // TODO: Implement actual loading
         Ok(())
     }
 
     async fn complete(
         &mut self,
-        messages: &[ChatMessage],
-        settings: &HashMap<String, String>,
+        _messages: &[ChatMessage],
+        _settings: &HashMap<String, String>,
     ) -> BoxStream<'_, CompletionResponse> {
         // TODO: Implement completion
         Box::pin(futures::stream::empty())
     }
 
-    async fn count_tokens(&self, text: &str) -> usize {
+    async fn count_tokens(&self, _text: &str) -> usize {
         // TODO: Implement token counting
         0
     }

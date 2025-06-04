@@ -2,14 +2,14 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    core::model::{ModelConfig, ModelProvider},
+    core::model::ModelConfig,
     platform::assets::{get_config_dir, get_default_config},
 };
 
@@ -82,11 +82,8 @@ struct RawModeConfig {
 
 impl RawConfig {
     fn to_config(self) -> Result<Config, AreyConfigError> {
-        let models = self.models;
-        let profiles = self.profiles;
         let mut models_with_names = HashMap::new();
-
-        for (k, mut v) in models {
+        for (k, mut v) in self.models {
             // Update model name if not set
             if v.name.is_empty() {
                 v.name = k.clone();
@@ -95,8 +92,8 @@ impl RawConfig {
         }
 
         let resolve_model =
-            |model: StringOrObject<ModelConfig>| -> Result<ModelConfig, AreyConfigError> {
-                match model {
+            |model_entry: StringOrObject<ModelConfig>| -> Result<ModelConfig, AreyConfigError> {
+                match model_entry {
                     StringOrObject::String(s) => models_with_names
                         .get(&s)
                         .cloned()
@@ -105,9 +102,9 @@ impl RawConfig {
                 }
             };
 
-        let resolve_profile = |profile: Option<StringOrObject<ProfileConfig>>| -> Result<ProfileConfig, AreyConfigError> {
-            match profile {
-                Some(StringOrObject::String(s)) => profiles
+        let resolve_profile = |profile_entry: Option<StringOrObject<ProfileConfig>>| -> Result<ProfileConfig, AreyConfigError> {
+            match profile_entry {
+                Some(StringOrObject::String(s)) => self.profiles
                     .get(&s)
                     .cloned()
                     .ok_or_else(|| AreyConfigError::Config(format!("Profile '{}' not found", s))),
@@ -116,16 +113,21 @@ impl RawConfig {
             }
         };
 
+        let chat_model = resolve_model(self.chat.model)?;
+        let chat_profile = resolve_profile(self.chat.profile)?;
+        let task_model = resolve_model(self.task.model)?;
+        let task_profile = resolve_profile(self.task.profile)?;
+
         Ok(Config {
             models: models_with_names,
-            profiles,
+            profiles: self.profiles, // `self.profiles` can be moved here now
             chat: ModeConfig {
-                model: resolve_model(self.chat.model)?,
-                profile: resolve_profile(self.chat.profile)?,
+                model: chat_model,
+                profile: chat_profile,
             },
             task: ModeConfig {
-                model: resolve_model(self.task.model)?,
-                profile: resolve_profile(self.task.profile)?,
+                model: task_model,
+                profile: task_profile,
             },
         })
     }

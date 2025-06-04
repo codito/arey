@@ -26,6 +26,5 @@ pub fn get_completion_llm(model_config: ModelConfig) -> Result<Box<dyn Completio
             let model = openai::OpenAIBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
-        _ => Err(ModelInitError::UnsupportedType(format!("{:?}", model_config.r#type)).into()),
     }
 }
