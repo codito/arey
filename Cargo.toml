@@ -7,9 +7,7 @@ edition = "2024"
 name = "arey"
 path = "src/main.rs"
 
-[[lib]]
-name = "arey"
-path = "src/lib.rs"
+lib = ["src/lib.rs"]
 
 [dependencies]
 async-trait = "0.1.77"
