@@ -2,8 +2,9 @@ use crate::core::model::{ModelCapability, ModelConfig, ModelMetrics};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SenderType {
     System,
     Assistant,
@@ -26,6 +27,7 @@ pub struct ChatMessage {
     pub sender: SenderType,
 }
 
+#[derive(Debug)]
 pub struct CompletionMetrics {
     pub prompt_tokens: usize,
     pub prompt_eval_latency_ms: f32,
@@ -34,6 +36,7 @@ pub struct CompletionMetrics {
     pub completion_latency_ms: f32,
 }
 
+#[derive(Debug)]
 pub struct CompletionResponse {
     pub text: String,
     pub finish_reason: Option<String>,
@@ -55,6 +58,21 @@ pub trait CompletionModel: Send + Sync {
 }
 
 pub fn combine_metrics(usage_series: &[CompletionMetrics]) -> CompletionMetrics {
-    // Implementation logic
-    unimplemented!()
+    let mut response_latency = 0.0;
+    let mut response_tokens = 0;
+    let prompt_tokens = usage_series.first().map(|u| u.prompt_tokens).unwrap_or(0);
+    let prompt_eval_latency = usage_series.first().map(|u| u.prompt_eval_latency_ms).unwrap_or(0.0);
+
+    for u in usage_series {
+        response_latency += u.completion_latency_ms;
+        response_tokens += u.completion_tokens;
+    }
+
+    CompletionMetrics {
+        prompt_tokens,
+        prompt_eval_latency_ms: prompt_eval_latency,
+        completion_tokens: response_tokens,
+        completion_runs: usage_series.len(),
+        completion_latency_ms: response_latency,
+    }
 }

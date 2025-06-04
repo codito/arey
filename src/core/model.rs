@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub type ModelProvider = String;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelProvider {
+    Gguf,
+    Openai,
+    Ollama,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -21,9 +27,14 @@ pub enum ModelCapability {
 pub struct ModelConfig {
     pub name: String,
     pub r#type: ModelProvider,
+    #[serde(default = "default_capabilities")]
     pub capabilities: Vec<ModelCapability>,
     #[serde(flatten)]
     pub settings: HashMap<String, serde_yaml::Value>,
+}
+
+fn default_capabilities() -> Vec<ModelCapability> {
+    vec![ModelCapability::Completion]
 }
 
 pub struct ModelMetrics {
