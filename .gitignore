@@ -174,3 +174,4 @@ pyrightconfig.json
 extract.py
 data/
 !arey/data/
+.aider*

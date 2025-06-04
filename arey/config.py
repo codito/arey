@@ -112,5 +112,9 @@ def get_config() -> Config:
             config = Config(**config_data)  # pyright: ignore[reportAny]
         except ValidationError as e:
             raise AreyError("config", f"Configuration is invalid. Errors: {e.errors}")
+        except Exception as e:
+            print(e)
+            raise AreyError("config", f"Failed to parse configuration. Error: {e}")
+
         setattr(get_config, "config", config)
         return config
