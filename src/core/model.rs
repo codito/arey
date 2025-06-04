@@ -15,7 +15,10 @@ mod tests {
             settings: HashMap::new(),
         };
         assert_eq!(config.capabilities.len(), 1);
-        assert!(matches!(config.capabilities[0], ModelCapability::Completion));
+        assert!(matches!(
+            config.capabilities[0],
+            ModelCapability::Completion
+        ));
     }
 
     #[test]
@@ -51,12 +54,15 @@ mod tests {
             type: gguf
             n_ctx: 4096
         "#;
-        
+
         let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
-        
+
         assert_eq!(config.name, "test-model");
         assert!(matches!(config.r#type, ModelProvider::Gguf));
-        assert_eq!(*config.settings.get("n_ctx").unwrap(), serde_yaml::Value::Number(4096.into()));
+        assert_eq!(
+            *config.settings.get("n_ctx").unwrap(),
+            serde_yaml::Value::Number(4096.into())
+        );
     }
 }
 
@@ -96,6 +102,7 @@ fn default_capabilities() -> Vec<ModelCapability> {
     vec![ModelCapability::Completion]
 }
 
+#[derive(Clone)]
 pub struct ModelMetrics {
     pub init_latency_ms: f32,
 }

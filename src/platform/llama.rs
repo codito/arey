@@ -1,6 +1,8 @@
-use crate::core::completion::{CompletionMetrics, CompletionModel, CompletionResponse};
+use crate::core::completion::{
+    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+};
 use crate::core::model::{ModelConfig, ModelMetrics};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::Deserialize;
@@ -16,8 +18,8 @@ pub struct LlamaSettings {
 
 pub struct LlamaBaseModel {
     config: ModelConfig,
-    model: Option<llama_cpp_2::Model>,
-    context: Option<llama_cpp_2::Context>,
+    model: Option<llama_cpp_2::model::LlamaModel>,
+    // context: Option<llama_cpp_2::Context>,
     metrics: ModelMetrics,
     settings: LlamaSettings,
 }
@@ -29,14 +31,16 @@ impl LlamaBaseModel {
                 .map_err(|e| anyhow!("Invalid settings structure"))?,
         )?;
 
-        let mut model_builder = llama_cpp_2::Model::new();
-        model_builder.n_ctx(settings.n_ctx);
+        // let mut model_builder = llama_cpp_2::Model::new();
+        // model_builder.n_ctx(settings.n_ctx);
 
         Ok(Self {
             config,
             model: None,
-            context: None,
-            metrics: ModelMetrics { init_latency_ms: 0.0 },
+            // context: None,
+            metrics: ModelMetrics {
+                init_latency_ms: 0.0,
+            },
             settings,
         })
     }
@@ -59,7 +63,7 @@ impl CompletionModel for LlamaBaseModel {
 
     async fn complete(
         &mut self,
-        messages: &[super::ChatMessage],
+        messages: &[ChatMessage],
         settings: &HashMap<String, String>,
     ) -> BoxStream<'_, CompletionResponse> {
         // TODO: Implement completion

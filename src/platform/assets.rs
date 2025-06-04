@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use once_cell::sync::Lazy;
+use std::path::PathBuf;
 
 static DEFAULT_DATA_DIR: Lazy<PathBuf> = Lazy::new(|| {
     dirs::data_local_dir()
@@ -39,7 +39,7 @@ pub fn get_config_dir() -> PathBuf {
 }
 
 pub fn get_default_config() -> String {
-    include_str!("../../config/default.yml").to_string()
+    include_str!("../data/config.yml").to_string()
 }
 
 #[cfg(test)]
@@ -50,7 +50,7 @@ mod tests {
     fn test_asset_paths() {
         let asset_dir = get_asset_dir("");
         assert!(asset_dir.to_str().unwrap().contains("arey"));
-        
+
         let asset_path = get_asset_path("test");
         assert!(asset_path.to_str().unwrap().contains("test"));
     }

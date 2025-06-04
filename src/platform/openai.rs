@@ -1,6 +1,6 @@
-use crate::core::completion::{CompletionMetrics, CompletionModel, CompletionResponse};
+use crate::core::completion::{ChatMessage, CompletionModel, CompletionResponse};
 use crate::core::model::{ModelConfig, ModelMetrics};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use reqwest::Client;
@@ -33,7 +33,9 @@ impl OpenAIBaseModel {
         Ok(Self {
             config,
             client,
-            metrics: ModelMetrics { init_latency_ms: 0.0 },
+            metrics: ModelMetrics {
+                init_latency_ms: 0.0,
+            },
             settings,
         })
     }
@@ -57,7 +59,7 @@ impl CompletionModel for OpenAIBaseModel {
 
     async fn complete(
         &mut self,
-        messages: &[super::ChatMessage],
+        messages: &[ChatMessage],
         settings: &HashMap<String, String>,
     ) -> BoxStream<'_, CompletionResponse> {
         // TODO: Implement completion

@@ -1,9 +1,8 @@
+use crate::core::ModelProvider;
 use crate::core::completion::CompletionModel;
 use crate::core::model::{ModelConfig, ModelMetrics};
 use crate::platform::{llama, ollama, openai};
 use anyhow::Result;
-
-pub type ModelType = ffigen::types::ModelProvider;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ModelInitError {
@@ -15,19 +14,18 @@ pub enum ModelInitError {
 
 pub fn get_completion_llm(model_config: ModelConfig) -> Result<Box<dyn CompletionModel>> {
     match model_config.r#type {
-        ModelType::Gguf => {
+        ModelProvider::Gguf => {
             let model = llama::LlamaBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
-        ModelType::Ollama => {
+        ModelProvider::Ollama => {
             let model = ollama::OllamaBaseModel::new(model_config)?;
-            Ok::<Box<dyn CompletionModel>>(Box::new(model))
+            Ok(Box::new(model))
         }
-        ModelType::Openai => {
+        ModelProvider::Openai => {
             let model = openai::OpenAIBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
-        _ => Err(ModelInitError::UnsupportedType(format!("{:?}", model_config.r#type))
-            .into()),
+        _ => Err(ModelInitError::UnsupportedType(format!("{:?}", model_config.r#type)).into()),
     }
 }

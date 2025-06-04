@@ -2,8 +2,8 @@ use console::{Style, StyledObject, Term};
 use ctrlc;
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -42,11 +42,12 @@ impl SignalContext {
     pub fn new() -> Self {
         let stopped = Arc::new(AtomicBool::new(false));
         let s = stopped.clone();
-        
+
         ctrlc::set_handler(move || {
             s.store(true, Ordering::Relaxed);
-        }).expect("Error setting Ctrl-C handler");
-        
+        })
+        .expect("Error setting Ctrl-C handler");
+
         SignalContext { stopped }
     }
 
@@ -98,6 +99,9 @@ mod tests {
     #[test]
     fn test_message_styles() {
         let styled = style_text("test", MessageType::Error);
-        assert_eq!(styled.to_string(), "\u{1b}[31;1mtest\u{1b}[0m");
+        assert_eq!(
+            styled.force_styling(true).to_string(),
+            "\u{1b}[31m\u{1b}[1mtest\u{1b}[0m"
+        );
     }
 }
