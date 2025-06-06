@@ -157,12 +157,15 @@ models: {} # Empty models map
 profiles: {}
 chat:
   model: non-existent-model # References a model not in the map
+  profile: test
 task:
   model: non-existent-model
+  profile: test
 "#;
     let (_guard, _config_file) = setup_temp_config_env(Some(invalid_config_content));
 
     let err = get_config().unwrap_err();
+    println!("{:?}", err);
     assert!(
         matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found"))
     );
