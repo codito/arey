@@ -156,7 +156,9 @@ pub fn create_or_get_config_file(config_path: Option<PathBuf>) -> Result<(bool, 
         Ok((false, actual_path))
     }
 }
+use crate::core::ModelProvider;
 
+    
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;
     let content = fs::read_to_string(&config_file)?;
@@ -166,16 +168,20 @@ pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigErro
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::{
-        env,
+        collections::HashMap,
         fs::{self, File},
+        io::Write,
         path::PathBuf,
-        sync::Mutex,
     };
-    use serde_yaml::Value;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use serde::{Deserialize, Serialize};
+    use thiserror::Error;
+
+    use crate::{
+        core::model::ModelConfig,
+        platform::assets::{get_config_dir, get_default_config},
+    };
 
     // Helpers for test environment setup
     fn get_test_dir() -> PathBuf {
@@ -189,31 +195,7 @@ mod tests {
     fn get_config_dir(test_dir: &PathBuf) -> PathBuf {
         test_dir.join(".config").join("arey")
     }
-
-    #[derive(Debug)]
-    struct TempConfigGuard {
-        original_xdg_config_home: Option<String>,
-        test_dir: PathBuf,
-    }
-
-    impl Drop for TempConfigGuard {
-        fn drop(&mut self) {
-            // Restore environment
-            unsafe {
-                if let Some(original_value) = &self.original_xdg_config_home {
-                    env::set_var("XDG_CONFIG_HOME", original_value);
-                } else {
-                    env::remove_var("XDG_CONFIG_HOME");
-                }
-            }
             
-            // Clean up temp files
-            if self.test_dir.exists() {
-                fs::remove_dir_all(&self.test_dir).ok();
-            }
-        }
-    }
-
     // Helper to create a temporary config file for tests
     fn create_temp_config(content: &str) -> PathBuf {
         let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
@@ -233,7 +215,7 @@ mod tests {
     fn dummy_model_config(name: &str) -> crate::core::model::ModelConfig {
         crate::core::model::ModelConfig {
             name: name.to_string(),
-            r#type: crate::core::model::ModelProvider::Gguf,
+            type: ModelProvider.Gguf,
             capabilities: vec![crate::core::model::ModelCapability::Completion],
             settings: HashMap::from([
                 ("n_ctx".to_string(), Value::Number(4096.into())),
@@ -256,16 +238,21 @@ models:
     path: /path/to/another_dummy.gguf
 profiles:
   default:
+            
+        
     temperature: 0.7
     repeat_penalty: 1.176
     top_k: 40
     top_p: 0.1
   creative:
-    temperature: 0.9
+    temperature: 0.9  
     repeat_penalty: 1.1
     top_k: 50
     top_p: 0.9
   concise:
+                    temperature: 0.8,
+                   
+               
     temperature: 0.5
     repeat_penalty: 1.2
     top_k: 30
