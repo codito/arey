@@ -154,7 +154,7 @@ fn test_get_config_throws_for_invalid_yaml() {
 fn test_get_config_throws_for_missing_referenced_model() {
     let invalid_config_content = r#"
 models: {} # Empty models map
-profiles: {}
+profiles: {} # Empty profiles map
 chat:
   model: non-existent-model # References a model not in the map
   profile: test
