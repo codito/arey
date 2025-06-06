@@ -132,24 +132,34 @@ impl RawConfig {
     }
 }
 
-pub fn create_or_get_config_file() -> Result<(bool, PathBuf), AreyConfigError> {
-    let config_dir = get_config_dir();
-    if !config_dir.exists() {
-        fs::create_dir_all(&config_dir)?;
+pub fn create_or_get_config_file(config_path: Option<PathBuf>) -> Result<(bool, PathBuf), AreyConfigError> {
+    let actual_path = config_path.unwrap_or_else(|| {
+        let config_dir = get_config_dir();
+        config_dir.join("arey.yml")
+    });
+
+    let parent_dir = actual_path.parent().ok_or_else(|| {
+        AreyConfigError::IO(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Config path has no parent directory",
+        ))
+    })?;
+
+    if !parent_dir.exists() {
+        fs::create_dir_all(parent_dir)?;
     }
 
-    let config_file = config_dir.join("arey.yml");
-    if config_file.exists() {
-        Ok((true, config_file))
+    if actual_path.exists() {
+        Ok((true, actual_path))
     } else {
-        File::create(&config_file)?.write_all(get_default_config().as_bytes())?;
-        Ok((false, config_file))
+        File::create(&actual_path)?.write_all(get_default_config().as_bytes())?;
+        Ok((false, actual_path))
     }
 }
 
-pub fn get_config() -> Result<Config, AreyConfigError> {
-    let (_, config_path) = create_or_get_config_file()?;
-    let content = fs::read_to_string(&config_path)?;
+pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
+    let (_, config_file) = create_or_get_config_file(config_path)?;
+    let content = fs::read_to_string(&config_file)?;
     let raw: RawConfig = serde_yaml::from_str(&content)?;
     raw.to_config()
 }
@@ -165,7 +175,6 @@ mod tests {
     };
     use serde_yaml::Value;
 
-    // Global lock for environment variable access
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     // Helpers for test environment setup
@@ -205,30 +214,19 @@ mod tests {
         }
     }
 
-    // Setup config environment for tests
-    fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
-        // Create unique test directory
-        let test_dir = get_test_dir();
-        let config_dir = get_config_dir(&test_dir);
-        let config_file = config_dir.join("arey.yml");
+    // Helper to create a temporary config file for tests
+    fn create_temp_config(content: &str) -> PathBuf {
+        let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
+        let config_path = temp_dir.join("arey.yml");
+        fs::create_dir_all(&temp_dir).unwrap();
+        File::create(&config_path).unwrap().write_all(content.as_bytes()).unwrap();
+        config_path
+    }
 
-        unsafe {
-            // Set environment for this test
-            env::set_var("XDG_CONFIG_HOME", &test_dir);
-        }
-
-        if let Some(c) = content {
-            fs::create_dir_all(&config_dir).unwrap();
-            File::create(&config_file).unwrap().write_all(c.as_bytes()).unwrap();
-        }
-
-        (
-            TempConfigGuard {
-                original_xdg_config_home: env::var("XDG_CONFIG_HOME").ok(),
-                test_dir,
-            },
-            config_file,
-        )
+    // Helper to create a temporary directory for config file creation tests
+    fn create_temp_config_dir() -> PathBuf {
+        let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
+        temp_dir.join("config")
     }
 
     // Helper for creating a dummy ModelConfig object
@@ -392,38 +390,31 @@ task:
 
     #[test]
     fn test_create_or_get_config_file_when_exists() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
-        let (_guard, config_file) = setup_temp_config_env(Some(DUMMY_CONFIG_CONTENT));
-        let config_dir = config_file.parent().unwrap().to_path_buf();
+        let config_path = create_temp_config(DUMMY_CONFIG_CONTENT);
 
-        let (exists, file_path) = create_or_get_config_file().unwrap();
+        let (exists, file_path) = create_or_get_config_file(Some(config_path.clone())).unwrap();
 
         assert!(exists);
-        assert_eq!(file_path, config_file);
-        assert!(config_dir.exists());
-        assert!(config_file.exists());
+        assert_eq!(file_path, config_path);
+        assert!(file_path.exists());
     }
 
     #[test]
     fn test_create_or_get_config_file_when_not_exist() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
-        let (_guard, config_file) = setup_temp_config_env(None);
-        let config_dir = config_file.parent().unwrap().to_path_buf();
+        let config_dir = create_temp_config_dir();
+        let config_file = config_dir.join("arey.yml");
 
-        let (exists, file_path) = create_or_get_config_file().unwrap();
+        let (exists, file_path) = create_or_get_config_file(Some(config_file.clone())).unwrap();
 
         assert!(!exists);
         assert_eq!(file_path, config_file);
-        assert!(config_dir.exists());
-        assert!(config_file.exists());
+        assert!(file_path.exists());
     }
 
     #[test]
     fn test_get_config_return_config_for_valid_schema() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
-        let (_guard, _config_file) = setup_temp_config_env(Some(DUMMY_CONFIG_CONTENT));
-
-        let config = get_config().unwrap();
+        let config_file = create_temp_config(DUMMY_CONFIG_CONTENT);
+        let config = get_config(Some(config_file)).unwrap();
 
         assert_eq!(config.models.len(), 2);
         assert_eq!(config.profiles.len(), 3);
@@ -435,17 +426,14 @@ task:
 
     #[test]
     fn test_get_config_throws_for_invalid_yaml() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
-        let (_guard, _config_file) = setup_temp_config_env(Some("invalid yaml content: - ["));
-
-        let err = get_config().unwrap_err();
+        let config_file = create_temp_config("invalid yaml content: - [");
+        let err = get_config(Some(config_file)).unwrap_err();
         assert!(matches!(err, AreyConfigError::YAMLError(_)));
         assert!(format!("{}", err).contains("YAML parsing error"));
     }
 
     #[test]
     fn test_get_config_throws_for_missing_referenced_model() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
         let invalid_config_content = r#"
 models: {} # Empty models map
 profiles: {} # Empty profiles map
@@ -456,9 +444,8 @@ task:
   model: non-existent-model
   profile: test
 "#;
-        let (_guard, _config_file) = setup_temp_config_env(Some(invalid_config_content));
-
-        let err = get_config().unwrap_err();
+        let config_file = create_temp_config(invalid_config_content);
+        let err = get_config(Some(config_file)).unwrap_err();
         assert!(
             matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found"))
         );
@@ -466,7 +453,6 @@ task:
 
     #[test]
     fn test_get_config_throws_for_missing_referenced_profile() {
-        let _env_lock = ENV_LOCK.lock().unwrap();
         let invalid_config_content = r#"
 models:
   dummy-7b:
@@ -482,9 +468,8 @@ task:
   model: dummy-7b
   profile: default # This one is fine, will use default if not found in map
 "#;
-        let (_guard, _config_file) = setup_temp_config_env(Some(invalid_config_content));
-
-        let err = get_config().unwrap_err();
+        let config_file = create_temp_config(invalid_config_content);
+        let err = get_config(Some(config_file)).unwrap_err();
         assert!(
             matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found"))
         );
