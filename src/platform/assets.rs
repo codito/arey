@@ -7,6 +7,7 @@ static DEFAULT_DATA_DIR: Lazy<PathBuf> = Lazy::new(|| {
         .unwrap_or_else(|| PathBuf::from("~/.local/share/arey"))
 });
 
+// DEFAULT_CONFIG_DIR is now a fallback, as get_config_dir will check XDG_CONFIG_HOME first
 static DEFAULT_CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| {
     dirs::config_dir()
         .map(|p| p.join("arey"))
@@ -35,7 +36,12 @@ pub fn get_asset_path(asset_name: &str) -> PathBuf {
 }
 
 pub fn get_config_dir() -> PathBuf {
-    DEFAULT_CONFIG_DIR.clone()
+    // Check XDG_CONFIG_HOME first, then fall back to default
+    if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(xdg_config_home).join("arey")
+    } else {
+        DEFAULT_CONFIG_DIR.clone()
+    }
 }
 
 pub fn get_default_config() -> String {
