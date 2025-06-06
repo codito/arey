@@ -175,6 +175,7 @@ mod tests {
         path::PathBuf,
     };
 
+    use rand;
     use serde::{Deserialize, Serialize};
     use thiserror::Error;
 
@@ -182,6 +183,8 @@ mod tests {
         core::model::ModelConfig,
         platform::assets::{get_config_dir, get_default_config},
     };
+
+    use super::*;
 
     // Helpers for test environment setup
     fn get_test_dir() -> PathBuf {
@@ -192,10 +195,6 @@ mod tests {
         std::env::temp_dir().join(format!("arey-test-{}", random_id))
     }
 
-    fn get_config_dir(test_dir: &PathBuf) -> PathBuf {
-        test_dir.join(".config").join("arey")
-    }
-            
     // Helper to create a temporary config file for tests
     fn create_temp_config(content: &str) -> PathBuf {
         let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
@@ -215,10 +214,10 @@ mod tests {
     fn dummy_model_config(name: &str) -> crate::core::model::ModelConfig {
         crate::core::model::ModelConfig {
             name: name.to_string(),
-            type: ModelProvider.Gguf,
+            r#type: crate::core::model::ModelProvider::Gguf,
             capabilities: vec![crate::core::model::ModelCapability::Completion],
             settings: HashMap::from([
-                ("n_ctx".to_string(), Value::Number(4096.into())),
+                ("n_ctx".to_string(), serde_yaml::Value::Number(4096.into())),
             ]),
         }
     }
