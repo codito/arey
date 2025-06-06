@@ -63,8 +63,8 @@ impl Drop for TempConfigGuard {
 
 // Helper to set up a temporary config directory and file, returning a guard.
 fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
-    let temp_dir = tempdir().unwrap();
-    let config_dir = temp_dir.path().join(".config").join("arey");
+    let config_home = tempdir().unwrap().path().join(".config");
+    let config_dir = config_home.join("arey");
     let config_file = config_dir.join("arey.yml");
 
     // Save the current XDG_CONFIG_HOME value, if it exists
@@ -75,7 +75,7 @@ fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
     // cleaned up by `TempConfigGuard`'s `drop` implementation.
     unsafe {
         // Set XDG_CONFIG_HOME to our temporary directory to control get_config_dir
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        std::env::set_var("XDG_CONFIG_HOME", config_home);
     }
 
     if let Some(c) = content {
@@ -96,7 +96,9 @@ fn test_create_or_get_config_file_when_exists() {
     let (_guard, config_file) = setup_temp_config_env(Some(DUMMY_CONFIG_CONTENT));
     let config_dir = config_file.parent().unwrap().to_path_buf();
 
+    println!("{}", std::env::var("XDG_CONFIG_HOME").unwrap());
     let (exists, file_path) = create_or_get_config_file().unwrap();
+    println!("{}", std::env::var("XDG_CONFIG_HOME").unwrap());
 
     assert!(exists);
     assert_eq!(file_path, config_file);
