@@ -43,13 +43,15 @@ task:
 // A guard struct to manage the temporary config environment.
 // When this struct is dropped, it will clean up the environment variable.
 struct TempConfigGuard {
-    _config_dir: String,
+    _original_xdg_config_home: Option<String>,
 }
 
 impl Drop for TempConfigGuard {
     fn drop(&mut self) {
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &self._config_dir);
+        if let Some(original_value) = &self._original_xdg_config_home {
+            std::env::set_var("XDG_CONFIG_HOME", original_value);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
         }
     }
 }
@@ -60,11 +62,11 @@ fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
     let config_dir = temp_dir.path().join(".config").join("arey");
     let config_file = config_dir.join("arey.yml");
 
+    // Save the current XDG_CONFIG_HOME value, if it exists
+    let original_xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
+
     // Set XDG_CONFIG_HOME to our temporary directory to control get_config_dir
-    let current_config_dir = std::env::var("XDG_CONFIG_HOME").unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-    }
+    std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
 
     if let Some(c) = content {
         fs::create_dir_all(&config_dir).unwrap();
@@ -73,7 +75,7 @@ fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
 
     (
         TempConfigGuard {
-            _config_dir: current_config_dir,
+            _original_xdg_config_home: original_xdg_config_home,
         },
         config_file,
     )
