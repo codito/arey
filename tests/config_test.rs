@@ -48,10 +48,15 @@ struct TempConfigGuard {
 
 impl Drop for TempConfigGuard {
     fn drop(&mut self) {
-        if let Some(original_value) = &self._original_xdg_config_home {
-            std::env::set_var("XDG_CONFIG_HOME", original_value);
-        } else {
-            std::env::remove_var("XDG_CONFIG_HOME");
+        // SAFETY: Modifying environment variables can affect other threads or tests.
+        // In this test context, we are carefully restoring the original state or
+        // removing the variable if it wasn't present, ensuring isolation for tests.
+        unsafe {
+            if let Some(original_value) = &self._original_xdg_config_home {
+                std::env::set_var("XDG_CONFIG_HOME", original_value);
+            } else {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
         }
     }
 }
@@ -65,8 +70,13 @@ fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
     // Save the current XDG_CONFIG_HOME value, if it exists
     let original_xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
 
-    // Set XDG_CONFIG_HOME to our temporary directory to control get_config_dir
-    std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+    // SAFETY: Modifying environment variables can affect other threads or tests.
+    // In this test context, we are setting a temporary value that will be
+    // cleaned up by `TempConfigGuard`'s `drop` implementation.
+    unsafe {
+        // Set XDG_CONFIG_HOME to our temporary directory to control get_config_dir
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+    }
 
     if let Some(c) = content {
         fs::create_dir_all(&config_dir).unwrap();
