@@ -74,9 +74,8 @@ struct RawConfig {
 
 #[derive(Deserialize)]
 struct RawModeConfig {
-    #[serde(flatten)]
     model: StringOrObject<ModelConfig>,
-    #[serde(default, flatten)]
+    #[serde(default)]
     profile: Option<StringOrObject<ProfileConfig>>,
 }
 
