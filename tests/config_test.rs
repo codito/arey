@@ -1,4 +1,4 @@
-use arey::core::config::{create_or_get_config_file, get_config, AreyConfigError};
+use arey::core::config::{AreyConfigError, create_or_get_config_file, get_config};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::tempdir;
@@ -43,12 +43,14 @@ task:
 // A guard struct to manage the temporary config environment.
 // When this struct is dropped, it will clean up the environment variable.
 struct TempConfigGuard {
-    _temp_dir: tempfile::TempDir, // Store the TempDir to ensure it's dropped when the guard is
+    _config_dir: String,
 }
 
 impl Drop for TempConfigGuard {
     fn drop(&mut self) {
-        std::env::remove_var("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &self._config_dir);
+        }
     }
 }
 
@@ -59,14 +61,22 @@ fn setup_temp_config_env(content: Option<&str>) -> (TempConfigGuard, PathBuf) {
     let config_file = config_dir.join("arey.yml");
 
     // Set XDG_CONFIG_HOME to our temporary directory to control get_config_dir
-    std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+    let current_config_dir = std::env::var("XDG_CONFIG_HOME").unwrap();
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+    }
 
     if let Some(c) = content {
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(&config_file, c).unwrap();
     }
 
-    (TempConfigGuard { _temp_dir: temp_dir }, config_file)
+    (
+        TempConfigGuard {
+            _config_dir: current_config_dir,
+        },
+        config_file,
+    )
 }
 
 #[test]
@@ -139,7 +149,9 @@ task:
     let (_guard, _config_file) = setup_temp_config_env(Some(invalid_config_content));
 
     let err = get_config().unwrap_err();
-    assert!(matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found")));
+    assert!(
+        matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found"))
+    );
     // _guard goes out of scope here, calling Drop and cleaning up
 }
 
@@ -163,6 +175,8 @@ task:
     let (_guard, _config_file) = setup_temp_config_env(Some(invalid_config_content));
 
     let err = get_config().unwrap_err();
-    assert!(matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found")));
+    assert!(
+        matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found"))
+    );
     // _guard goes out of scope here, calling Drop and cleaning up
 }
