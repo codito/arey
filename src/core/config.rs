@@ -161,7 +161,6 @@ mod tests {
         env,
         fs::{self, File},
         path::PathBuf,
-        process::abort,
         sync::Mutex,
     };
     use serde_yaml::Value;
@@ -191,10 +190,12 @@ mod tests {
     impl Drop for TempConfigGuard {
         fn drop(&mut self) {
             // Restore environment
-            if let Some(original_value) = &self.original_xdg_config_home {
-                env::set_var("XDG_CONFIG_HOME", original_value);
-            } else {
-                env::remove_var("XDG_CONFIG_HOME");
+            unsafe {
+                if let Some(original_value) = &self.original_xdg_config_home {
+                    env::set_var("XDG_CONFIG_HOME", original_value);
+                } else {
+                    env::remove_var("XDG_CONFIG_HOME");
+                }
             }
             
             // Clean up temp files
@@ -211,8 +212,10 @@ mod tests {
         let config_dir = get_config_dir(&test_dir);
         let config_file = config_dir.join("arey.yml");
 
-        // Set environment for this test
-        env::set_var("XDG_CONFIG_HOME", &test_dir);
+        unsafe {
+            // Set environment for this test
+            env::set_var("XDG_CONFIG_HOME", &test_dir);
+        }
 
         if let Some(c) = content {
             fs::create_dir_all(&config_dir).unwrap();
