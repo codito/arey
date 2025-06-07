@@ -32,94 +32,6 @@ impl OpenAIBaseModel {
                 .map_err(|_e| anyhow!("Invalid settings structure"))?,
         )?;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mockito::Server;
-    use crate::core::completion::SenderType;
-    use crate::core::model::{ModelProvider, ModelCapability};
-    use serde_yaml::{Mapping, Value};
-
-    #[tokio::test]
-    async fn test_openai_successful_response() {
-        let mut server = mockito::Server::new();
-        let mock_url = server.url();
-        
-        let model_config = ModelConfig {
-            name: "test-model".to_string(),
-            r#type: ModelProvider::Openai,
-            capabilities: vec![ModelCapability::Completion],
-            settings: Value::Mapping(Mapping::from_iter(vec![
-                ("base_url".to_string(), mock_url.clone().into()),
-                ("api_key".to_string(), "dummy_key".into()),
-            ]))
-        };
-
-        let mut model = OpenAIBaseModel::new(model_config).unwrap();
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: "Hello".to_string(),
-        }];
-        let settings = HashMap::new();
-
-        let mock_response = server
-            .mock("POST", "/chat/completions")
-            .with_status(200)
-            .with_body(
-                r#"data: {"choices": [{"delta": {"content": "Test "}, "finish_reason": null}]}
-data: {"choices": [{"delta": {"content": "response"}, "finish_reason": "stop"}]}
-data: [DONE]"#
-            )
-            .create();
-
-        let mut stream = model.complete(&messages, &settings).await;
-        let mut responses = vec![];
-        while let Some(response) = stream.next().await {
-            responses.push(response);
-        }
-
-        assert_eq!(responses.len(), 2);
-        assert_eq!(responses[0].text, "Test ");
-        assert_eq!(responses[1].text, "response");
-        mock_response.assert();
-    }
-
-    #[tokio::test]
-    async fn test_openai_error_response() {
-        let mut server = mockito::Server::new();
-        let mock_url = server.url();
-        
-        let model_config = ModelConfig {
-            name: "test-model".to_string(),
-            r#type: ModelProvider::Openai,
-            capabilities: vec![ModelCapability::Completion],
-            settings: Value::Mapping(Mapping::from_iter(vec![
-                ("base_url".to_string(), mock_url.clone().into()),
-                ("api_key".to_string(), "dummy_key".into()),
-            ]))
-        };
-
-        let mut model = OpenAIBaseModel::new(model_config).unwrap();
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: "Hello".to_string(),
-        }];
-        let settings = HashMap::new();
-
-        let mock_response = server
-            .mock("POST", "/chat/completions")
-            .with_status(400)
-            .with_body("Bad Request")
-            .create();
-
-        let mut stream = model.complete(&messages, &settings).await;
-        let response = stream.next().await.unwrap();
-
-        assert_eq!(response.text, "OpenAI API error: 400 Bad Request - Bad Request");
-        mock_response.assert();
-    }
-}
-
         // If api_key starts with "env:", read from environment variable
         let api_key = if settings.api_key.starts_with("env:") {
             let env_key = &settings.api_key[4..].trim();
@@ -365,5 +277,94 @@ impl CompletionModel for OpenAIBaseModel {
 
     async fn free(&mut self) {
         // No resources to free
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::completion::SenderType;
+    use crate::core::model::{ModelCapability, ModelProvider};
+
+    #[tokio::test]
+    async fn test_openai_successful_response() {
+        let mut server = mockito::Server::new();
+        let mock_url = server.url();
+
+        let model_config = ModelConfig {
+            name: "test-model".to_string(),
+            r#type: ModelProvider::Openai,
+            capabilities: vec![ModelCapability::Completion],
+            settings: HashMap::from([
+                ("base_url".to_string(), mock_url.clone().into()),
+                ("api_key".to_string(), "dummy_key".into()),
+            ]),
+        };
+
+        let mut model = OpenAIBaseModel::new(model_config).unwrap();
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Hello".to_string(),
+        }];
+        let settings = HashMap::new();
+
+        let mock_response = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_body(
+                r#"data: {"choices": [{"delta": {"content": "Test "}, "finish_reason": null}]}
+data: {"choices": [{"delta": {"content": "response"}, "finish_reason": "stop"}]}
+data: [DONE]"#,
+            )
+            .create();
+
+        let mut stream = model.complete(&messages, &settings).await;
+        let mut responses = vec![];
+        while let Some(response) = stream.next().await {
+            responses.push(response);
+        }
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].text, "Test ");
+        assert_eq!(responses[1].text, "response");
+        mock_response.assert();
+    }
+
+    #[tokio::test]
+    async fn test_openai_error_response() {
+        let mut server = mockito::Server::new();
+        let mock_url = server.url();
+
+        let model_config = ModelConfig {
+            name: "test-model".to_string(),
+            r#type: ModelProvider::Openai,
+            capabilities: vec![ModelCapability::Completion],
+            settings: HashMap::from([
+                ("base_url".to_string(), mock_url.clone().into()),
+                ("api_key".to_string(), "dummy_key".into()),
+            ]),
+        };
+
+        let mut model = OpenAIBaseModel::new(model_config).unwrap();
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Hello".to_string(),
+        }];
+        let settings = HashMap::new();
+
+        let mock_response = server
+            .mock("POST", "/chat/completions")
+            .with_status(400)
+            .with_body("Bad Request")
+            .create();
+
+        let mut stream = model.complete(&messages, &settings).await;
+        let response = stream.next().await.unwrap();
+
+        assert_eq!(
+            response.text,
+            "OpenAI API error: 400 Bad Request - Bad Request"
+        );
+        mock_response.assert();
     }
 }
