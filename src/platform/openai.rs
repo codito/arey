@@ -274,7 +274,7 @@ mod tests {
                 "choices": [{
                     "delta": {"content": "Hello"},
                     "index": 0,
-                    "finish_reason": Option::<FinishReason>::None
+                    "finish_reason": serde_json::Value::Null
                 }]
             }),
             json!({
@@ -285,7 +285,7 @@ mod tests {
                 "choices": [{
                     "delta": {"content": " world"},
                     "index": 0,
-                    "finish_reason": Option::<FinishReason>::None
+                    "finish_reason": serde_json::Value::Null
                 }]
             }),
             json!({
@@ -296,14 +296,14 @@ mod tests {
                 "choices": [{
                     "delta": {},
                     "index": 0,
-                    "finish_reason": FinishReason::Stop
+                    "finish_reason": "stop"
                 }]
             }),
         ];
 
         events
             .into_iter()
-            .map(|event| format!("data: {}\n\n", event.to_string()))
+            .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
             .collect::<String>()
     }
 
