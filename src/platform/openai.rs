@@ -121,6 +121,9 @@ impl CompletionModel for OpenAIBaseModel {
         // Set model and messages
         request.model(&self.config.name).messages(openai_messages);
 
+        // Configure streaming
+        request.stream(true);
+
         // Set max_tokens and temperature if provided
         if let Some(max_tokens_str) = settings.get("max_tokens") {
             if let Ok(max_tokens) = max_tokens_str.parse::<u32>() {
