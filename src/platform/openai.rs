@@ -351,23 +351,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_openai_new_model() {
-        let server = setup_mock_server().await;
-        let server_url = server.url();
+        let server = MockServer::start().await;
+        // We don't need any mocks since we're not making HTTP calls in this test
+        let server_url = server.uri();
 
-        // Create model config with mock server URL
         let config = create_mock_model_config(&server_url).unwrap();
-
         let model = OpenAIBaseModel::new(config).unwrap();
 
         assert_eq!(model.config.name, "test-model");
-        assert_eq!(model.settings.api_key, "test-api-key");
+        assert_eq!(model.settings.api_key, "MOCK_OPENAI_API_KEY");
     }
 
     #[tokio::test]
     async fn test_openai_complete_api() {
-        let server = setup_mock_server().await;
-        let server_url = server.url();
+        let server = MockServer::start().await;
+        let server_url = server.uri();
         let config = create_mock_model_config(&server_url).unwrap();
+
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_string(mock_event_stream_body())
+            .append_header(header::CONTENT_TYPE.as_str(), "text/event-stream");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
 
         let mut model = OpenAIBaseModel::new(config).unwrap();
 
@@ -389,6 +398,6 @@ mod tests {
         assert_eq!(responses[0].text, "Hello");
         assert_eq!(responses[1].text, " world");
         assert_eq!(responses[2].text, "");
-        assert_eq!(responses[2].finish_reason, Some("stop".to_string()));
+        assert_eq!(responses[2].finish_reason, Some("Stop".to_string()));
     }
 }
