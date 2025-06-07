@@ -288,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_openai_successful_response() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
 
         let model_config = ModelConfig {
@@ -312,8 +312,8 @@ mod tests {
             .mock("POST", "/chat/completions")
             .with_status(200)
             .with_body(
-                r#"data: {"choices": [{"delta": {"content": "Test "}, "finish_reason": null}]}
-data: {"choices": [{"delta": {"content": "response"}, "finish_reason": "stop"}]}
+                r#"data: {"choices": [{"delta": {"content": "Test "}, "finish_reason": null}]}\n\n
+data: {"choices": [{"delta": {"content": "response"}, "finish_reason": "stop"}]}\n\n
 data: [DONE]"#,
             )
             .create();
@@ -332,7 +332,7 @@ data: [DONE]"#,
 
     #[tokio::test]
     async fn test_openai_error_response() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
 
         let model_config = ModelConfig {
