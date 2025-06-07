@@ -248,3 +248,153 @@ impl CompletionModel for OpenAIBaseModel {
         // No resources to free
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::completion::SenderType;
+    use crate::core::model::{ModelCapability, ModelProvider};
+    use async_openai::types::ChatCompletionResponseStream;
+    use async_stream::stream;
+    use futures::Stream;
+    use mockito::{Server, Mock};
+    use serde_json::json;
+    use std::env;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    // Create a mock streaming response with two content chunks
+    fn mock_response_stream() -> impl Stream<Item = Result<ChatCompletionResponseStream>> {
+        let events = vec![
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": "Hello"},
+                    "index": 0,
+                    "finish_reason": null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": " world"},
+                    "index": 0,
+                    "finish_reason": null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {},
+                    "index": 0,
+                    "finish_reason": "stop"
+                }]
+            }),
+        ];
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        stream! {
+            for event in events {
+                // Simulate network delay
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+                let idx = counter_clone.fetch_add(1, Ordering::SeqCst);
+                if idx >= events.len() {
+                    break;
+                }
+
+                let event = events[idx].clone();
+                yield Ok(serde_json::from_value::<ChatCompletionResponseStream>(event).unwrap());
+            }
+        }
+    }
+
+    // Create a mock server that returns the streaming response
+    async fn setup_mock_server() -> Server {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_body(serde_json::to_vec(&vec![]).unwrap())
+            .create_async()
+            .await;
+        server
+    }
+
+    // Create a test model configuration with mock server URL
+    fn create_mock_model_config(server_url: &str) -> Result<ModelConfig> {
+        let settings = json!({
+            "base_url": server_url,
+            "api_key": "env:MOCK_OPENAI_API_KEY"
+        });
+
+        let config = ModelConfig {
+            name: "test-model".to_string(),
+            r#type: ModelProvider::OpenAi,
+            capabilities: vec![ModelCapability::Chat],
+            settings,
+        };
+        
+        Ok(config)
+    }
+
+    #[tokio::test]
+    async fn test_openai_new_model() {
+        let server = setup_mock_server().await;
+        let server_url = server.url();
+
+        // Create model config with mock server URL
+        env::set_var("MOCK_OPENAI_API_KEY", "test-api-key");
+        let config = create_mock_model_config(&server_url).unwrap();
+        
+        let model = OpenAIBaseModel::new(config).unwrap();
+        
+        assert_eq!(model.config.name, "test-model");
+        assert_eq!(model.settings.api_key, "test-api-key");
+        
+        env::remove_var("MOCK_OPENAI_API_KEY");
+    }
+
+    #[tokio::test]
+    async fn test_openai_complete_api() {
+        let server = setup_mock_server().await;
+        let server_url = server.url();
+        env::set_var("MOCK_OPENAI_API_KEY", "test-api-key");
+        let config = create_mock_model_config(&server_url).unwrap();
+
+        let mut model = OpenAIBaseModel::new(config).unwrap();
+        
+        let messages = vec![ChatMessage {
+            text: "Hello".to_string(),
+            sender: SenderType::User,
+        }];
+        
+        let mut stream = model.complete(&messages, &HashMap::new()).await;
+        
+        // Collect and assert on responses
+        let mut responses = Vec::new();
+        while let Some(response) = stream.next().await {
+            responses.push(response);
+        }
+
+        // We expect 3 responses: two content chunks and one finish reason
+        assert_eq!(responses.len(), 3);
+        assert_eq!(responses[0].text, "Hello");
+        assert_eq!(responses[1].text, " world");
+        assert_eq!(responses[2].text, "");
+        assert_eq!(responses[2].finish_reason, Some("stop".to_string()));
+
+        env::remove_var("MOCK_OPENAI_API_KEY");
+    }
+}
