@@ -347,7 +347,7 @@ mod tests {
 
         let mock_response = ResponseTemplate::new(200)
             .set_body_string(mock_event_stream_body())
-            .append_header(header::CONTENT_TYPE.as_str(), "text/event-stream");
+            .set_header(header::CONTENT_TYPE, "text/event-stream");
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
