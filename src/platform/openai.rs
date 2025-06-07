@@ -1,10 +1,12 @@
-use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse};
+use crate::core::completion::{
+    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_stream::stream;
 use async_trait::async_trait;
-use futures::stream::BoxStream;
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,7 +35,8 @@ impl OpenAIBaseModel {
         // If api_key starts with "env:", read from environment variable
         let api_key = if settings.api_key.starts_with("env:") {
             let env_key = &settings.api_key[4..].trim();
-            std::env::var(env_key).map_err(|_| anyhow!("Environment variable {} not found", env_key))?
+            std::env::var(env_key)
+                .map_err(|_| anyhow!("Environment variable {} not found", env_key))?
         } else {
             settings.api_key.clone()
         };
@@ -105,14 +108,14 @@ impl CompletionModel for OpenAIBaseModel {
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
     ) -> BoxStream<'_, CompletionResponse> {
-         // Convert ChatMessage to OpenAI format
-         let messages: Vec<OpenAIMessage> = messages
-         .iter()
-         .map(|msg| OpenAIMessage {
-             role: msg.sender.role().to_string(),
-             content: msg.text.clone(),
-         })
-         .collect();
+        // Convert ChatMessage to OpenAI format
+        let messages: Vec<OpenAIMessage> = messages
+            .iter()
+            .map(|msg| OpenAIMessage {
+                role: msg.sender.role().to_string(),
+                content: msg.text.clone(),
+            })
+            .collect();
 
         // Merge settings: start with defaults, then override with passed settings
         let mut request_settings = HashMap::new();
@@ -139,7 +142,7 @@ impl CompletionModel for OpenAIBaseModel {
         // Create and stream the response
         let s = stream! {
             let start_time = Instant::now();
-            let mut response = match self.client
+            let response = match self.client
                 .post(&api_url)
                 .json(&body)
                 .bearer_auth(api_key)
@@ -232,7 +235,7 @@ impl CompletionModel for OpenAIBaseModel {
                             if !first_chunk_received {
                                 let prompt_eval_latency = start_time.elapsed().as_millis() as f32;
                                 first_chunk_received = true;
-                                
+
                                 yield CompletionResponse {
                                     text: chunk_text,
                                     finish_reason: choice.finish_reason.clone(),
