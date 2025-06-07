@@ -218,14 +218,47 @@ impl CompletionModel for OpenAIBaseModel {
                     let event = buffer.drain(..=end).collect::<String>();
                     let event = event.trim();
 
-                    if !event.starts_with("data:") {
-                        continue;
-                    }
+                    // Extract the event payload by removing "data: "
+                    if let Some(json_str) = event.strip_prefix("data: ") {
+                        if json_str.trim() == "[DONE]" {
+                            break;
+                        }
 
-                    // "data:" is 5 characters, so skip that
-                    let json_str = &event[5..].trim();
-                    if *json_str == "[DONE]" {
-                        break;
+                        if let Ok(openai_event) = serde_json::from_str::<OpenAISSE>(json_str) {
+                            if let Some(choice) = openai_event.choices.first() {
+                                // First chunk in stream
+                                let chunk_text = choice.delta.content.clone().unwrap_or_default();
+                                if !first_chunk_received {
+                                    let prompt_eval_latency = start_time.elapsed().as_millis() as f32;
+                                    first_chunk_received = true;
+
+                                    yield CompletionResponse {
+                                        text: chunk_text,
+                                        finish_reason: choice.finish_reason.clone(),
+                                        metrics: CompletionMetrics {
+                                            prompt_tokens: 0, // TODO: token counting
+                                            prompt_eval_latency_ms: prompt_eval_latency,
+                                            completion_tokens: 0, // TODO: token counting
+                                            completion_runs: 1,
+                                            completion_latency_ms: 0.0,
+                                        },
+                                    };
+                                } else {
+                                    let latency_ms = start_time.elapsed().as_millis() as f32;
+                                    yield CompletionResponse {
+                                        text: chunk_text,
+                                        finish_reason: choice.finish_reason.clone(),
+                                        metrics: CompletionMetrics {
+                                            prompt_tokens: 0,
+                                            prompt_eval_latency_ms: 0.0,
+                                            completion_tokens: 0,
+                                            completion_runs: 1,
+                                            completion_latency_ms: latency_ms,
+                                        },
+                                    };
+                                }
+                            }
+                        }
                     }
 
                     if let Ok(openai_event) = serde_json::from_str::<OpenAISSE>(json_str) {
