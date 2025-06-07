@@ -37,3 +37,7 @@ llama-cpp-2 = { version = "0.1.*", features = ["cuda"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # Windows-specific dependencies if needed
+
+[dev-dependencies]
+mockito = "1.0"
+futures = { version = "0.3", features = ["async-await"] }
