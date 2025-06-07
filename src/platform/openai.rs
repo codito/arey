@@ -3,9 +3,10 @@ use crate::core::completion::{
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
+use async_openai::config::OpenAIConfig;
 use async_openai::{
-    types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
     Client as OpenAIClient,
+    types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
 };
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
@@ -20,7 +21,7 @@ pub struct OpenAISettings {
 
 pub struct OpenAIBaseModel {
     config: ModelConfig,
-    client: OpenAIClient,
+    client: OpenAIClient<OpenAIConfig>,
     metrics: ModelMetrics,
     settings: OpenAISettings,
 }
@@ -62,14 +63,12 @@ impl OpenAIBaseModel {
 
     fn to_openai_message(msg: &ChatMessage) -> ChatCompletionRequestMessage {
         match msg.sender {
-            crate::core::completion::SenderType::System => {
-                ChatCompletionRequestMessage::System(
-                    async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
-                        .content(&msg.text)
-                        .build()
-                        .unwrap(),
-                )
-            }
+            crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
+                async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
+                    .content(&msg.text)
+                    .build()
+                    .unwrap(),
+            ),
             crate::core::completion::SenderType::Assistant => {
                 ChatCompletionRequestMessage::Assistant(
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
@@ -78,14 +77,12 @@ impl OpenAIBaseModel {
                         .unwrap(),
                 )
             }
-            crate::core::completion::SenderType::User => {
-                ChatCompletionRequestMessage::User(
-                    async_openai::types::ChatCompletionRequestUserMessageArgs::default()
-                        .content(&msg.text)
-                        .build()
-                        .unwrap(),
-                )
-            }
+            crate::core::completion::SenderType::User => ChatCompletionRequestMessage::User(
+                async_openai::types::ChatCompletionRequestUserMessageArgs::default()
+                    .content(&msg.text)
+                    .build()
+                    .unwrap(),
+            ),
         }
     }
 }
@@ -151,7 +148,7 @@ impl CompletionModel for OpenAIBaseModel {
                             completion_latency_ms: 0.0,
                         },
                     }
-                }))
+                }));
             }
         };
 
