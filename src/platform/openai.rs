@@ -43,9 +43,9 @@ impl OpenAIBaseModel {
         };
 
         // Create OpenAI configuration
-        let config = OpenAIConfig::new()
-            .with_api_key(api_key.clone())
-            .with_base_url(settings.base_url.clone());
+        let mut config = OpenAIConfig::new()
+            .with_api_key(api_key.clone());
+        config.base_url = settings.base_url.clone();
 
         let client = OpenAIClient::with_config(config);
 
@@ -67,21 +67,21 @@ impl OpenAIBaseModel {
         match msg.sender {
             crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
                 async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
-                    .content(&msg.text) // Content is borrowed as &str
+                    .content(msg.text.as_str()) // Use as_str to get &str
                     .build()
                     .unwrap(),
             ),
             crate::core::completion::SenderType::Assistant => {
                 ChatCompletionRequestMessage::Assistant(
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(&msg.text) // Content is borrowed as &str
+                        .content(msg.text.as_str()) // Use as_str to get &str
                         .build()
                         .unwrap(),
                 )
             }
             crate::core::completion::SenderType::User => ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
-                    .content(&msg.text) // Content is borrowed as &str
+                    .content(msg.text.as_str()) // Use as_str to get &str
                     .build()
                     .unwrap(),
             ),
@@ -193,7 +193,7 @@ impl CompletionModel for OpenAIBaseModel {
 
                                     yield CompletionResponse {
                                         text: text.to_string(),
-                                        finish_reason: choice.finish_reason.clone().as_ref().map(|x| x.to_string()),
+                                        finish_reason: choice.finish_reason.as_ref().map(|x| format!("{:?}", x)),
                                         metrics: CompletionMetrics {
                                             prompt_tokens: 0, // TODO: token counting
                                             prompt_eval_latency_ms: prompt_eval_latency,
@@ -249,21 +249,3 @@ impl CompletionModel for OpenAIBaseModel {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::completion::SenderType;
-    use crate::core::model::{ModelCapability, ModelProvider};
-
-    #[tokio::test]
-    #[ignore = "refactored to use async_openai, requires different mocking approach"]
-    async fn test_openai_successful_response() {
-        // This test is kept as placeholder for future mocking
-    }
-
-    #[tokio::test]
-    #[ignore = "refactored to use async_openai, requires different mocking approach"]
-    async fn test_openai_error_response() {
-        // This test is kept as placeholder for future mocking
-    }
-}
