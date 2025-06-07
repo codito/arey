@@ -254,14 +254,16 @@ mod tests {
     use super::*;
     use crate::core::completion::SenderType;
     use crate::core::model::{ModelCapability, ModelProvider};
-    use async_openai::types::{ChatCompletionResponseStream, CreateChatCompletionStreamResponse, FinishReason};
+    use async_openai::types::{
+        ChatCompletionResponseStream, CreateChatCompletionStreamResponse, FinishReason,
+    };
     use futures::Stream;
+    use reqwest::header;
     use serde_json::json;
     use wiremock::{
-        matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
     };
-    use reqwest::header;
 
     // Create a mock event stream body
     fn mock_event_stream_body() -> String {
@@ -365,6 +367,7 @@ mod tests {
         // Collect and assert on responses
         let mut responses = Vec::new();
         while let Some(response) = stream.next().await {
+            println!("{:?}", response);
             responses.push(response);
         }
 
