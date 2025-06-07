@@ -254,17 +254,17 @@ mod tests {
     use super::*;
     use crate::core::completion::SenderType;
     use crate::core::model::{ModelCapability, ModelProvider};
-    use async_openai::types::{ChatCompletionResponseStream, CreateChatCompletionStreamResponse};
-    use async_stream::stream;
+    use async_openai::types::{ChatCompletionResponseStream, CreateChatCompletionStreamResponse, FinishReason};
     use futures::Stream;
-    use mockito::{Mock, Server, ServerGuard};
     use serde_json::json;
-    use serde_yaml;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+    use reqwest::header;
 
-    // Create a mock streaming response with two content chunks
-    fn mock_response_stream() -> impl Stream<Item = Result<ChatCompletionResponseStream>> {
+    // Create a mock event stream body
+    fn mock_event_stream_body() -> String {
         let events = vec![
             json!({
                 "id": "chatcmpl-1",
@@ -274,7 +274,7 @@ mod tests {
                 "choices": [{
                     "delta": {"content": "Hello"},
                     "index": 0,
-                    "finish_reason": null
+                    "finish_reason": Option::<FinishReason>::None
                 }]
             }),
             json!({
@@ -285,7 +285,7 @@ mod tests {
                 "choices": [{
                     "delta": {"content": " world"},
                     "index": 0,
-                    "finish_reason": null
+                    "finish_reason": Option::<FinishReason>::None
                 }]
             }),
             json!({
@@ -296,40 +296,15 @@ mod tests {
                 "choices": [{
                     "delta": {},
                     "index": 0,
-                    "finish_reason": "stop"
+                    "finish_reason": FinishReason::Stop
                 }]
             }),
         ];
 
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = counter.clone();
-
-        stream! {
-            for event in events {
-                // Simulate network delay
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-                let idx = counter_clone.fetch_add(1, Ordering::SeqCst);
-                if idx >= events.len() {
-                    break;
-                }
-
-                let event = events[idx].clone();
-                yield Ok(serde_json::from_value::<CreateChatCompletionStreamResponse>(event).unwrap());
-            }
-        }
-    }
-
-    // Create a mock server that returns the streaming response
-    async fn setup_mock_server() -> ServerGuard {
-        let mut server = Server::new_async().await;
-        let _m = server
-            .mock("POST", "/chat/completions")
-            .with_status(200)
-            // .with_body(serde_json::to_vec(&vec![]).unwrap())
-            .create_async()
-            .await;
-        server
+        events
+            .into_iter()
+            .map(|event| format!("data: {}\n\n", event.to_string()))
+            .collect::<String>()
     }
 
     // Create a test model configuration with mock server URL
