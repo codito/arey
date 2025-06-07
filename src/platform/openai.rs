@@ -129,8 +129,8 @@ impl CompletionModel for OpenAIBaseModel {
         }
 
         if let Some(temperature_str) = settings.get("temperature") {
-            if let Ok(temperature) = temperature_str.parse::<f64>() {
-                request.temperature(temperature as f32);
+            if let Ok(temperature) = temperature_str.parse::<f32>() {
+                request.temperature(temperature);
             }
         }
 
@@ -156,8 +156,8 @@ impl CompletionModel for OpenAIBaseModel {
 
         // Start the timer
         let start_time = Instant::now();
-        let mut prev_time = start_time;
-        let mut first_chunk = true;
+        let prev_time = start_time;
+        let first_chunk = true;
 
         // Create the stream
         let outer_stream = async_stream::stream! {
@@ -254,14 +254,14 @@ mod tests {
     use super::*;
     use crate::core::completion::SenderType;
     use crate::core::model::{ModelCapability, ModelProvider};
-    use async_openai::types::ChatCompletionResponseStream;
+    use async_openai::types::{ChatCompletionResponseStream, CreateChatCompletionStreamResponse};
     use async_stream::stream;
     use futures::Stream;
-    use mockito::{Server, Mock};
+    use mockito::{Mock, Server, ServerGuard};
     use serde_json::json;
-    use std::env;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use serde_yaml;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     // Create a mock streaming response with two content chunks
     fn mock_response_stream() -> impl Stream<Item = Result<ChatCompletionResponseStream>> {
@@ -315,18 +315,18 @@ mod tests {
                 }
 
                 let event = events[idx].clone();
-                yield Ok(serde_json::from_value::<ChatCompletionResponseStream>(event).unwrap());
+                yield Ok(serde_json::from_value::<CreateChatCompletionStreamResponse>(event).unwrap());
             }
         }
     }
 
     // Create a mock server that returns the streaming response
-    async fn setup_mock_server() -> Server {
+    async fn setup_mock_server() -> ServerGuard {
         let mut server = Server::new_async().await;
         let _m = server
             .mock("POST", "/chat/completions")
             .with_status(200)
-            .with_body(serde_json::to_vec(&vec![]).unwrap())
+            // .with_body(serde_json::to_vec(&vec![]).unwrap())
             .create_async()
             .await;
         server
@@ -334,18 +334,18 @@ mod tests {
 
     // Create a test model configuration with mock server URL
     fn create_mock_model_config(server_url: &str) -> Result<ModelConfig> {
-        let settings = json!({
-            "base_url": server_url,
-            "api_key": "env:MOCK_OPENAI_API_KEY"
-        });
+        let settings: HashMap<String, serde_yaml::Value> = HashMap::from([
+            ("base_url".to_string(), server_url.into()),
+            ("api_key".to_string(), "MOCK_OPENAI_API_KEY".into()),
+        ]);
 
         let config = ModelConfig {
             name: "test-model".to_string(),
-            r#type: ModelProvider::OpenAi,
+            r#type: ModelProvider::Openai,
             capabilities: vec![ModelCapability::Chat],
             settings,
         };
-        
+
         Ok(config)
     }
 
@@ -355,33 +355,29 @@ mod tests {
         let server_url = server.url();
 
         // Create model config with mock server URL
-        env::set_var("MOCK_OPENAI_API_KEY", "test-api-key");
         let config = create_mock_model_config(&server_url).unwrap();
-        
+
         let model = OpenAIBaseModel::new(config).unwrap();
-        
+
         assert_eq!(model.config.name, "test-model");
         assert_eq!(model.settings.api_key, "test-api-key");
-        
-        env::remove_var("MOCK_OPENAI_API_KEY");
     }
 
     #[tokio::test]
     async fn test_openai_complete_api() {
         let server = setup_mock_server().await;
         let server_url = server.url();
-        env::set_var("MOCK_OPENAI_API_KEY", "test-api-key");
         let config = create_mock_model_config(&server_url).unwrap();
 
         let mut model = OpenAIBaseModel::new(config).unwrap();
-        
+
         let messages = vec![ChatMessage {
             text: "Hello".to_string(),
             sender: SenderType::User,
         }];
-        
+
         let mut stream = model.complete(&messages, &HashMap::new()).await;
-        
+
         // Collect and assert on responses
         let mut responses = Vec::new();
         while let Some(response) = stream.next().await {
@@ -394,7 +390,5 @@ mod tests {
         assert_eq!(responses[1].text, " world");
         assert_eq!(responses[2].text, "");
         assert_eq!(responses[2].finish_reason, Some("stop".to_string()));
-
-        env::remove_var("MOCK_OPENAI_API_KEY");
     }
 }

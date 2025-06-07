@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
+async-openai = "0.28.2"
 async-stream = "0.3"
 async-trait = "0.1.77"
 console = "0.15.11"
@@ -41,3 +42,4 @@ llama-cpp-2 = { version = "0.1.*", features = ["cuda"] }
 [dev-dependencies]
 mockito = "1.0"
 futures = { version = "0.3", features = ["async-await"] }
+wiremock = "0.6.3"
