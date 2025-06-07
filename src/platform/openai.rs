@@ -13,7 +13,7 @@ use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenAISettings {
     base_url: String,
     api_key: String,
@@ -42,10 +42,12 @@ impl OpenAIBaseModel {
             settings.api_key.clone()
         };
 
-        // Create OpenAI client with custom base URL
-        let client = OpenAIClient::new()
+        // Create OpenAI configuration
+        let config = OpenAIConfig::new()
             .with_api_key(api_key.clone())
             .with_base_url(settings.base_url.clone());
+
+        let client = OpenAIClient::with_config(config);
 
         // Replace the settings with the resolved key
         let mut resolved_settings = settings.clone();
@@ -65,21 +67,21 @@ impl OpenAIBaseModel {
         match msg.sender {
             crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
                 async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
-                    .content(&msg.text)
+                    .content(&msg.text) // Content is borrowed as &str
                     .build()
                     .unwrap(),
             ),
             crate::core::completion::SenderType::Assistant => {
                 ChatCompletionRequestMessage::Assistant(
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(&msg.text)
+                        .content(&msg.text) // Content is borrowed as &str
                         .build()
                         .unwrap(),
                 )
             }
             crate::core::completion::SenderType::User => ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
-                    .content(&msg.text)
+                    .content(&msg.text) // Content is borrowed as &str
                     .build()
                     .unwrap(),
             ),
@@ -128,7 +130,7 @@ impl CompletionModel for OpenAIBaseModel {
 
         if let Some(temperature_str) = settings.get("temperature") {
             if let Ok(temperature) = temperature_str.parse::<f64>() {
-                request.temperature(temperature);
+                request.temperature(temperature as f32);
             }
         }
 
@@ -191,7 +193,7 @@ impl CompletionModel for OpenAIBaseModel {
 
                                     yield CompletionResponse {
                                         text: text.to_string(),
-                                        finish_reason: choice.finish_reason.clone(),
+                                        finish_reason: choice.finish_reason.clone().as_ref().map(|x| x.to_string()),
                                         metrics: CompletionMetrics {
                                             prompt_tokens: 0, // TODO: token counting
                                             prompt_eval_latency_ms: prompt_eval_latency,
