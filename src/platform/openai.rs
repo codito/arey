@@ -27,9 +27,9 @@ pub struct OpenAIBaseModel {
 }
 
 impl OpenAIBaseModel {
-    pub fn new(config: ModelConfig) -> Result<Self> {
+    pub fn new(model_config: ModelConfig) -> Result<Self> {
         let settings: OpenAISettings = serde_yaml::from_value(
-            serde_yaml::to_value(&config.settings)
+            serde_yaml::to_value(&model_config.settings)
                 .map_err(|_e| anyhow!("Invalid settings structure"))?,
         )?;
 
@@ -43,9 +43,9 @@ impl OpenAIBaseModel {
         };
 
         // Create OpenAI configuration
-        let mut config = OpenAIConfig::new()
-            .with_api_key(api_key.clone());
-        config.base_url = settings.base_url.clone();
+        let config = OpenAIConfig::new()
+            .with_api_key(api_key.clone())
+            .with_api_base(settings.base_url.clone());
 
         let client = OpenAIClient::with_config(config);
 
@@ -54,7 +54,7 @@ impl OpenAIBaseModel {
         resolved_settings.api_key = api_key;
 
         Ok(Self {
-            config,
+            config: model_config,
             client,
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
@@ -248,4 +248,3 @@ impl CompletionModel for OpenAIBaseModel {
         // No resources to free
     }
 }
-
