@@ -1,36 +1,34 @@
 mod core;
 mod platform;
 
+use crate::core::config::get_config;
 use crate::core::chat::Chat;
 use crate::core::model::{ModelConfig, ModelProvider};
 use futures::StreamExt;
+use anyhow::Context;
 use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     println!("Hello, arey!");
 
-    // Example usage of the new chat module
-    start_chat().await?;
+    // Load configuration
+    let config = get_config(None)
+        .context("Failed to load configuration")?;
+
+    // Start chat with the configured chat model
+    start_chat(config.chat.model).await?;
 
     Ok(())
 }
 
-async fn start_chat() -> anyhow::Result<()> {
-    // This is a placeholder config. In a real app, you'd load this from a config file.
-    let mut settings: HashMap<String, serde_yaml::Value> = HashMap::new();
-    settings.insert("base_url".to_string(), "http://localhost:8080/v1".into()); // Replace with your OpenAI compatible API base URL
-    settings.insert("api_key".to_string(), "sk-12345".into()); // Replace with your actual API key or "env:YOUR_ENV_VAR"
+async fn start_chat(model_config: ModelConfig) -> anyhow::Result<()> {
+    println!(
+        "\nAttempting to create chat with configured model: {}",
+        model_config.name
+    );
 
-    let config = ModelConfig {
-        name: "gpt-3.5-turbo".to_string(), // Or "llama2", "mistral", etc. depending on your Ollama/Llama.cpp setup
-        r#type: ModelProvider::Openai,     // Or ModelProvider::Ollama, ModelProvider::Gguf
-        capabilities: vec![crate::core::model::ModelCapability::Chat],
-        settings,
-    };
-
-    println!("\nAttempting to create chat with model: {}", config.name);
-    let mut chat = Chat::new(config).await?;
+    let mut chat = Chat::new(model_config).await?;
 
     println!("Chat created! Type 'q' to exit.");
 
