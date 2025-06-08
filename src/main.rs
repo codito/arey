@@ -134,6 +134,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
 
         let mut stream = chat.stream_response(user_input.to_string()).await?;
         let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
+        // Add this line to clone the stop_flag for the task
+        let stop_flag_clone = stop_flag.clone();
         let spinner_clone = spinner.clone();
 
         // Handle cancellation and streaming
