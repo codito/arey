@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
             let chat_model_config = if let Some(model_name) = model {
                 config
                     .models
-                    .get(&model_name)
+                    .get(model_name.as_str())
                     .cloned()
                     .context(format!("Model '{}' not found in config.", model_name))?
             } else {
