@@ -1,4 +1,6 @@
-use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionResponse, SenderType};
+use crate::core::completion::{
+    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, SenderType,
+};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -100,19 +102,16 @@ impl Chat {
         // Get the stream from the model
         let mut stream = self.model.complete(&model_messages, &HashMap::new()).await;
         // This makes the returned stream borrow `self`.
-        let chat_ref = self;
         let shared_messages = self.messages.clone();
 
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
+            let mut assistant_response = String::new();
             while let Some(result) = stream.next().await {
                 match result {
                     Ok(chunk) => {
                         // Accumulate response in chat history
-                        let mut messages = shared_messages.lock().unwrap();
-                        if let Some(msg) = messages.get_mut(assistant_index) {
-                            msg.text.push_str(&chunk.text);
-                        }
+                        assistant_response.push_str(&chunk.text);
                         yield Ok(chunk);
                     }
                     Err(e) => {
@@ -124,9 +123,13 @@ impl Chat {
             }
 
             // Clear placeholder if error occurred
+            let mut messages = shared_messages.lock().unwrap();
             if has_error {
-                let mut messages = shared_messages.lock().unwrap();
                 messages.truncate(assistant_index);
+            }
+
+            if let Some(msg) = messages.get_mut(assistant_index) {
+                msg.text = assistant_response;
             }
         };
 
