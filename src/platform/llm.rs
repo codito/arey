@@ -1,8 +1,9 @@
-use crate::core::ModelProvider;
 use crate::core::completion::CompletionModel;
 use crate::core::model::ModelConfig;
 use crate::platform::{llama, ollama, openai};
 use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ModelInitError {
@@ -12,19 +13,21 @@ pub enum ModelInitError {
     InitError(String),
 }
 
-pub fn get_completion_llm(model_config: ModelConfig) -> Result<Box<dyn CompletionModel>> {
+pub fn get_completion_llm(
+    model_config: crate::core::model::ModelConfig
+) -> Result<Arc<Mutex<dyn CompletionModel + Send + Sync>>> {
     match model_config.r#type {
-        ModelProvider::Gguf => {
+        crate::core::model::ModelProvider::Gguf => {
             let model = llama::LlamaBaseModel::new(model_config)?;
-            Ok(Box::new(model))
+            Ok(Arc::new(Mutex::new(Box::new(model))))
         }
-        ModelProvider::Ollama => {
+        crate::core::model::ModelProvider::Ollama => {
             let model = ollama::OllamaBaseModel::new(model_config)?;
-            Ok(Box::new(model))
+            Ok(Arc::new(Mutex::new(Box::new(model))))
         }
-        ModelProvider::Openai => {
+        crate::core::model::ModelProvider::Openai => {
             let model = openai::OpenAIBaseModel::new(model_config)?;
-            Ok(Box::new(model))
+            Ok(Arc::new(Mutex::new(Box::new(model))))
         }
     }
 }

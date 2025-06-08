@@ -109,7 +109,7 @@ impl CompletionModel for OpenAIBaseModel {
         &mut self,
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
-    ) -> BoxStream<'_, CompletionResponse> {
+    ) -> BoxStream<'_, Result<CompletionResponse>> {
         let mut request = CreateChatCompletionRequestArgs::default();
 
         // Map messages to OpenAI message types
@@ -142,17 +142,7 @@ impl CompletionModel for OpenAIBaseModel {
             Ok(req) => req,
             Err(err) => {
                 return Box::pin(futures::stream::once(async move {
-                    CompletionResponse {
-                        text: format!("Invalid request: {:?}", err),
-                        finish_reason: Some("error".to_string()),
-                        metrics: CompletionMetrics {
-                            prompt_tokens: 0,
-                            prompt_eval_latency_ms: 0.0,
-                            completion_tokens: 0,
-                            completion_runs: 0,
-                            completion_latency_ms: 0.0,
-                        },
-                    }
+                    Err(anyhow!("Invalid request: {:?}", err))
                 }));
             }
         };
@@ -192,7 +182,7 @@ impl CompletionModel for OpenAIBaseModel {
                                         first_chunk = false;
                                     }
 
-                                    yield CompletionResponse {
+                                    yield Ok(CompletionResponse {
                                         text: text.to_string(),
                                         finish_reason: choice.finish_reason.as_ref().map(|x| format!("{:?}", x)),
                                         metrics: CompletionMetrics {
@@ -202,37 +192,17 @@ impl CompletionModel for OpenAIBaseModel {
                                             completion_runs: 1,
                                             completion_latency_ms: completion_latency,
                                         },
-                                    };
+                                    });
                                 }
                             }
                             Err(err) => {
-                                yield CompletionResponse {
-                                    text: format!("OpenAI error: {}", err),
-                                    finish_reason: Some("error".to_string()),
-                                    metrics: CompletionMetrics {
-                                        prompt_tokens: 0,
-                                        prompt_eval_latency_ms: 0.0,
-                                        completion_tokens: 0,
-                                        completion_runs: 0,
-                                        completion_latency_ms: 0.0,
-                                    },
-                                };
+                                yield Err(anyhow!("OpenAI stream error: {}", err));
                             }
                         }
                     }
                 }
                 Err(err) => {
-                    yield CompletionResponse {
-                        text: format!("Request failed: {:?}", err),
-                        finish_reason: Some("error".to_string()),
-                        metrics: CompletionMetrics {
-                            prompt_tokens: 0,
-                            prompt_eval_latency_ms: 0.0,
-                            completion_tokens: 0,
-                            completion_runs: 0,
-                            completion_latency_ms: 0.0,
-                        },
-                    };
+                    yield Err(anyhow!("OpenAI request failed: {:?}", err));
                 }
             }
         };
@@ -367,7 +337,8 @@ mod tests {
 
         // Collect and assert on responses
         let mut responses = Vec::new();
-        while let Some(response) = stream.next().await {
+        while let Some(response_result) = stream.next().await {
+            let response = response_result.unwrap(); // Unwrap the Result
             println!("{:?}", response);
             responses.push(response);
         }
