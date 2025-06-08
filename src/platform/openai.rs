@@ -166,8 +166,6 @@ impl CompletionModel for OpenAIBaseModel {
         let outer_stream = async_stream::stream! {
             let start_time = start_time.clone();
             let mut prev_time = prev_time.clone();
-            let mut first_chunk = first_chunk.clone();
-
             // Send the request and get back a streaming response
             match self.client.chat().create_stream(request).await {
                 Ok(response) => {
@@ -184,10 +182,10 @@ impl CompletionModel for OpenAIBaseModel {
                                 // Check if we have a content block in the first choice
                                 if let Some(choice) = chunk.choices.first() {
                                     let text = choice.delta.content.clone().unwrap_or_else(|| "".to_string());
-
-                                    // For the first chunk, set the prompt_eval_latency_ms
                                     let mut prompt_eval_latency = 0.0;
                                     let mut completion_latency = elapsed;
+
+                                    // For the first chunk, set the prompt_eval_latency_ms
                                     if first_chunk {
                                         prompt_eval_latency = elapsed;
                                         completion_latency = 0.0;
@@ -346,8 +344,11 @@ mod tests {
         let server_url = server.uri();
         let config = create_mock_model_config(&server_url).unwrap();
 
-        let mock_response =
-            ResponseTemplate::new(200).set_body_raw(mock_event_stream_body(), "text/event-stream");
+        let mut mock_event_body = mock_event_stream_body();
+        mock_event_body.push_str("data: [DONE]\n\n");
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_raw(mock_event_body, "text/event-stream")
+            .insert_header("Connection", "close");
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
