@@ -13,6 +13,7 @@ async-openai = "0.28.3"
 async-stream = "0.3"
 async-trait = "0.1.77"
 chrono = "0.4"
+clap = { version = "4.5.4", features = ["derive"] }
 console = "0.15.11"
 ctrlc = "3.4"
 dirs = "5.0"
