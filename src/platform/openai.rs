@@ -269,28 +269,28 @@ mod tests {
     // Create a mock event stream body
     fn mock_event_stream_body() -> String {
         let events = vec![
-            // json!({
-            //     "id": "chatcmpl-1",
-            //     "object": "chat.completion.chunk",
-            //     "created": 1684,
-            //     "model": "gpt-3.5-turbo",
-            //     "choices": [{
-            //         "delta": {"content": "Hello"},
-            //         "index": 0,
-            //         "finish_reason": serde_json::Value::Null
-            //     }]
-            // }),
-            // json!({
-            //     "id": "chatcmpl-1",
-            //     "object": "chat.completion.chunk",
-            //     "created": 1684,
-            //     "model": "gpt-3.5-turbo",
-            //     "choices": [{
-            //         "delta": {"content": " world"},
-            //         "index": 0,
-            //         "finish_reason": serde_json::Value::Null
-            //     }]
-            // }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": "Hello"},
+                    "index": 0,
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": " world"},
+                    "index": 0,
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
             json!({
                 "id": "chatcmpl-1",
                 "object": "chat.completion.chunk",
