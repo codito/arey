@@ -21,12 +21,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
-    println!(
-        "\nChat created with model: {}",
-        chat.model_config.name
-    );
-
-    println!("Chat created! Type 'q' to exit.");
+    println!("Welcome to arey chat! Type 'q' to exit.");
 
     loop {
         print!("> ");

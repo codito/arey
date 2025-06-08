@@ -1,12 +1,9 @@
-use std::time::SystemTime;
-use chrono::{DateTime, Utc};
 use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionResponse, SenderType};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Context associated with a single chat message
 pub struct MessageContext {
@@ -56,7 +53,7 @@ impl Chat {
             messages: Vec::new(),
             context: ChatContext {
                 metrics: Some(metrics),
-                logs: String::new(),  
+                logs: String::new(),
             },
             model_config,
             model,
@@ -68,7 +65,7 @@ impl Chat {
         message: String,
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
         let timestamp = Utc::now();
-        
+
         // Create user message and add to history
         let user_message = Message {
             text: message.clone(),
