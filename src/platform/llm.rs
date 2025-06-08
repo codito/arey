@@ -14,8 +14,8 @@ pub enum ModelInitError {
 }
 
 pub fn get_completion_llm(
-    model_config: crate::core::model::ModelConfig
-) -> Result<Arc<Mutex<dyn CompletionModel + Send + Sync>>> {
+    model_config: crate::core::model::ModelConfig,
+) -> Result<Arc<Mutex<dyn CompletionModel>>> {
     match model_config.r#type {
         crate::core::model::ModelProvider::Gguf => {
             let model = llama::LlamaBaseModel::new(model_config)?;
