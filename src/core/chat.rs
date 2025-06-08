@@ -3,7 +3,6 @@ use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
-use futures::Stream;
 use std::collections::HashMap;
 
 /// Context associated with a single chat message
@@ -95,7 +94,7 @@ impl Chat {
         // Get the stream from the model
         let mut stream = self.model.complete(&model_messages, &HashMap::new()).await;
         // This makes the returned stream borrow `self`.
-        let mut chat_ref = self;
+        let chat_ref = self;
 
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
