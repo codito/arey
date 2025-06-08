@@ -52,7 +52,7 @@ pub trait CompletionModel: Send + Sync {
         &mut self,
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
-    ) -> BoxStream<'_, CompletionResponse>;
+    ) -> BoxStream<'_, Result<CompletionResponse>>;
     async fn count_tokens(&self, text: &str) -> usize;
     async fn free(&mut self);
 }
@@ -61,7 +61,10 @@ pub fn combine_metrics(usage_series: &[CompletionMetrics]) -> CompletionMetrics 
     let mut response_latency = 0.0;
     let mut response_tokens = 0;
     let prompt_tokens = usage_series.first().map(|u| u.prompt_tokens).unwrap_or(0);
-    let prompt_eval_latency = usage_series.first().map(|u| u.prompt_eval_latency_ms).unwrap_or(0.0);
+    let prompt_eval_latency = usage_series
+        .first()
+        .map(|u| u.prompt_eval_latency_ms)
+        .unwrap_or(0.0);
 
     for u in usage_series {
         response_latency += u.completion_latency_ms;
@@ -108,7 +111,7 @@ mod tests {
         };
 
         let combined = combine_metrics(&[metrics1, metrics2]);
-        
+
         assert_eq!(combined.prompt_tokens, 100);
         assert_eq!(combined.prompt_eval_latency_ms, 50.0);
         assert_eq!(combined.completion_tokens, 50);
@@ -128,15 +131,27 @@ mod tests {
 
     #[async_trait::async_trait]
     impl CompletionModel for MockCompletionModel {
-        fn context_size(&self) -> usize { 4096 }
-        fn metrics(&self) -> ModelMetrics { ModelMetrics { init_latency_ms: 0.0 } }
-        async fn load(&mut self, _text: &str) -> Result<()> { Ok(()) }
-        async fn complete(&mut self, _messages: &[ChatMessage], _settings: &HashMap<String, String>) 
-            -> BoxStream<'_, CompletionResponse> 
-        {
+        fn context_size(&self) -> usize {
+            4096
+        }
+        fn metrics(&self) -> ModelMetrics {
+            ModelMetrics {
+                init_latency_ms: 0.0,
+            }
+        }
+        async fn load(&mut self, _text: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn complete(
+            &mut self,
+            _messages: &[ChatMessage],
+            _settings: &HashMap<String, String>,
+        ) -> BoxStream<'_, CompletionResponse> {
             Box::pin(stream::empty())
         }
-        async fn count_tokens(&self, _text: &str) -> usize { 0 }
+        async fn count_tokens(&self, _text: &str) -> usize {
+            0
+        }
         async fn free(&mut self) {}
     }
 

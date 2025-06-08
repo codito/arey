@@ -154,7 +154,7 @@ impl CompletionModel for OpenAIBaseModel {
 
         // Create the stream
         let outer_stream = async_stream::stream! {
-            let start_time = start_time.clone();
+            let _start_time = start_time.clone();
             let mut prev_time = prev_time.clone();
             // Send the request and get back a streaming response
             match self.client.chat().create_stream(request).await {
@@ -225,9 +225,6 @@ mod tests {
     use super::*;
     use crate::core::completion::SenderType;
     use crate::core::model::{ModelCapability, ModelProvider};
-    use async_openai::types::{
-        ChatCompletionResponseStream, CreateChatCompletionStreamResponse, FinishReason,
-    };
     use serde_json::json;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,

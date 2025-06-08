@@ -1,5 +1,4 @@
-use crate::core::ChatMessage;
-use crate::core::completion::{CompletionModel, CompletionResponse};
+use crate::core::completion::{ChatMessage, CompletionModel, CompletionResponse};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -57,7 +56,7 @@ impl CompletionModel for OllamaBaseModel {
         &mut self,
         _messages: &[ChatMessage],
         _settings: &HashMap<String, String>,
-    ) -> BoxStream<'_, CompletionResponse> {
+    ) -> BoxStream<'_, Result<CompletionResponse>> {
         // TODO: Implement completion
         Box::pin(futures::stream::empty())
     }

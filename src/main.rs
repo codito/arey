@@ -24,16 +24,16 @@ async fn start_chat() -> anyhow::Result<()> {
 
     let config = ModelConfig {
         name: "gpt-3.5-turbo".to_string(), // Or "llama2", "mistral", etc. depending on your Ollama/Llama.cpp setup
-        r#type: ModelProvider::Openai, // Or ModelProvider::Ollama, ModelProvider::Gguf
+        r#type: ModelProvider::Openai,     // Or ModelProvider::Ollama, ModelProvider::Gguf
         capabilities: vec![crate::core::model::ModelCapability::Chat],
         settings,
     };
 
     println!("\nAttempting to create chat with model: {}", config.name);
-    let chat = Chat::new(config).await?;
-    
+    let mut chat = Chat::new(config).await?;
+
     println!("Chat created! Type 'q' to exit.");
-    
+
     loop {
         print!("> ");
         use std::io::{self, Write};
@@ -50,7 +50,7 @@ async fn start_chat() -> anyhow::Result<()> {
 
         println!("\nAI Response:");
         let mut stream = chat.stream_response(user_input.to_string()).await?;
-        
+
         while let Some(response_result) = stream.next().await {
             match response_result {
                 Ok(chunk) => print!("{}", chunk.text),
@@ -59,6 +59,6 @@ async fn start_chat() -> anyhow::Result<()> {
         }
         println!(); // Newline after AI response
     }
-    
+
     Ok(())
 }

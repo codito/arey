@@ -3,8 +3,8 @@ use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
 use futures::stream::BoxStream;
 use std::collections::HashMap;
-use tokio::sync::Mutex;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Context associated with a single chat message
 pub struct MessageContext {
@@ -42,18 +42,15 @@ pub struct Chat {
     pub messages: Vec<Message>,
     pub context: ChatContext,
     model_config: ModelConfig,
-    model: Arc<Mutex<Box<dyn crate::core::completion::CompletionModel + Send + Sync>>>,
+    model: Box<dyn crate::core::completion::CompletionModel + Send + Sync>,
 }
 
 impl Chat {
     pub async fn new(model_config: ModelConfig) -> Result<Self> {
-        let model_arc = crate::platform::llm::get_completion_llm(model_config.clone())
+        let model = crate::platform::llm::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
-        
-        let mut model_lock = model_arc.lock().await;
-        // Load system prompt - leave empty for now
-        model_lock.load("").await?;
-        let metrics = model_lock.metrics();
+
+        let metrics = model.metrics();
 
         Ok(Self {
             messages: Vec::new(),
@@ -62,12 +59,12 @@ impl Chat {
                 logs: String::new(),
             },
             model_config,
-            model: model_arc,
+            model: model,
         })
     }
 
     pub async fn stream_response(
-        &self,
+        &mut self,
         message: String,
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
         // Create user message
@@ -88,11 +85,8 @@ impl Chat {
         }
         model_messages.push(user_message.to_chat_message());
 
-        let mut model = self.model.lock().await;
-        let stream = model
-            .complete(&model_messages, &HashMap::new())
-            .await;
-        
+        let stream = self.model.complete(&model_messages, &HashMap::new()).await;
+
         Ok(stream)
     }
 
