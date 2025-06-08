@@ -158,7 +158,6 @@ pub fn create_or_get_config_file(
         Ok((false, actual_path))
     }
 }
-use crate::core::ModelProvider;
 
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;

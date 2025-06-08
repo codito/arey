@@ -4,6 +4,7 @@ use crate::core::completion::{
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
+use async_openai::types::ChatCompletionRequestUserMessage;
 use async_openai::{
     Client as OpenAIClient,
     types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
@@ -110,35 +111,32 @@ impl CompletionModel for OpenAIBaseModel {
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
     ) -> BoxStream<'_, Result<CompletionResponse>> {
-        let mut request = CreateChatCompletionRequestArgs::default();
-
         // Map messages to OpenAI message types
         let openai_messages: Vec<ChatCompletionRequestMessage> = messages
             .iter()
             .map(OpenAIBaseModel::to_openai_message)
             .collect();
 
-        // Set model and messages
-        request.model(&self.config.name).messages(openai_messages);
-
-        // Configure streaming
-        request.stream(true);
-
         // Set max_tokens and temperature if provided
-        if let Some(max_tokens_str) = settings.get("max_tokens") {
-            if let Ok(max_tokens) = max_tokens_str.parse::<u32>() {
-                request.max_tokens(max_tokens);
-            }
-        }
-
-        if let Some(temperature_str) = settings.get("temperature") {
-            if let Ok(temperature) = temperature_str.parse::<f32>() {
-                request.temperature(temperature);
-            }
-        }
+        let max_tokens = settings
+            .get("max_tokens")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(1024u32);
+        let temperature = settings
+            .get("temperature")
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.0);
 
         // Build request
-        let request = match request.build() {
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(self.config.name.clone())
+            .messages(openai_messages)
+            .max_tokens(max_tokens)
+            .temperature(temperature)
+            .stream(true)
+            .build();
+
+        let request = match request {
             Ok(req) => req,
             Err(err) => {
                 return Box::pin(futures::stream::once(async move {
@@ -196,6 +194,7 @@ impl CompletionModel for OpenAIBaseModel {
                                 }
                             }
                             Err(err) => {
+                                println!("{:?}", err);
                                 yield Err(anyhow!("OpenAI stream error: {}", err));
                             }
                         }
