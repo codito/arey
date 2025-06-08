@@ -2,15 +2,15 @@ mod core;
 mod platform;
 
 use crate::core::chat::Chat;
-use crate::core::completion::{combine_metrics, CompletionMetrics};
+use crate::core::completion::{CompletionMetrics, combine_metrics};
 use crate::core::config::get_config;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 /// Arey - a simple large language model app.
@@ -161,10 +161,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                     print!("{}", chunk.text);
                     io::stdout().flush()?;
                     response_text.push_str(&chunk.text);
-                    *metrics.lock().await = combine_metrics(&[
-                        metrics.lock().await.clone(),
-                        chunk.metrics.clone(),
-                    ]);
+                    *metrics.lock().await =
+                        combine_metrics(&[metrics.lock().await.clone(), chunk.metrics.clone()]);
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
@@ -194,8 +192,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         }
 
         if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
-            let tokens_per_sec = (metrics.completion_tokens as f32 * 1000.0)
-                / metrics.completion_latency_ms;
+            let tokens_per_sec =
+                (metrics.completion_tokens as f32 * 1000.0) / metrics.completion_latency_ms;
             footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
         }
 
