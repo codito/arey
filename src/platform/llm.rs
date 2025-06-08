@@ -1,5 +1,4 @@
 use crate::core::completion::CompletionModel;
-use crate::core::model::ModelConfig;
 use crate::platform::{llama, ollama, openai};
 use anyhow::Result;
 use std::sync::Arc;
@@ -15,7 +14,7 @@ pub enum ModelInitError {
 
 pub fn get_completion_llm(
     model_config: crate::core::model::ModelConfig,
-) -> Result<Arc<Mutex<dyn CompletionModel>>> {
+) -> Result<Arc<Mutex<Box<dyn CompletionModel + Send + Sync>>>> {
     match model_config.r#type {
         crate::core::model::ModelProvider::Gguf => {
             let model = llama::LlamaBaseModel::new(model_config)?;
