@@ -381,4 +381,59 @@ mod tests {
         assert_eq!(responses[2].text, "");
         assert_eq!(responses[2].finish_reason, Some("Stop".to_string()));
     }
+
+    #[tokio::test]
+    async fn test_openai_mock_header_capture() {
+        let server = MockServer::start().await;
+
+        // Define the mock response with custom headers and an SSE body
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_string("data: This is a test event.\n\n")
+            .insert_header("Content-Type", "text/event-stream")
+            .insert_header("X-Test-Header", "Value123")
+            .insert_header("Another-Header", "SomeOtherValue");
+
+        Mock::given(method("GET"))
+            .and(path("/test-headers"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
+
+        // Create a reqwest client
+        let client = reqwest::Client::new();
+
+        // Send a request to the mock server
+        let response = client
+            .get(format!("{}/test-headers", server.uri()))
+            .send()
+            .await
+            .expect("Failed to send request");
+
+        println!("--- Response Headers ---");
+        for (name, value) in response.headers().iter() {
+            println!("{}: {:?}", name, value);
+        }
+        println!("------------------------");
+
+        // Assert on some expected headers
+        assert!(response.headers().contains_key("content-type"));
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/event-stream"
+        );
+        assert!(response.headers().contains_key("x-test-header"));
+        assert_eq!(
+            response.headers().get("x-test-header").unwrap(),
+            "Value123"
+        );
+        assert!(response.headers().contains_key("another-header"));
+        assert_eq!(
+            response.headers().get("another-header").unwrap(),
+            "SomeOtherValue"
+        );
+
+        // Consume the body to ensure the connection is closed properly
+        let body = response.text().await.expect("Failed to read response body");
+        assert_eq!(body, "data: This is a test event.\n\n");
+    }
 }
