@@ -28,7 +28,6 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone)] // Added Clone trait for CompletionMetrics
-#[derive(Default)]
 pub struct CompletionMetrics {
     pub prompt_tokens: usize,
     pub prompt_eval_latency_ms: f32,
@@ -186,6 +185,14 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_metrics_default() {
+        let metrics = CompletionMetrics::default();
+        assert_eq!(metrics.prompt_tokens, 0);
+        assert_eq!(metrics.completion_tokens, 0);
+        assert_eq!(metrics.completion_runs, 1); // This is why we need a custom impl
+    }
+
+    #[test]
     fn test_sender_type_role() {
         assert_eq!(SenderType::System.role(), "system");
         assert_eq!(SenderType::Assistant.role(), "assistant");
@@ -212,7 +219,7 @@ mod tests {
             &mut self,
             _messages: &[ChatMessage],
             _settings: &HashMap<String, String>,
-        ) -> BoxStream<'_, Result<CompletionResponse>> { // Changed return type to Result<CompletionResponse>
+        ) -> BoxStream<'_, Result<CompletionResponse>> {
             Box::pin(stream::empty())
         }
         async fn count_tokens(&self, _text: &str) -> usize {
