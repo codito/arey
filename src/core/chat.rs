@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use futures::StreamExt; // Add at the top with other imports
 use futures::stream::{BoxStream, StreamExt}; // Then update the existing use statement
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Context associated with a single chat message
 pub struct MessageContext {
@@ -86,7 +87,8 @@ impl Chat {
         });
 
         // Convert all messages to model format
-        let model_messages: Vec<ChatMessage> = self.messages
+        let model_messages: Vec<ChatMessage> = self
+            .messages
             .iter()
             .map(|msg| msg.to_chat_message())
             .collect();
@@ -96,8 +98,8 @@ impl Chat {
 
         // Capture `self` mutably for the outer stream.
         // This makes the returned stream borrow `self`.
-        let chat_ref = self; 
-        
+        let mut chat_ref = self;
+
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
             while let Some(result) = inner_stream.next().await {
@@ -114,7 +116,7 @@ impl Chat {
                     }
                 }
             }
-            
+
             // Clear placeholder if error occurred
             if has_error {
                 chat_ref.messages.truncate(assistant_index);
