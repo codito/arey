@@ -1,7 +1,6 @@
 use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionResponse, SenderType};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use futures::stream::BoxStream;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -27,7 +26,7 @@ impl Message {
     pub fn to_chat_message(&self) -> ChatMessage {
         ChatMessage {
             text: self.text.clone(),
-            sender: self.sender,
+            sender: self.sender.clone(),
         }
     }
 }
