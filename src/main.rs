@@ -133,9 +133,7 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let mut stream = chat.stream_response(user_input.to_string()).await?;
-        let mut response_text = String::new();
-        let stop_flag_clone = stop_flag.clone();
-        let metrics = Arc::new(Mutex::new(CompletionMetrics::default()));
+        let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
         let spinner_clone = spinner.clone();
 
         // Handle cancellation and streaming
@@ -160,9 +158,7 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                     }
                     print!("{}", chunk.text);
                     io::stdout().flush()?;
-                    response_text.push_str(&chunk.text);
-                    *metrics.lock().await =
-                        combine_metrics(&[metrics.lock().await.clone(), chunk.metrics.clone()]);
+                    chunks_metrics.lock().await.push(chunk.metrics.clone());
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
@@ -172,7 +168,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         spinner.finish_and_clear();
 
         // Print footer with metrics
-        let metrics = metrics.lock().await;
+        let metrics_vec = chunks_metrics.lock().await;
+        let combined = combine_metrics(&metrics_vec);
         let footer = if stop_flag.load(Ordering::SeqCst) {
             "◼ Canceled.".to_string()
         } else {
@@ -180,29 +177,28 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         };
 
         let mut footer_details = String::new();
-        if metrics.prompt_eval_latency_ms > 0.0 || metrics.completion_latency_ms > 0.0 {
+        if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
             footer_details.push_str(&format!(
                 " {:.2}s to first token.",
-                metrics.prompt_eval_latency_ms / 1000.0
+                combined.prompt_eval_latency_ms / 1000.0
             ));
             footer_details.push_str(&format!(
                 " {:.2}s total.",
-                metrics.completion_latency_ms / 1000.0
+                combined.completion_latency_ms / 1000.0
             ));
         }
 
-        if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
-            let tokens_per_sec =
-                (metrics.completion_tokens as f32 * 1000.0) / metrics.completion_latency_ms;
+        if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
+            let tokens_per_sec = (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
             footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
         }
 
-        if metrics.completion_tokens > 0 {
-            footer_details.push_str(&format!(" {} tokens.", metrics.completion_tokens));
+        if combined.completion_tokens > 0 {
+            footer_details.push_str(&format!(" {} tokens.", combined.completion_tokens));
         }
 
-        if metrics.prompt_tokens > 0 {
-            footer_details.push_str(&format!(" {} prompt tokens.", metrics.prompt_tokens));
+        if combined.prompt_tokens > 0 {
+            footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
         }
 
         println!();
