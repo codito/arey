@@ -78,29 +78,56 @@ impl Chat {
         };
         self.messages.push(user_message);
 
-        // Convert all messages to model format
-        let mut model_messages = vec![];
-        for msg in &self.messages {
-            model_messages.push(msg.to_chat_message());
-        }
-        let stream = self.model.complete(&model_messages, &HashMap::new()).await;
+        // Add assistant message placeholder
+        let assistant_index = self.messages.len();
+        self.messages.push(Message {
+            text: String::new(),
+            sender: SenderType::Assistant,
+            timestamp: Utc::now(),
+            context: None,
+        });
 
-        Ok(stream)
+        // Convert all messages to model format
+        let model_messages: Vec<ChatMessage> = self.messages
+            .iter()
+            .map(|msg| msg.to_chat_message())
+            .collect();
+
+        // Get the stream from the model
+        let mut inner_stream = self.model.complete(&model_messages, &HashMap::new()).await;
+
+        // Capture `self` mutably for the outer stream.
+        // This makes the returned stream borrow `self`.
+        let chat_ref = self; 
+        
+        let wrapped_stream = async_stream::stream! {
+            let mut has_error = false;
+            while let Some(result) = inner_stream.next().await {
+                match result {
+                    Ok(chunk) => {
+                        // Accumulate response in chat history
+                        chat_ref.messages[assistant_index].text.push_str(&chunk.text);
+                        yield Ok(chunk);
+                    }
+                    Err(e) => {
+                        has_error = true;
+                        yield Err(e);
+                        break;
+                    }
+                }
+            }
+            
+            // Clear placeholder if error occurred
+            if has_error {
+                chat_ref.messages.truncate(assistant_index);
+            }
+        };
+
+        Ok(Box::pin(wrapped_stream))
     }
 
     // Placeholder for actual implementation
     pub fn get_completion_metrics(&self) -> Option<CompletionMetrics> {
         None
-    }
-
-    // Add new message to chat history
-    pub fn add_assistant_response(&mut self, text: String) {
-        let message = Message {
-            text,
-            sender: SenderType::Assistant,
-            timestamp: Utc::now(),
-            context: None,
-        };
-        self.messages.push(message);
     }
 }

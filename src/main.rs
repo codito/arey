@@ -13,18 +13,18 @@ async fn main() -> anyhow::Result<()> {
     let config = get_config(None).context("Failed to load configuration")?;
 
     // Start chat with the configured chat model
-    start_chat(config.chat.model).await?;
+    let chat_model_config = config.chat.model;
+    let chat_instance = Chat::new(chat_model_config).await?;
+    start_chat(chat_instance).await?;
 
     Ok(())
 }
 
-async fn start_chat(model_config: ModelConfig) -> anyhow::Result<()> {
+async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
     println!(
-        "\nAttempting to create chat with configured model: {}",
-        model_config.name
+        "\nChat created with model: {}",
+        chat.model_config.name
     );
-
-    let mut chat = Chat::new(model_config).await?;
 
     println!("Chat created! Type 'q' to exit.");
 
@@ -43,21 +43,16 @@ async fn start_chat(model_config: ModelConfig) -> anyhow::Result<()> {
         }
 
         let mut stream = chat.stream_response(user_input.to_string()).await?;
-        let mut full_response = String::new();
 
         while let Some(response_result) = stream.next().await {
             match response_result {
                 Ok(chunk) => {
                     print!("{}", chunk.text);
-                    full_response.push_str(&chunk.text);
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
         }
         println!(); // Newline after AI response
-        
-        // Add assistant response to history
-        chat.add_assistant_response(full_response);
     }
 
     Ok(())
