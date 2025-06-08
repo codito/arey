@@ -1,4 +1,4 @@
-use crate::core::model::{ModelCapability, ModelConfig, ModelMetrics};
+use crate::core::model::ModelMetrics;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;

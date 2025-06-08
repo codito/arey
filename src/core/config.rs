@@ -132,7 +132,9 @@ impl RawConfig {
     }
 }
 
-pub fn create_or_get_config_file(config_path: Option<PathBuf>) -> Result<(bool, PathBuf), AreyConfigError> {
+pub fn create_or_get_config_file(
+    config_path: Option<PathBuf>,
+) -> Result<(bool, PathBuf), AreyConfigError> {
     let actual_path = config_path.unwrap_or_else(|| {
         let config_dir = get_config_dir();
         config_dir.join("arey.yml")
@@ -158,7 +160,6 @@ pub fn create_or_get_config_file(config_path: Option<PathBuf>) -> Result<(bool, 
 }
 use crate::core::ModelProvider;
 
-    
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;
     let content = fs::read_to_string(&config_file)?;
@@ -200,7 +201,10 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
         let config_path = temp_dir.join("arey.yml");
         fs::create_dir_all(&temp_dir).unwrap();
-        File::create(&config_path).unwrap().write_all(content.as_bytes()).unwrap();
+        File::create(&config_path)
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
         config_path
     }
 
@@ -216,9 +220,10 @@ mod tests {
             name: name.to_string(),
             r#type: crate::core::model::ModelProvider::Gguf,
             capabilities: vec![crate::core::model::ModelCapability::Completion],
-            settings: HashMap::from([
-                ("n_ctx".to_string(), serde_yaml::Value::Number(4096.into())),
-            ]),
+            settings: HashMap::from([(
+                "n_ctx".to_string(),
+                serde_yaml::Value::Number(4096.into()),
+            )]),
         }
     }
 
@@ -237,22 +242,17 @@ models:
     path: /path/to/another_dummy.gguf
 profiles:
   default:
-            
-        
     temperature: 0.7
     repeat_penalty: 1.176
     top_k: 40
     top_p: 0.1
   creative:
-    temperature: 0.9  
+    temperature: 0.9
     repeat_penalty: 1.1
     top_k: 50
     top_p: 0.9
   concise:
-                    temperature: 0.8,
-                   
-               
-    temperature: 0.5
+    temperature: 0.8
     repeat_penalty: 1.2
     top_k: 30
     top_p: 0.05
@@ -281,8 +281,20 @@ task:
 
         let mut profiles = HashMap::new();
         profiles.insert("default".to_string(), ProfileConfig::default());
-        profiles.insert("creative".to_string(), ProfileConfig { temperature: 0.9, ..Default::default() });
-        profiles.insert("concise".to_string(), ProfileConfig { temperature: 0.5, ..Default::default() });
+        profiles.insert(
+            "creative".to_string(),
+            ProfileConfig {
+                temperature: 0.9,
+                ..Default::default()
+            },
+        );
+        profiles.insert(
+            "concise".to_string(),
+            ProfileConfig {
+                temperature: 0.5,
+                ..Default::default()
+            },
+        );
 
         let raw_config = RawConfig {
             models: models.clone(),
@@ -326,7 +338,9 @@ task:
         };
 
         let err = raw_config.to_config().unwrap_err();
-        assert!(matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found")));
+        assert!(
+            matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found"))
+        );
     }
 
     #[test]
@@ -348,17 +362,22 @@ task:
         };
 
         let err = raw_config.to_config().unwrap_err();
-        assert!(matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found")));
+        assert!(
+            matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found"))
+        );
     }
 
     #[test]
     fn test_raw_config_to_config_inline_model_and_profile() {
         let raw_config = RawConfig {
-            models: HashMap::new(), // No named models
+            models: HashMap::new(),   // No named models
             profiles: HashMap::new(), // No named profiles
             chat: crate::core::config::RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-chat-model")),
-                profile: Some(StringOrObject::Object(ProfileConfig { temperature: 0.8, ..Default::default() })),
+                profile: Some(StringOrObject::Object(ProfileConfig {
+                    temperature: 0.8,
+                    ..Default::default()
+                })),
             },
             task: crate::core::config::RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-task-model")),
@@ -407,7 +426,7 @@ task:
         assert_eq!(config.chat.model.name, "dummy-7b");
         assert_eq!(config.chat.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "dummy-13b");
-        assert_eq!(config.task.profile.temperature, 0.5);
+        assert_eq!(config.task.profile.temperature, 0.8);
     }
 
     #[test]

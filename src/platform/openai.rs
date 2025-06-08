@@ -160,7 +160,7 @@ impl CompletionModel for OpenAIBaseModel {
         // Start the timer
         let start_time = Instant::now();
         let prev_time = start_time;
-        let first_chunk = true;
+        let mut first_chunk = true;
 
         // Create the stream
         let outer_stream = async_stream::stream! {
@@ -302,10 +302,12 @@ mod tests {
             }),
         ];
 
-        events
+        let mut mock_body = events
             .into_iter()
             .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
-            .collect::<String>()
+            .collect::<String>();
+        mock_body.push_str("data: [DONE]\n\n");
+        mock_body
     }
 
     // Create a test model configuration with mock server URL
@@ -344,10 +346,8 @@ mod tests {
         let server_url = server.uri();
         let config = create_mock_model_config(&server_url).unwrap();
 
-        let mut mock_event_body = mock_event_stream_body();
-        mock_event_body.push_str("data: [DONE]\n\n");
         let mock_response = ResponseTemplate::new(200)
-            .set_body_raw(mock_event_body, "text/event-stream")
+            .set_body_raw(mock_event_stream_body(), "text/event-stream")
             .insert_header("Connection", "close");
 
         Mock::given(method("POST"))
@@ -378,56 +378,5 @@ mod tests {
         assert_eq!(responses[1].text, " world");
         assert_eq!(responses[2].text, "");
         assert_eq!(responses[2].finish_reason, Some("Stop".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_openai_mock_header_capture() {
-        let server = MockServer::start().await;
-
-        // Define the mock response with custom headers and an SSE body
-        let mock_response = ResponseTemplate::new(200)
-            .set_body_raw("data: This is a test event.\n\n", "text/event-stream")
-            .insert_header("X-Test-Header", "Value123")
-            .insert_header("Another-Header", "SomeOtherValue");
-
-        Mock::given(method("GET"))
-            .and(path("/test-headers"))
-            .respond_with(mock_response)
-            .mount(&server)
-            .await;
-
-        // Create a reqwest client
-        let client = reqwest::Client::new();
-
-        // Send a request to the mock server
-        let response = client
-            .get(format!("{}/test-headers", server.uri()))
-            .send()
-            .await
-            .expect("Failed to send request");
-
-        println!("--- Response Headers ---");
-        for (name, value) in response.headers().iter() {
-            println!("{}: {:?}", name, value);
-        }
-        println!("------------------------");
-
-        // Assert on some expected headers
-        assert!(response.headers().contains_key("content-type"));
-        assert_eq!(
-            response.headers().get("content-type").unwrap(),
-            "text/event-stream"
-        );
-        assert!(response.headers().contains_key("x-test-header"));
-        assert_eq!(response.headers().get("x-test-header").unwrap(), "Value123");
-        assert!(response.headers().contains_key("another-header"));
-        assert_eq!(
-            response.headers().get("another-header").unwrap(),
-            "SomeOtherValue"
-        );
-
-        // Consume the body to ensure the connection is closed properly
-        let body = response.text().await.expect("Failed to read response body");
-        assert_eq!(body, "data: This is a test event.\n\n");
     }
 }
