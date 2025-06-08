@@ -151,7 +151,7 @@ impl CompletionModel for OpenAIBaseModel {
 
         // Create the stream
         let outer_stream = async_stream::stream! {
-            let _start_time = start_time.clone();
+            let _start_time = start_time;
             let mut prev_time = prev_time.clone();
             // Send the request and get back a streaming response
             match self.client.chat().create_stream(request).await {

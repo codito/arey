@@ -2,10 +2,9 @@ use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionResponse
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use futures::StreamExt; // Add at the top with other imports
-use futures::stream::{BoxStream, StreamExt}; // Then update the existing use statement
+use futures::stream::{BoxStream, StreamExt};
+use futures::Stream;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Context associated with a single chat message
 pub struct MessageContext {
@@ -94,15 +93,13 @@ impl Chat {
             .collect();
 
         // Get the stream from the model
-        let mut inner_stream = self.model.complete(&model_messages, &HashMap::new()).await;
-
-        // Capture `self` mutably for the outer stream.
+        let mut stream = self.model.complete(&model_messages, &HashMap::new()).await;
         // This makes the returned stream borrow `self`.
         let mut chat_ref = self;
 
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
-            while let Some(result) = inner_stream.next().await {
+            while let Some(result) = stream.next().await {
                 match result {
                     Ok(chunk) => {
                         // Accumulate response in chat history
