@@ -28,12 +28,25 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone)] // Added Clone trait for CompletionMetrics
+#[derive(Default)]
 pub struct CompletionMetrics {
     pub prompt_tokens: usize,
     pub prompt_eval_latency_ms: f32,
     pub completion_tokens: usize,
     pub completion_runs: usize,
     pub completion_latency_ms: f32,
+}
+
+impl Default for CompletionMetrics {
+    fn default() -> Self {
+        Self {
+            prompt_tokens: 0,
+            prompt_eval_latency_ms: 0.0,
+            completion_tokens: 0,
+            completion_runs: 1,
+            completion_latency_ms: 0.0,
+        }
+    }
 }
 
 impl CompletionMetrics {
