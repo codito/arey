@@ -27,13 +27,26 @@ pub struct ChatMessage {
     pub sender: SenderType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)] // Added Clone trait for CompletionMetrics
 pub struct CompletionMetrics {
     pub prompt_tokens: usize,
     pub prompt_eval_latency_ms: f32,
     pub completion_tokens: usize,
     pub completion_runs: usize,
     pub completion_latency_ms: f32,
+}
+
+impl CompletionMetrics {
+    /// Combines this CompletionMetrics with another, accumulating completion-related metrics.
+    /// Prompt-related metrics (tokens, eval latency) are typically set by the first chunk
+    /// and are not accumulated in subsequent calls.
+    pub fn combine(&mut self, other: &CompletionMetrics) {
+        self.completion_tokens += other.completion_tokens;
+        self.completion_runs += other.completion_runs;
+        self.completion_latency_ms += other.completion_latency_ms;
+        // prompt_tokens and prompt_eval_latency_ms are assumed to be set by the initial chunk
+        // and are not accumulated here.
+    }
 }
 
 #[derive(Debug)]
@@ -103,8 +116,8 @@ mod tests {
         };
 
         let metrics2 = CompletionMetrics {
-            prompt_tokens: 100,
-            prompt_eval_latency_ms: 0.0,
+            prompt_tokens: 100, // This value is ignored in combine_metrics for subsequent entries
+            prompt_eval_latency_ms: 0.0, // This value is ignored in combine_metrics for subsequent entries
             completion_tokens: 30,
             completion_runs: 1,
             completion_latency_ms: 300.0,
@@ -117,6 +130,46 @@ mod tests {
         assert_eq!(combined.completion_tokens, 50);
         assert_eq!(combined.completion_runs, 2);
         assert_eq!(combined.completion_latency_ms, 500.0);
+    }
+
+    #[test]
+    fn test_completion_metrics_combine_method() {
+        let mut initial_metrics = CompletionMetrics {
+            prompt_tokens: 100,
+            prompt_eval_latency_ms: 50.0,
+            completion_tokens: 20,
+            completion_runs: 1,
+            completion_latency_ms: 200.0,
+        };
+
+        let chunk_metrics = CompletionMetrics {
+            prompt_tokens: 0, // Should be ignored
+            prompt_eval_latency_ms: 0.0, // Should be ignored
+            completion_tokens: 10,
+            completion_runs: 1,
+            completion_latency_ms: 100.0,
+        };
+
+        initial_metrics.combine(&chunk_metrics);
+
+        assert_eq!(initial_metrics.prompt_tokens, 100); // Unchanged
+        assert_eq!(initial_metrics.prompt_eval_latency_ms, 50.0); // Unchanged
+        assert_eq!(initial_metrics.completion_tokens, 30); // 20 + 10
+        assert_eq!(initial_metrics.completion_runs, 2); // 1 + 1
+        assert_eq!(initial_metrics.completion_latency_ms, 300.0); // 200 + 100
+
+        // Test with another chunk
+        let another_chunk_metrics = CompletionMetrics {
+            prompt_tokens: 0,
+            prompt_eval_latency_ms: 0.0,
+            completion_tokens: 5,
+            completion_runs: 1,
+            completion_latency_ms: 50.0,
+        };
+        initial_metrics.combine(&another_chunk_metrics);
+        assert_eq!(initial_metrics.completion_tokens, 35); // 30 + 5
+        assert_eq!(initial_metrics.completion_runs, 3); // 2 + 1
+        assert_eq!(initial_metrics.completion_latency_ms, 350.0); // 300 + 50
     }
 
     #[test]
@@ -146,7 +199,7 @@ mod tests {
             &mut self,
             _messages: &[ChatMessage],
             _settings: &HashMap<String, String>,
-        ) -> BoxStream<'_, CompletionResponse> {
+        ) -> BoxStream<'_, Result<CompletionResponse>> { // Changed return type to Result<CompletionResponse>
             Box::pin(stream::empty())
         }
         async fn count_tokens(&self, _text: &str) -> usize {
