@@ -8,12 +8,30 @@ use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// Helper function to combine CompletionMetrics
+fn combine_metrics(metrics_list: &[CompletionMetrics]) -> CompletionMetrics {
+    let mut combined = CompletionMetrics {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        cost: 0.0,
+    };
+
+    for metrics in metrics_list {
+        combined.input_tokens += metrics.input_tokens;
+        combined.output_tokens += metrics.output_tokens;
+        combined.total_tokens += metrics.total_tokens;
+        combined.cost += metrics.cost;
+    }
+    combined
+}
+
 /// Context associated with a single chat message
 pub struct MessageContext {
     pub prompt: String,
-    pub finish_reason: Option<String>,
-    pub metrics: CompletionMetrics,
-    pub logs: String,
+    pub finish_reason: Option<String>, // 6. Finish reason tracking
+    pub metrics: CompletionMetrics,    // 2. Metrics combination and storage for assistant messages
+    pub logs: String,                  // 3. Assistant message logging context
 }
 
 /// Chat message with context
@@ -49,14 +67,23 @@ pub struct Chat {
 
 impl Chat {
     pub async fn new(model_config: ModelConfig) -> Result<Self> {
-        let model = crate::platform::llm::get_completion_llm(model_config.clone())
+        let mut model = crate::platform::llm::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
+
+        // 1. System prompt loading during chat initialization
+        // 7. System prompt handling (currently hard-coded empty string)
+        // This assumes `CompletionModel` trait has an `async fn load(&mut self, system_prompt: &str) -> Result<()>` method.
+        model
+            .load("") // For now, an empty system prompt. Proper prompt handling needs more config.
+            .await
+            .context("Failed to load model with system prompt")?;
+
         let metrics = model.metrics();
         Ok(Self {
             messages: Arc::new(Mutex::new(Vec::new())),
             context: ChatContext {
                 metrics: Some(metrics),
-                logs: String::new(),
+                logs: String::new(), // Placeholder for logs from model.load, as stderr capture is complex in Rust.
             },
             model_config,
             model,
@@ -104,6 +131,11 @@ impl Chat {
         // This makes the returned stream borrow `self`.
         let shared_messages = self.messages.clone();
 
+        // 4. In-stream metrics accumulation
+        let mut usage_series: Vec<CompletionMetrics> = Vec::new();
+        // 8. Last finish reason capture during streaming
+        let mut last_finish_reason: Option<String> = None;
+
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
             let mut assistant_response = String::new();
@@ -112,6 +144,8 @@ impl Chat {
                     Ok(chunk) => {
                         // Accumulate response in chat history
                         assistant_response.push_str(&chunk.text);
+                        usage_series.push(chunk.metrics.clone()); // Accumulate metrics
+                        last_finish_reason = chunk.finish_reason.clone(); // Capture last finish reason
                         yield Ok(chunk);
                     }
                     Err(e) => {
@@ -128,16 +162,34 @@ impl Chat {
                 messages.truncate(assistant_index);
             }
 
+            // 2. Metrics combination and storage for assistant messages
+            let combined_metrics = combine_metrics(&usage_series);
+            // 3. Assistant message logging context (placeholder for now)
+            // 6. Finish reason tracking
+            let msg_context = MessageContext {
+                prompt: String::new(), // Python has prompt, but it's not used here.
+                finish_reason: last_finish_reason,
+                metrics: combined_metrics,
+                logs: String::new(), // Logs from stream are not captured yet
+            };
+
             if let Some(msg) = messages.get_mut(assistant_index) {
                 msg.text = assistant_response;
+                msg.context = Some(msg_context); // Store context with metrics and finish reason
             }
         };
 
         Ok(Box::pin(wrapped_stream))
     }
 
-    // Placeholder for actual implementation
+    // 5. Completion metrics retrieval
     pub fn get_completion_metrics(&self) -> Option<CompletionMetrics> {
-        None
+        let messages_lock = self.messages.lock().unwrap();
+        messages_lock
+            .iter()
+            .rev() // Iterate in reverse to find the last assistant message
+            .find(|m| m.sender == SenderType::Assistant)
+            .and_then(|m| m.context.as_ref()) // Get its context if it exists
+            .map(|ctx| ctx.metrics.clone()) // Get the metrics from the context
     }
 }
