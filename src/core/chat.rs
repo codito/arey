@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Context associated with a single chat message
 pub struct MessageContext {
@@ -38,10 +39,10 @@ pub struct ChatContext {
 
 /// Chat conversation between human and AI model
 pub struct Chat {
-    pub messages: Vec<Message>,
+    pub messages: Arc<Mutex<Vec<Message>>>,
     pub context: ChatContext,
     model_config: ModelConfig,
-    model: Box<dyn crate::core::completion::CompletionModel + Send + Sync>,
+    model: Box<dyn CompletionModel + Send + Sync>,
 }
 
 impl Chat {
@@ -50,7 +51,7 @@ impl Chat {
             .context("Failed to initialize chat model")?;
         let metrics = model.metrics();
         Ok(Self {
-            messages: Vec::new(),
+            messages: Arc::new(Mutex::new(Vec::new())),
             context: ChatContext {
                 metrics: Some(metrics),
                 logs: String::new(),
@@ -73,20 +74,25 @@ impl Chat {
             timestamp,
             context: None,
         };
-        self.messages.push(user_message);
+
+        let mut messages_lock = self.messages.lock().unwrap();
+        messages_lock.push(user_message);
 
         // Add assistant message placeholder
-        let assistant_index = self.messages.len();
-        self.messages.push(Message {
+        let assistant_index = messages_lock.len();
+        messages_lock.push(Message {
             text: String::new(),
             sender: SenderType::Assistant,
             timestamp: Utc::now(),
             context: None,
         });
+        drop(messages_lock);
 
         // Convert all messages to model format
         let model_messages: Vec<ChatMessage> = self
             .messages
+            .lock()
+            .unwrap()
             .iter()
             .map(|msg| msg.to_chat_message())
             .collect();
@@ -95,6 +101,7 @@ impl Chat {
         let mut stream = self.model.complete(&model_messages, &HashMap::new()).await;
         // This makes the returned stream borrow `self`.
         let chat_ref = self;
+        let shared_messages = self.messages.clone();
 
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
@@ -102,7 +109,10 @@ impl Chat {
                 match result {
                     Ok(chunk) => {
                         // Accumulate response in chat history
-                        chat_ref.messages[assistant_index].text.push_str(&chunk.text);
+                        let mut messages = shared_messages.lock().unwrap();
+                        if let Some(msg) = messages.get_mut(assistant_index) {
+                            msg.text.push_str(&chunk.text);
+                        }
                         yield Ok(chunk);
                     }
                     Err(e) => {
@@ -115,7 +125,8 @@ impl Chat {
 
             // Clear placeholder if error occurred
             if has_error {
-                chat_ref.messages.truncate(assistant_index);
+                let mut messages = shared_messages.lock().unwrap();
+                messages.truncate(assistant_index);
             }
         };
 
