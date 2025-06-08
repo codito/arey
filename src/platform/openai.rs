@@ -260,8 +260,6 @@ mod tests {
     use async_openai::types::{
         ChatCompletionResponseStream, CreateChatCompletionStreamResponse, FinishReason,
     };
-    use futures::Stream;
-    use reqwest::header;
     use serde_json::json;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -271,28 +269,28 @@ mod tests {
     // Create a mock event stream body
     fn mock_event_stream_body() -> String {
         let events = vec![
-            json!({
-                "id": "chatcmpl-1",
-                "object": "chat.completion.chunk",
-                "created": 1684,
-                "model": "gpt-3.5-turbo",
-                "choices": [{
-                    "delta": {"content": "Hello"},
-                    "index": 0,
-                    "finish_reason": serde_json::Value::Null
-                }]
-            }),
-            json!({
-                "id": "chatcmpl-1",
-                "object": "chat.completion.chunk",
-                "created": 1684,
-                "model": "gpt-3.5-turbo",
-                "choices": [{
-                    "delta": {"content": " world"},
-                    "index": 0,
-                    "finish_reason": serde_json::Value::Null
-                }]
-            }),
+            // json!({
+            //     "id": "chatcmpl-1",
+            //     "object": "chat.completion.chunk",
+            //     "created": 1684,
+            //     "model": "gpt-3.5-turbo",
+            //     "choices": [{
+            //         "delta": {"content": "Hello"},
+            //         "index": 0,
+            //         "finish_reason": serde_json::Value::Null
+            //     }]
+            // }),
+            // json!({
+            //     "id": "chatcmpl-1",
+            //     "object": "chat.completion.chunk",
+            //     "created": 1684,
+            //     "model": "gpt-3.5-turbo",
+            //     "choices": [{
+            //         "delta": {"content": " world"},
+            //         "index": 0,
+            //         "finish_reason": serde_json::Value::Null
+            //     }]
+            // }),
             json!({
                 "id": "chatcmpl-1",
                 "object": "chat.completion.chunk",
@@ -348,9 +346,8 @@ mod tests {
         let server_url = server.uri();
         let config = create_mock_model_config(&server_url).unwrap();
 
-        let mock_response = ResponseTemplate::new(200)
-            .set_body_string(mock_event_stream_body())
-            .insert_header("Content-Type", "text/event-stream");
+        let mock_response =
+            ResponseTemplate::new(200).set_body_raw(mock_event_stream_body(), "text/event-stream");
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -388,8 +385,7 @@ mod tests {
 
         // Define the mock response with custom headers and an SSE body
         let mock_response = ResponseTemplate::new(200)
-            .set_body_string("data: This is a test event.\n\n")
-            .insert_header("Content-Type", "text/event-stream")
+            .set_body_raw("data: This is a test event.\n\n", "text/event-stream")
             .insert_header("X-Test-Header", "Value123")
             .insert_header("Another-Header", "SomeOtherValue");
 
@@ -422,10 +418,7 @@ mod tests {
             "text/event-stream"
         );
         assert!(response.headers().contains_key("x-test-header"));
-        assert_eq!(
-            response.headers().get("x-test-header").unwrap(),
-            "Value123"
-        );
+        assert_eq!(response.headers().get("x-test-header").unwrap(), "Value123");
         assert!(response.headers().contains_key("another-header"));
         assert_eq!(
             response.headers().get("another-header").unwrap(),
