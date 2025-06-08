@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+use chrono::{DateTime, Utc};
 use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionResponse, SenderType};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
@@ -18,7 +20,7 @@ pub struct MessageContext {
 pub struct Message {
     pub text: String,
     pub sender: SenderType,
-    pub timestamp: i64,
+    pub timestamp: DateTime<Utc>,
     pub context: Option<MessageContext>,
 }
 
@@ -49,17 +51,15 @@ impl Chat {
     pub async fn new(model_config: ModelConfig) -> Result<Self> {
         let model = crate::platform::llm::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
-
         let metrics = model.metrics();
-
         Ok(Self {
             messages: Vec::new(),
             context: ChatContext {
                 metrics: Some(metrics),
-                logs: String::new(),
+                logs: String::new(),  
             },
             model_config,
-            model: model,
+            model,
         })
     }
 
@@ -67,24 +67,22 @@ impl Chat {
         &mut self,
         message: String,
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
-        // Create user message
+        let timestamp = Utc::now();
+        
+        // Create user message and add to history
         let user_message = Message {
             text: message.clone(),
             sender: SenderType::User,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp,
             context: None,
         };
-
-        // Add message to history (will leave storage for actual implementation)
-        // In full implementation, you'd push this to self.messages
+        self.messages.push(user_message);
 
         // Convert all messages to model format
         let mut model_messages = vec![];
         for msg in &self.messages {
             model_messages.push(msg.to_chat_message());
         }
-        model_messages.push(user_message.to_chat_message());
-
         let stream = self.model.complete(&model_messages, &HashMap::new()).await;
 
         Ok(stream)
@@ -93,5 +91,16 @@ impl Chat {
     // Placeholder for actual implementation
     pub fn get_completion_metrics(&self) -> Option<CompletionMetrics> {
         None
+    }
+
+    // Add new message to chat history
+    pub fn add_assistant_response(&mut self, text: String) {
+        let message = Message {
+            text,
+            sender: SenderType::Assistant,
+            timestamp: Utc::now(),
+            context: None,
+        };
+        self.messages.push(message);
     }
 }

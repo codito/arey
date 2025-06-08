@@ -43,14 +43,21 @@ async fn start_chat(model_config: ModelConfig) -> anyhow::Result<()> {
         }
 
         let mut stream = chat.stream_response(user_input.to_string()).await?;
+        let mut full_response = String::new();
 
         while let Some(response_result) = stream.next().await {
             match response_result {
-                Ok(chunk) => print!("{}", chunk.text),
+                Ok(chunk) => {
+                    print!("{}", chunk.text);
+                    full_response.push_str(&chunk.text);
+                }
                 Err(e) => eprintln!("Error: {}", e),
             }
         }
         println!(); // Newline after AI response
+        
+        // Add assistant response to history
+        chat.add_assistant_response(full_response);
     }
 
     Ok(())
