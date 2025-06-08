@@ -2,7 +2,8 @@ use crate::core::completion::{ChatMessage, CompletionMetrics, CompletionResponse
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use futures::stream::BoxStream;
+use futures::StreamExt; // Add at the top with other imports
+use futures::stream::{BoxStream, StreamExt}; // Then update the existing use statement
 use std::collections::HashMap;
 
 /// Context associated with a single chat message

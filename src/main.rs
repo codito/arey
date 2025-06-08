@@ -3,7 +3,6 @@ mod platform;
 
 use crate::core::chat::Chat;
 use crate::core::config::get_config;
-use crate::core::model::ModelConfig;
 use anyhow::Context;
 use futures::StreamExt;
 

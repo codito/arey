@@ -4,7 +4,6 @@ use crate::core::completion::{
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
-use async_openai::types::ChatCompletionRequestUserMessage;
 use async_openai::{
     Client as OpenAIClient,
     types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
