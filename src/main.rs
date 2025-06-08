@@ -2,10 +2,16 @@ mod core;
 mod platform;
 
 use crate::core::chat::Chat;
+use crate::core::completion::{combine_metrics, CompletionMetrics};
 use crate::core::config::get_config;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
@@ -96,12 +102,16 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
-    // println!("Welcome to arey chat! Type 'q' to exit."); // Moved to main
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let s = stop_flag.clone();
+    ctrlc::set_handler(move || {
+        s.store(true, Ordering::SeqCst);
+    })
+    .context("Error setting Ctrl-C handler")?;
 
     loop {
         print!("> ");
-        use std::io::{self, Write};
-        io::stdout().flush()?; // Ensure prompt is displayed immediately
+        io::stdout().flush()?;
 
         let mut user_input = String::new();
         io::stdin().read_line(&mut user_input)?;
@@ -112,17 +122,98 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
             break;
         }
 
-        let mut stream = chat.stream_response(user_input.to_string()).await?;
+        // Create spinner
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::with_template("{spinner:.blue} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        spinner.set_message("Generating...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
+        let mut stream = chat.stream_response(user_input.to_string()).await?;
+        let mut response_text = String::new();
+        let stop_flag_clone = stop_flag.clone();
+        let metrics = Arc::new(Mutex::new(CompletionMetrics::default()));
+        let spinner_clone = spinner.clone();
+
+        // Handle cancellation and streaming
+        let cancel_task = tokio::spawn(async move {
+            while !stop_flag_clone.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            spinner_clone.finish_and_clear();
+        });
+
+        let mut first_token_received = false;
         while let Some(response_result) = stream.next().await {
+            if stop_flag.load(Ordering::SeqCst) {
+                break;
+            }
+
             match response_result {
                 Ok(chunk) => {
+                    if !first_token_received {
+                        spinner.finish_and_clear();
+                        first_token_received = true;
+                    }
                     print!("{}", chunk.text);
+                    io::stdout().flush()?;
+                    response_text.push_str(&chunk.text);
+                    *metrics.lock().await = combine_metrics(&[
+                        metrics.lock().await.clone(),
+                        chunk.metrics.clone(),
+                    ]);
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
         }
-        println!(); // Newline after AI response
+
+        cancel_task.abort();
+        spinner.finish_and_clear();
+
+        // Print footer with metrics
+        let metrics = metrics.lock().await;
+        let footer = if stop_flag.load(Ordering::SeqCst) {
+            "◼ Canceled.".to_string()
+        } else {
+            "◼ Completed.".to_string()
+        };
+
+        let mut footer_details = String::new();
+        if metrics.prompt_eval_latency_ms > 0.0 || metrics.completion_latency_ms > 0.0 {
+            footer_details.push_str(&format!(
+                " {:.2}s to first token.",
+                metrics.prompt_eval_latency_ms / 1000.0
+            ));
+            footer_details.push_str(&format!(
+                " {:.2}s total.",
+                metrics.completion_latency_ms / 1000.0
+            ));
+        }
+
+        if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
+            let tokens_per_sec = (metrics.completion_tokens as f32 * 1000.0)
+                / metrics.completion_latency_ms;
+            footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
+        }
+
+        if metrics.completion_tokens > 0 {
+            footer_details.push_str(&format!(" {} tokens.", metrics.completion_tokens));
+        }
+
+        if metrics.prompt_tokens > 0 {
+            footer_details.push_str(&format!(" {} prompt tokens.", metrics.prompt_tokens));
+        }
+
+        println!();
+        println!("{}", footer);
+        println!("{}", footer_details);
+        println!();
+
+        // Reset stop flag for next message
+        stop_flag.store(false, Ordering::SeqCst);
     }
 
     Ok(())
