@@ -1,6 +1,6 @@
 use crate::core::completion::combine_metrics;
 use crate::core::completion::{
-    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, SenderType,
+    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, CancellationToken, SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
@@ -56,10 +56,11 @@ impl Chat {
         // 1. System prompt loading during chat initialization
         // 7. System prompt handling (currently hard-coded empty string)
         // This assumes `CompletionModel` trait has an `async fn load(&mut self, system_prompt: &str) -> Result<()>` method.
-        model
-            .load("") // For now, an empty system prompt. Proper prompt handling needs more config.
-            .await
-            .context("Failed to load model with system prompt")?;
+        // The `load` method was removed from the CompletionModel trait in a previous step.
+        // model
+        //     .load("") // For now, an empty system prompt. Proper prompt handling needs more config.
+        //     .await
+        //     .context("Failed to load model with system prompt")?;
 
         let metrics = model.metrics();
         Ok(Self {
@@ -76,6 +77,7 @@ impl Chat {
     pub async fn stream_response(
         &mut self,
         message: String,
+        cancel_token: CancellationToken, // Added cancellation token
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
         let timestamp = Utc::now();
 
@@ -110,7 +112,7 @@ impl Chat {
             .collect();
 
         // Get the stream from the model
-        let mut stream = self.model.complete(&model_messages, &HashMap::new()).await;
+        let mut stream = self.model.complete(&model_messages, &HashMap::new(), cancel_token.clone()).await; // Pass cancellation token
         // This makes the returned stream borrow `self`.
         let shared_messages = self.messages.clone();
 
@@ -123,6 +125,13 @@ impl Chat {
             let mut has_error = false;
             let mut assistant_response = String::new();
             while let Some(result) = stream.next().await {
+                // Check for cancellation *before* processing the chunk
+                if cancel_token.is_cancelled() {
+                    has_error = true; // Treat cancellation as an error for cleanup purposes
+                    yield Err(anyhow::anyhow!("Cancelled by user")); // Yield a cancellation error
+                    break; // Exit the loop
+                }
+
                 match result {
                     Ok(chunk) => {
                         // Accumulate response in chat history
