@@ -1,3 +1,4 @@
+use crate::core::completion::combine_metrics;
 use crate::core::completion::{
     ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, SenderType,
 };
@@ -7,24 +8,6 @@ use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-/// Helper function to combine CompletionMetrics
-fn combine_metrics(metrics_list: &[CompletionMetrics]) -> CompletionMetrics {
-    let mut combined = CompletionMetrics {
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: 0,
-        cost: 0.0,
-    };
-
-    for metrics in metrics_list {
-        combined.input_tokens += metrics.input_tokens;
-        combined.output_tokens += metrics.output_tokens;
-        combined.total_tokens += metrics.total_tokens;
-        combined.cost += metrics.cost;
-    }
-    combined
-}
 
 /// Context associated with a single chat message
 pub struct MessageContext {
