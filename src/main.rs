@@ -134,39 +134,37 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
 
         let mut stream = chat.stream_response(user_input.to_string()).await?;
         let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
-        // Add this line to clone the stop_flag for the task
-        let stop_flag_clone = stop_flag.clone();
-        let spinner_clone = spinner.clone();
-
-        // Handle cancellation and streaming
-        let cancel_task = tokio::spawn(async move {
-            while !stop_flag_clone.load(Ordering::SeqCst) {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-            spinner_clone.finish_and_clear();
-        });
-
+        
         let mut first_token_received = false;
-        while let Some(response_result) = stream.next().await {
-            if stop_flag.load(Ordering::SeqCst) {
-                break;
-            }
 
-            match response_result {
-                Ok(chunk) => {
-                    if !first_token_received {
-                        spinner.finish_and_clear();
-                        first_token_received = true;
+        'receive_loop: loop {
+            tokio::select! {
+                // Check cancel signal BEFORE waiting for next chunk
+                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                    if stop_flag.load(Ordering::SeqCst) {
+                        break 'receive_loop;
                     }
-                    print!("{}", chunk.text);
-                    io::stdout().flush()?;
-                    chunks_metrics.lock().await.push(chunk.metrics.clone());
                 }
-                Err(e) => eprintln!("Error: {}", e),
+                response = stream.next() => {
+                    match response {
+                        Some(Ok(chunk)) => {
+                            if !first_token_received {
+                                spinner.finish_and_clear();
+                                first_token_received = true;
+                            }
+                            print!("{}", chunk.text);
+                            io::stdout().flush()?;
+                            chunks_metrics.lock().await.push(chunk.metrics.clone());
+                        }
+                        Some(Err(e)) => {
+                            eprintln!("Error: {}", e);
+                        }
+                        None => break 'receive_loop, // Stream has ended
+                    }
+                }
             }
         }
 
-        cancel_task.abort();
         spinner.finish_and_clear();
 
         // Print footer with metrics
