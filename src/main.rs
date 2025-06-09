@@ -2,7 +2,7 @@ mod core;
 mod platform;
 
 use crate::core::chat::Chat;
-use crate::core::completion::{CompletionMetrics, combine_metrics};
+use crate::core::completion::{CompletionMetrics, combine_metrics, CancellationToken}; // Added CancellationToken
 use crate::core::config::get_config;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -102,12 +102,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let s = stop_flag.clone();
-    ctrlc::set_handler(move || {
-        s.store(true, Ordering::SeqCst);
-    })
-    .context("Error setting Ctrl-C handler")?;
+    // Removed the global stop_flag and its handler from here.
 
     loop {
         print!("> ");
@@ -122,6 +117,17 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
             break;
         }
 
+        // Create per-message cancellation token
+        let cancel_token = CancellationToken::new();
+        let cancel_handle = cancel_token.clone();
+
+        // Set up Ctrl-C handler for this message
+        // This handler will be reset on each loop iteration, which is correct for per-message cancellation.
+        ctrlc::set_handler(move || {
+            cancel_handle.cancel();
+        })
+        .context("Error setting Ctrl-C handler")?;
+
         // Create spinner
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
@@ -132,16 +138,16 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         spinner.set_message("Generating...");
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
-        let mut stream = chat.stream_response(user_input.to_string()).await?;
+        let mut stream = chat.stream_response(user_input.to_string(), cancel_token.clone()).await?;
         let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
         
         let mut first_token_received = false;
 
         'receive_loop: loop {
             tokio::select! {
-                // Check cancel signal BEFORE waiting for next chunk
+                // Always check cancellation first
                 _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                    if stop_flag.load(Ordering::SeqCst) {
+                    if cancel_token.is_cancelled() {
                         break 'receive_loop;
                     }
                 }
@@ -158,6 +164,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                         }
                         Some(Err(e)) => {
                             eprintln!("Error: {}", e);
+                            // If an error occurs, we should also break the loop
+                            break 'receive_loop;
                         }
                         None => break 'receive_loop, // Stream has ended
                     }
@@ -170,7 +178,7 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         // Print footer with metrics
         let metrics_vec = chunks_metrics.lock().await;
         let combined = combine_metrics(&metrics_vec);
-        let footer = if stop_flag.load(Ordering::SeqCst) {
+        let footer = if cancel_token.is_cancelled() { // Check the specific message's cancel token
             "◼ Canceled.".to_string()
         } else {
             "◼ Completed.".to_string()
@@ -207,8 +215,7 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         println!("{footer} {footer_details}");
         println!();
 
-        // Reset stop flag for next message
-        stop_flag.store(false, Ordering::SeqCst);
+        // No need to reset stop flag, as a new CancellationToken is created each loop.
     }
 
     Ok(())

@@ -1,5 +1,5 @@
 use crate::core::completion::{
-    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, CancellationToken,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
@@ -109,6 +109,7 @@ impl CompletionModel for OpenAIBaseModel {
         &mut self,
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
+        cancel_token: CancellationToken, // Add parameter
     ) -> BoxStream<'_, Result<CompletionResponse>> {
         // Map messages to OpenAI message types
         let openai_messages: Vec<ChatCompletionRequestMessage> = messages
@@ -159,6 +160,12 @@ impl CompletionModel for OpenAIBaseModel {
                     let mut stream = response;
 
                     while let Some(next) = stream.next().await {
+                        // Check for cancellation *before* processing the chunk
+                        if cancel_token.is_cancelled() {
+                            yield Err(anyhow::anyhow!("Cancelled by user")); // Yield a cancellation error
+                            break; // Exit the loop
+                        }
+
                         // Time measurement
                         let now = Instant::now();
                         let elapsed = now.duration_since(prev_time).as_millis() as f32;
@@ -328,7 +335,8 @@ mod tests {
             sender: SenderType::User,
         }];
 
-        let mut stream = model.complete(&messages, &HashMap::new()).await;
+        let cancel_token = CancellationToken::new(); // Create a token for the test
+        let mut stream = model.complete(&messages, &HashMap::new(), cancel_token).await;
 
         // Collect and assert on responses
         let mut responses = Vec::new();

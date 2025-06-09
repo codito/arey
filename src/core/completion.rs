@@ -3,6 +3,29 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use std::collections::HashMap;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}}; // Added for CancellationToken
+
+// Added CancellationToken struct
+#[derive(Debug, Clone)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SenderType {
@@ -77,6 +100,7 @@ pub trait CompletionModel: Send + Sync {
         &mut self,
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
+        cancel_token: CancellationToken, // Added CancellationToken here
     ) -> BoxStream<'_, Result<CompletionResponse>>;
     async fn count_tokens(&self, text: &str) -> usize;
     async fn free(&mut self);
@@ -219,6 +243,7 @@ mod tests {
             &mut self,
             _messages: &[ChatMessage],
             _settings: &HashMap<String, String>,
+            _cancel_token: CancellationToken, // Added for mock
         ) -> BoxStream<'_, Result<CompletionResponse>> {
             Box::pin(stream::empty())
         }
@@ -233,5 +258,16 @@ mod tests {
         let mut model = MockCompletionModel;
         model.load("test").await.unwrap();
         assert_eq!(model.context_size(), 4096);
+    }
+
+    #[test]
+    fn test_cancellation_token() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+
+        let cloned_token = token.clone();
+        assert!(cloned_token.is_cancelled()); // Cloned token reflects original state
     }
 }

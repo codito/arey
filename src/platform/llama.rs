@@ -1,4 +1,4 @@
-use crate::core::completion::{ChatMessage, CompletionModel, CompletionResponse};
+use crate::core::completion::{ChatMessage, CompletionModel, CompletionResponse, CancellationToken, CompletionMetrics};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -62,9 +62,28 @@ impl CompletionModel for LlamaBaseModel {
         &mut self,
         _messages: &[ChatMessage],
         _settings: &HashMap<String, String>,
+        cancel_token: CancellationToken,  // Add parameter
     ) -> BoxStream<'_, Result<CompletionResponse>> {
-        // TODO: Implement completion
-        Box::pin(futures::stream::empty())
+        // Add cancellation token handling
+        let stream = async_stream::stream! {
+            // This would be replaced with actual streaming implementation
+            for i in 0..10 {
+                // Check cancellation token periodically
+                if cancel_token.is_cancelled() {
+                    yield Err(anyhow::anyhow!("Cancelled by user"));
+                    break;
+                }
+                
+                // Simulate work
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                yield Ok(CompletionResponse {
+                    text: format!("Chunk {}\n", i),
+                    finish_reason: None,
+                    metrics: CompletionMetrics::default(),
+                });
+            }
+        };
+        Box::pin(stream)
     }
 
     async fn count_tokens(&self, _text: &str) -> usize {
