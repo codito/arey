@@ -2,16 +2,17 @@ mod core;
 mod platform;
 
 use crate::core::chat::Chat;
-use crate::core::completion::{CompletionMetrics, combine_metrics, CancellationToken}; // Added CancellationToken
+use crate::core::completion::{CompletionMetrics, combine_metrics, CancellationToken};
 use crate::core::config::get_config;
-use anyhow::Context;
-use clap::{Parser, Subcommand};
+use anyhow::{Context, Error};
+use clap::{Parser, Subcommand, command};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+use tokio::signal;
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
@@ -102,8 +103,6 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
-    // Removed the global stop_flag and its handler from here.
-
     loop {
         print!("> ");
         io::stdout().flush()?;
@@ -119,14 +118,6 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
 
         // Create per-message cancellation token
         let cancel_token = CancellationToken::new();
-        let cancel_handle = cancel_token.clone();
-
-        // Set up Ctrl-C handler for this message
-        // This handler will be reset on each loop iteration, which is correct for per-message cancellation.
-        ctrlc::set_handler(move || {
-            cancel_handle.cancel();
-        })
-        .context("Error setting Ctrl-C handler")?;
 
         // Create spinner
         let spinner = ProgressBar::new_spinner();
@@ -140,17 +131,21 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
 
         let mut stream = chat.stream_response(user_input.to_string(), cancel_token.clone()).await?;
         let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
-        
         let mut first_token_received = false;
+
+        // Create a Ctrl-C signal listener
+        let mut ctrl_c = signal::ctrl_c();
 
         'receive_loop: loop {
             tokio::select! {
-                // Always check cancellation first
-                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                    if cancel_token.is_cancelled() {
-                        break 'receive_loop;
-                    }
-                }
+                // Handle Ctrl-C signal
+                _ = &mut ctrl_c, if !cancel_token.is_cancelled() => {
+                    cancel_token.cancel();
+                    // Recreate the Ctrl-C future for any additional cancellation requests
+                    ctrl_c = signal::ctrl_c();
+                },
+                
+                // Process stream response
                 response = stream.next() => {
                     match response {
                         Some(Ok(chunk)) => {
@@ -164,11 +159,15 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                         }
                         Some(Err(e)) => {
                             eprintln!("Error: {}", e);
-                            // If an error occurs, we should also break the loop
                             break 'receive_loop;
                         }
-                        None => break 'receive_loop, // Stream has ended
+                        None => break 'receive_loop,
                     }
+                }
+                
+                // Handle cancellation by breaking the loop
+                _ = tokio::task::yield_now(), if cancel_token.is_cancelled() => {
+                    break 'receive_loop;
                 }
             }
         }
