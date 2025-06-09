@@ -2,7 +2,7 @@ mod core;
 mod platform;
 
 use crate::core::chat::Chat;
-use crate::core::completion::{CompletionMetrics, combine_metrics, CancellationToken};
+use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
 use crate::core::config::get_config;
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand, command};
@@ -11,8 +11,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::Mutex;
 use tokio::signal;
+use tokio::sync::Mutex;
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
@@ -129,7 +129,9 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         spinner.set_message("Generating...");
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
-        let mut stream = chat.stream_response(user_input.to_string(), cancel_token.clone()).await?;
+        let mut stream = chat
+            .stream_response(user_input.to_string(), cancel_token.clone())
+            .await?;
         let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
         let mut first_token_received = false;
 
@@ -144,7 +146,7 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                     // Recreate the Ctrl-C future for any additional cancellation requests
                     ctrl_c = signal::ctrl_c();
                 },
-                
+
                 // Process stream response
                 response = stream.next() => {
                     match response {
@@ -163,8 +165,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                         }
                         None => break 'receive_loop,
                     }
-                }
-                
+                },
+
                 // Handle cancellation by breaking the loop
                 _ = tokio::task::yield_now(), if cancel_token.is_cancelled() => {
                     break 'receive_loop;
@@ -177,7 +179,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         // Print footer with metrics
         let metrics_vec = chunks_metrics.lock().await;
         let combined = combine_metrics(&metrics_vec);
-        let footer = if cancel_token.is_cancelled() { // Check the specific message's cancel token
+        let footer = if cancel_token.is_cancelled() {
+            // Check the specific message's cancel token
             "◼ Canceled.".to_string()
         } else {
             "◼ Completed.".to_string()

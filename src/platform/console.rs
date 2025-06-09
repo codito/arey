@@ -1,5 +1,4 @@
 use console::{Style, StyledObject, Term};
-use ctrlc;
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -30,28 +29,6 @@ pub fn style_text(text: &str, style: MessageType) -> StyledObject<&str> {
         MessageType::Error => Style::new().red().bold(),
     };
     style_obj.apply_to(text)
-}
-
-pub struct SignalContext {
-    stopped: Arc<AtomicBool>,
-}
-
-impl SignalContext {
-    pub fn new() -> Self {
-        let stopped = Arc::new(AtomicBool::new(false));
-        let s = stopped.clone();
-
-        ctrlc::set_handler(move || {
-            s.store(true, Ordering::Relaxed);
-        })
-        .expect("Error setting Ctrl-C handler");
-
-        SignalContext { stopped }
-    }
-
-    pub fn should_stop(&self) -> bool {
-        self.stopped.load(Ordering::Relaxed)
-    }
 }
 
 pub struct Spinner(ProgressBar);
