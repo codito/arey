@@ -1,8 +1,6 @@
 use console::{Style, StyledObject, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHOULD_STOP: AtomicBool = AtomicBool::new(false);
 static CONSOLE_INSTANCE: Lazy<Term> = Lazy::new(|| Term::stdout());

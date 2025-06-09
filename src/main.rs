@@ -4,13 +4,12 @@ mod platform;
 use crate::core::chat::Chat;
 use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
 use crate::core::config::get_config;
-use anyhow::{Context, Error};
+use anyhow::Context;
 use clap::{Parser, Subcommand, command};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::signal;
 use tokio::sync::Mutex;
 
@@ -135,18 +134,17 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
         let mut first_token_received = false;
 
-        // Create a Ctrl-C signal listener
-        let mut ctrl_c = signal::ctrl_c();
+        // Create and pin Ctrl-C signal future
+        let ctrl_c_future = signal::ctrl_c();
+        tokio::pin!(ctrl_c_future);
 
         'receive_loop: loop {
             tokio::select! {
                 // Handle Ctrl-C signal
-                _ = &mut ctrl_c, if !cancel_token.is_cancelled() => {
+                _ = ctrl_c_future.as_mut(), if !cancel_token.is_cancelled() => {
                     cancel_token.cancel();
-                    // Recreate the Ctrl-C future for any additional cancellation requests
-                    ctrl_c = signal::ctrl_c();
                 },
-
+                
                 // Process stream response
                 response = stream.next() => {
                     match response {

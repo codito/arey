@@ -50,7 +50,7 @@ pub struct Chat {
 
 impl Chat {
     pub async fn new(model_config: ModelConfig) -> Result<Self> {
-        let mut model = crate::platform::llm::get_completion_llm(model_config.clone())
+        let model = crate::platform::llm::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
 
         // 1. System prompt loading during chat initialization
