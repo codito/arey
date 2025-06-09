@@ -191,7 +191,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         }
 
         if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
-            let tokens_per_sec = (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
+            let tokens_per_sec =
+                (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
             footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
         }
 
@@ -204,8 +205,8 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         }
 
         println!();
-        println!("{}", footer);
-        println!("{}", footer_details);
+        println!();
+        println!("{footer} {footer_details}");
         println!();
 
         // Reset stop flag for next message
