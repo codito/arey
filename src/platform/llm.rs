@@ -13,18 +13,19 @@ pub enum ModelInitError {
 pub fn get_completion_llm(
     model_config: crate::core::model::ModelConfig,
 ) -> Result<Box<dyn CompletionModel + Send + Sync>> {
-    match model_config.r#type {
-        crate::core::model::ModelProvider::Gguf => {
+    match model_config.provider.as_str() {
+        "gguf" => {
             let model = llama::LlamaBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
-        crate::core::model::ModelProvider::Ollama => {
+        "ollama" => {
             let model = ollama::OllamaBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
-        crate::core::model::ModelProvider::Openai => {
+        "openai" => {
             let model = openai::OpenAIBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
+        _ => Err(ModelInitError::UnsupportedType(model_config.provider).into()),
     }
 }

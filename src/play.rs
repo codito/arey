@@ -7,7 +7,7 @@ use crate::{
     core::model::{ModelConfig, ModelMetrics},
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, capture_stderr, style_text},
+        console::{MessageType, capture_stderr, style_text, get_console},
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -16,8 +16,10 @@ use serde_yaml::Value;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    fs, // Added this line
 };
 use tokio::sync::Mutex;
+use futures::StreamExt; // Added this line
 
 /// Result of task execution
 pub struct PlayResult {
@@ -47,8 +49,8 @@ fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
     let mut body = String::new();
     let mut in_frontmatter = false;
 
-    if let markdown::mdast::Node(markdown) = &ast {
-        for node in markdown.children() {
+    if let markdown::mdast::Node::Root(root) = &ast { // Changed this line
+        for node in root.children() { // Changed this line
             if let markdown::mdast::Node::Yaml(yaml) = node {
                 in_frontmatter = true;
                 let yaml_value: Value = serde_yaml::from_str(&yaml.value)
@@ -152,12 +154,8 @@ impl PlayFile {
             config.settings.insert(key.clone(), value.clone());
         }
 
-        let model_init_result = capture_stderr(|| {
-            crate::platform::llm::get_completion_llm(config.clone())
-                .map_err(|e| anyhow!("Model init error: {e}"))
-        })?;
-
-        let mut model = model_init_result?;
+        let mut model = crate::platform::llm::get_completion_llm(config.clone()) // Fixed this line
+            .map_err(|e| anyhow!("Model init error: {e}"))?;
         model.load("").await?;
 
         let metrics = model.metrics().clone();
@@ -193,7 +191,8 @@ impl PlayFile {
                 &settings,
                 crate::core::completion::CancellationToken::new(),
             )
-            .map(|chunk| chunk.map_err(anyhow::Error::from))
+            .map(|result| async move { result.map_err(anyhow::Error::from) }) // Fixed this line
+            .buffered(1) // Add buffered to flatten the stream of futures
     }
 
     pub async fn process_stream(
@@ -223,13 +222,13 @@ impl PlayFile {
 }
 
 pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
-    println!(&format!(
+    println!(
         "{}",
         style_text(
             "Welcome to arey play! Edit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.",
             MessageType::Footer
         )
-    ));
+    );
     println!("");
 
     if no_watch {
@@ -239,11 +238,11 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
         use chrono::Local;
         let file_path = play_file.file_path.clone();
 
-        println!(&format!(
+        println!(
             "{} `{}`",
             style_text("Watching", MessageType::Footer),
             file_path.display()
-        ));
+        );
 
         let (mut _watcher, mut rx) = watch_file(&file_path).await?;
 
@@ -251,10 +250,10 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
             tokio::select! {
                 Some(event) = rx.recv() => {
                     println!("");
-                    println!(&format!(
+                    println!(
                         "{}",
                         style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
-                    ));
+                    );
 
                     // Reload file content
                     match PlayFile::new(&file_path) {
@@ -270,15 +269,15 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
                             run_once(play_file).await?;
                         }
                         Err(e) => {
-                            println!(&style_text(&format!("Error reloading file: {e}"), MessageType::Error));
+                            println!("{}", style_text(&format!("Error reloading file: {e}"), MessageType::Error));
                         }
                     }
                     println!("");
-                    println!(&format!(
+                    println!(
                         "{} `{}`",
                         style_text("Watching", MessageType::Footer),
                         file_path.display()
-                    ));
+                    );
                 }
                 _ = tokio::signal::ctrl_c() => {
                     break;
@@ -296,19 +295,22 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     // Load model if not already loaded
     if play_file.model.is_none() {
         let metrics = play_file.load_model().await?;
-        println!(&format!(
+        println!(
             "{} {}",
             style_text("✓ Model loaded.", MessageType::Footer),
             style_text(
                 &format!("{:.2}s", metrics.init_latency_ms / 1000.0),
                 MessageType::Footer
             )
-        ));
+        );
     } else {
-        println!(&style_text(
-            "✓ Using pre-loaded model.",
-            MessageType::Footer,
-        ));
+        println!(
+            "{}",
+            style_text(
+                "✓ Using pre-loaded model.",
+                MessageType::Footer,
+            )
+        );
     }
 
     let stream = play_file.get_response().await;
@@ -332,7 +334,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
         let mut footer = style_text("◼ Completed.", MessageType::Footer);
         println!(
             "{}",
-            &style_text(
+            style_text(
                 &format!(" {:.2} tokens/s.", tokens_per_sec),
                 MessageType::Footer,
             )

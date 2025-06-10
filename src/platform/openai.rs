@@ -295,7 +295,7 @@ mod tests {
 
         let config = ModelConfig {
             name: "test-model".to_string(),
-            r#type: ModelProvider::Openai,
+            provider: "openai".to_string(), // Changed from ModelProvider::Openai
             capabilities: vec![ModelCapability::Chat],
             settings,
         };
