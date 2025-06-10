@@ -1,9 +1,8 @@
+mod chat;
 mod core;
 mod platform;
-mod chat;  // <-- New chat module
 
-use crate::chat::Chat; // Import Chat from the new chat module
-use crate::chat::start_chat; // Import start_chat from the new chat module
+use crate::chat::{Chat, start_chat};
 use crate::core::config::get_config;
 use anyhow::Context;
 use clap::{Parser, Subcommand, command};
@@ -67,8 +66,6 @@ async fn main() -> anyhow::Result<()> {
             println!("Verbose: {}", cli.verbose);
         }
         Commands::Chat { model } => {
-            println!("Welcome to arey chat! Type 'q' to exit.");
-            // Start chat with the configured chat model
             let chat_model_config = if let Some(model_name) = model {
                 config
                     .models
