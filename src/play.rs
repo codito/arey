@@ -1,20 +1,20 @@
 use crate::{
-    core::{
-        AreyError, ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
-        ModelConfig, ModelMetrics, SenderType, combine_metrics,
+    core::completion::{
+        ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, SenderType,
+        combine_metrics,
     },
+    core::config::AreyConfigError,
+    core::model::{ModelConfig, ModelMetrics},
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, capture_stderr, get_console, style_text},
+        console::{MessageType, capture_stderr, style_text},
     },
 };
 use anyhow::{Context, Result, anyhow};
-use markdown::{to_mdast, ParseOptions, Mdast};
+use markdown::{ParseOptions, to_mdast};
 use serde_yaml::Value;
 use std::{
     collections::HashMap,
-    fs,
-    io::Write,
     path::{Path, PathBuf},
 };
 use tokio::sync::Mutex;
@@ -40,15 +40,14 @@ pub struct PlayFile {
 }
 
 fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
-    let ast = to_mdast(content, &ParseOptions::gfm()).map_err(|e| {
-        anyhow!("Markdown parse error: {e}")
-    })?;
+    let ast = to_mdast(content, &ParseOptions::gfm())
+        .map_err(|e| anyhow!("Markdown parse error: {e}"))?;
 
     let mut parsed_yaml = None;
     let mut body = String::new();
     let mut in_frontmatter = false;
-    
-    if let Mdast::Node(markdown) = &ast {
+
+    if let markdown::mdast::Node(markdown) = &ast {
         for node in markdown.children() {
             if let markdown::mdast::Node::Yaml(yaml) = node {
                 in_frontmatter = true;
@@ -60,7 +59,7 @@ fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
             }
         }
     }
-    
+
     // If no YAML frontmatter was found, use the entire content as body
     if parsed_yaml.is_none() {
         body = content.to_string();
@@ -146,7 +145,7 @@ impl PlayFile {
         let model_config = self
             .model_config
             .as_ref()
-            .ok_or_else(|| AreyError::Config("Missing model configuration".to_string()))?;
+            .ok_or_else(|| AreyConfigError::Config("Missing model configuration".to_string()))?;
 
         let mut config = model_config.clone();
         for (key, value) in &self.model_settings {
@@ -224,13 +223,14 @@ impl PlayFile {
 }
 
 pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
-    let console = get_console();
-
-    console.print(&format!(
+    println!(&format!(
         "{}",
-        style_text("Welcome to arey play! Edit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.", MessageType::Footer)
+        style_text(
+            "Welcome to arey play! Edit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.",
+            MessageType::Footer
+        )
     ));
-    console.print("");
+    println!("");
 
     if no_watch {
         run_once(play_file).await?;
@@ -239,7 +239,7 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
         use chrono::Local;
         let file_path = play_file.file_path.clone();
 
-        console.print(&format!(
+        println!(&format!(
             "{} `{}`",
             style_text("Watching", MessageType::Footer),
             file_path.display()
@@ -250,8 +250,8 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
         loop {
             tokio::select! {
                 Some(event) = rx.recv() => {
-                    console.print("");
-                    console.print(&format!(
+                    println!("");
+                    println!(&format!(
                         "{}",
                         style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
                     ));
@@ -270,11 +270,11 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
                             run_once(play_file).await?;
                         }
                         Err(e) => {
-                            console.print(&style_text(&format!("Error reloading file: {e}"), MessageType::Error));
+                            println!(&style_text(&format!("Error reloading file: {e}"), MessageType::Error));
                         }
                     }
-                    console.print("");
-                    console.print(&format!(
+                    println!("");
+                    println!(&format!(
                         "{} `{}`",
                         style_text("Watching", MessageType::Footer),
                         file_path.display()
@@ -296,7 +296,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     // Load model if not already loaded
     if play_file.model.is_none() {
         let metrics = play_file.load_model().await?;
-        console.print(&format!(
+        println!(&format!(
             "{} {}",
             style_text("✓ Model loaded.", MessageType::Footer),
             style_text(
@@ -305,7 +305,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
             )
         ));
     } else {
-        console.print(&style_text(
+        println!(&style_text(
             "✓ Using pre-loaded model.",
             MessageType::Footer,
         ));
@@ -324,18 +324,19 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
             }
         };
 
-        console.print(output);
-        console.print("");
+        println!("{}", output);
+        println!("");
 
-        let mut footer = style_text("◼ Completed.", MessageType::Footer);
         let tokens_per_sec =
             result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
-        footer.push_str(&style_text(
-            &format!(" {:.2} tokens/s.", tokens_per_sec),
-            MessageType::Footer,
-        ));
-
-        console.print(&footer);
+        let mut footer = style_text("◼ Completed.", MessageType::Footer);
+        println!(
+            "{}",
+            &style_text(
+                &format!(" {:.2} tokens/s.", tokens_per_sec),
+                MessageType::Footer,
+            )
+        );
     }
 
     Ok(())

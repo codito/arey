@@ -1,5 +1,5 @@
 use crate::core::completion::{
-    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, CancellationToken,
+    CancellationToken, ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
@@ -185,7 +185,7 @@ impl CompletionModel for OpenAIBaseModel {
                                     // For the first chunk, set the prompt_eval_latency_ms
                                     if first_chunk {
                                         prompt_eval_latency = elapsed;
-                                        completion_latency = 0.0;
+                                        completion_latency = elapsed;
                                         first_chunk = false;
                                     }
 
@@ -340,7 +340,9 @@ mod tests {
         }];
 
         let cancel_token = CancellationToken::new(); // Create a token for the test
-        let mut stream = model.complete(&messages, &HashMap::new(), cancel_token).await;
+        let mut stream = model
+            .complete(&messages, &HashMap::new(), cancel_token)
+            .await;
 
         // Collect and assert on responses
         let mut responses = Vec::new();

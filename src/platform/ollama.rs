@@ -1,4 +1,6 @@
-use crate::core::completion::{ChatMessage, CompletionModel, CompletionResponse, CancellationToken, CompletionMetrics};
+use crate::core::completion::{
+    CancellationToken, ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+};
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -56,7 +58,7 @@ impl CompletionModel for OllamaBaseModel {
         &mut self,
         _messages: &[ChatMessage],
         _settings: &HashMap<String, String>,
-        cancel_token: CancellationToken,  // Add parameter
+        cancel_token: CancellationToken, // Add parameter
     ) -> BoxStream<'_, Result<CompletionResponse>> {
         // Add cancellation token handling
         let stream = async_stream::stream! {
@@ -67,13 +69,14 @@ impl CompletionModel for OllamaBaseModel {
                     yield Err(anyhow::anyhow!("Cancelled by user"));
                     break;
                 }
-                
+
                 // Simulate work
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 yield Ok(CompletionResponse {
                     text: format!("Chunk {}\n", i),
                     finish_reason: None,
                     metrics: CompletionMetrics::default(),
+                    raw_chunk: None
                 });
             }
         };
