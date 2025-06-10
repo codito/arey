@@ -7,19 +7,19 @@ use crate::{
     core::model::{ModelConfig, ModelMetrics},
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, capture_stderr, style_text, get_console},
+        console::{MessageType, get_console, style_text},
     },
 };
 use anyhow::{Context, Result, anyhow};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use markdown::{ParseOptions, to_mdast};
 use serde_yaml::Value;
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
     fs, // Added this line
+    path::{Path, PathBuf},
 };
-use tokio::sync::Mutex;
-use futures::StreamExt; // Added this line
+use tokio::sync::Mutex; // Added this line
 
 /// Result of task execution
 pub struct PlayResult {
@@ -49,8 +49,8 @@ fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
     let mut body = String::new();
     let mut in_frontmatter = false;
 
-    if let markdown::mdast::Node::Root(root) = &ast { // Changed this line
-        for node in root.children() { // Changed this line
+    if let markdown::mdast::Node::Root(root) = &ast {
+        for node in root.children.iter() {
             if let markdown::mdast::Node::Yaml(yaml) = node {
                 in_frontmatter = true;
                 let yaml_value: Value = serde_yaml::from_str(&yaml.value)
@@ -290,8 +290,6 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
 }
 
 async fn run_once(play_file: &mut PlayFile) -> Result<()> {
-    let console = get_console();
-
     // Load model if not already loaded
     if play_file.model.is_none() {
         let metrics = play_file.load_model().await?;
@@ -306,10 +304,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     } else {
         println!(
             "{}",
-            style_text(
-                "✓ Using pre-loaded model.",
-                MessageType::Footer,
-            )
+            style_text("✓ Using pre-loaded model.", MessageType::Footer,)
         );
     }
 
