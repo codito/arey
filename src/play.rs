@@ -7,7 +7,7 @@ use crate::{
     core::model::{ModelConfig, ModelMetrics},
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, get_console, style_text},
+        console::{MessageType, style_text},
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -16,10 +16,10 @@ use markdown::{ParseOptions, to_mdast};
 use serde_yaml::Value;
 use std::{
     collections::HashMap,
-    fs, // Added this line
+    fs,
     path::{Path, PathBuf},
 };
-use tokio::sync::Mutex; // Added this line
+use tokio::sync::Mutex;
 
 /// Result of task execution
 pub struct PlayResult {
@@ -154,7 +154,7 @@ impl PlayFile {
             config.settings.insert(key.clone(), value.clone());
         }
 
-        let mut model = crate::platform::llm::get_completion_llm(config.clone()) // Fixed this line
+        let mut model = crate::platform::llm::get_completion_llm(config.clone())
             .map_err(|e| anyhow!("Model init error: {e}"))?;
         model.load("").await?;
 
@@ -165,7 +165,7 @@ impl PlayFile {
 
     pub async fn get_response(
         &self,
-    ) -> impl futures::Stream<Item = Result<CompletionResponse>> + '_ {
+    ) -> impl futures::Stream<Item = Result<CompletionResponse>> + Unpin + Send + '_ {
         let model_lock = self.model.as_ref().expect("Model not loaded").lock().await;
 
         let settings: HashMap<String, String> = self
@@ -191,8 +191,8 @@ impl PlayFile {
                 &settings,
                 crate::core::completion::CancellationToken::new(),
             )
-            .map(|result| async move { result.map_err(anyhow::Error::from) }) // Fixed this line
-            .buffered(1) // Add buffered to flatten the stream of futures
+            .await
+            .map(|result| result.map_err(anyhow::Error::from))
     }
 
     pub async fn process_stream(
