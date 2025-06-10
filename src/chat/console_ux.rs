@@ -2,12 +2,13 @@
 use crate::core::chat::Chat;
 use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
 use crate::platform::console::GenerationSpinner;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::Mutex;
+use tokio::time::{timeout, Duration};
 
 /// Command handler logic
 async fn handle_command(
@@ -85,13 +86,6 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         let spinner = GenerationSpinner::new();
         let cancel_token = CancellationToken::new();
 
-        // Spawn a background task to handle Ctrl+C cancellation
-        let ctrl_c_token = cancel_token.clone();
-        tokio::spawn(async move {
-            signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
-            ctrl_c_token.cancel();
-        });
-
         // Clone for async block
         let chat_clone = chat.clone();
         let user_input_for_future = user_input.to_string();
@@ -107,47 +101,68 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
             let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
             let mut first_token_received = false;
-            let mut was_cancelled_internal = false; // Use a distinct variable for internal loop state
+            let mut was_cancelled_internal = false;
 
-            // Process stream
-            while let Some(response) = stream.next().await {
-                // Check for cancellation *before* processing the chunk
-                if cancel_token.is_cancelled() {
-                    was_cancelled_internal = true;
-                    break; // Exit the stream processing loop
-                }
+            // Start listening for Ctrl-C
+            let mut ctrl_c_stream = tokio::signal::ctrl_c();
 
-                // First token received, clear spinner
-                if !first_token_received {
-                    spinner.clear();
-                    first_token_received = true;
-                }
-
-                match response {
-                    Ok(chunk) => {
-                        // Print token to console
-                        print!("{}", chunk.text);
-                        io::stdout().flush()?;
-                        chunks_metrics.lock().await.push(chunk.metrics.clone());
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
+            // Process stream with Ctrl-C and tokenization detection
+            loop {
+                tokio::select! {
+                    // Ctrl-C handling
+                    _ = &mut ctrl_c_stream => {
+                        cancel_token.cancel();
                         was_cancelled_internal = true;
                         break;
+                    },
+                    
+                    // Process the next stream token
+                    next = stream.next() => {
+                        match next {
+                            Some(response) => {
+                                if !first_token_received {
+                                    spinner.clear();
+                                    first_token_received = true;
+                                }
+                                
+                                if cancel_token.is_cancelled() {
+                                    was_cancelled_internal = true;
+                                    break;
+                                }
+                                
+                                match response {
+                                    Ok(chunk) => {
+                                        // Print token to console
+                                        print!("{}", chunk.text);
+                                        io::stdout().flush()?;
+                                        chunks_metrics.lock().await.push(chunk.metrics.clone());
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error: {}", e);
+                                        was_cancelled_internal = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            // End of stream
+                            None => break,
+                        }
                     }
                 }
             }
 
-            // Ensure spinner is cleared after stream processing, regardless of how it exited
+            // Ensure spinner is cleared after stream processing
             spinner.clear();
 
             // Process metrics
             let metrics = chunks_metrics.lock().await;
-            let combined = combine_metrics(&metrics);
+            let combined = if !metrics.is_empty() {
+                Some(combine_metrics(&metrics))
+            } else {
+                None
+            };
 
-            // Final check for cancellation status
-            let final_was_cancelled = was_cancelled_internal || cancel_token.is_cancelled();
-            (Some(combined), final_was_cancelled)
+            (combined, was_cancelled_internal || cancel_token.is_cancelled())
         };
 
         // Print footer with metrics
