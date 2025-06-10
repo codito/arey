@@ -110,9 +110,27 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         io::stdin().read_line(&mut user_input)?;
         let user_input = user_input.trim();
 
-        if user_input == "q" || user_input == "quit" {
-            println!("Bye!");
-            break;
+        // Skip empty input
+        if user_input.is_empty() {
+            continue;
+        }
+
+        // Handle commands
+        if user_input.starts_with('/') {
+            match user_input {
+                "/log" => {
+                    match chat.get_last_assistant_logs() {
+                        Some(logs) => println!("\n=== LOGS ===\n{logs}\n============="),
+                        None => println!("No logs available"),
+                    }
+                },
+                "/quit" | "/q" => {
+                    println!("Bye!");
+                    return Ok(());
+                }
+                _ => println!("Unknown command. Supported: /log, /quit"),
+            }
+            continue;
         }
 
         // Create per-message cancellation token

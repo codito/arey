@@ -135,9 +135,9 @@ impl Chat {
 
                 match result {
                     Ok(chunk) => {
-                        // COLLECT RAW LOGS (ADD THIS)
-                        if let Some(ref raw) = chunk.raw_chunk {
-                            raw_logs.push_str(&format!("{}\n", raw));
+                        // Store raw chunk if available
+                        if let Some(raw) = &chunk.raw_chunk {
+                            raw_logs.push_str(&format!("{raw}\n"));
                         }
                         // Accumulate response in chat history
                         assistant_response.push_str(&chunk.text);
@@ -188,5 +188,15 @@ impl Chat {
             .find(|m| m.sender == SenderType::Assistant)
             .and_then(|m| m.context.as_ref()) // Get its context if it exists
             .map(|ctx| ctx.metrics.clone()) // Get the metrics from the context
+    }
+
+    pub fn get_last_assistant_logs(&self) -> Option<String> {
+        let messages = self.messages.lock().unwrap();
+        messages
+            .iter()
+            .rev()
+            .find(|m| m.sender == SenderType::Assistant)
+            .and_then(|m| m.context.as_ref())
+            .map(|ctx| ctx.logs.clone())
     }
 }
