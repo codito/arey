@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use anyhow::{Context, Result, anyhow};
-use futures::{FutureExt, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use markdown::{ParseOptions, to_mdast};
 use serde_yaml::Value;
 use std::{
@@ -166,7 +166,7 @@ impl PlayFile {
     pub async fn get_response(
         &self,
     ) -> impl futures::Stream<Item = Result<CompletionResponse>> + Unpin + Send + '_ {
-        let model_lock = self.model.as_ref().expect("Model not loaded").lock().await;
+        let mut model_lock = self.model.as_ref().expect("Model not loaded").lock().await;
 
         let settings: HashMap<String, String> = self
             .completion_profile
@@ -248,7 +248,7 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
 
         loop {
             tokio::select! {
-                Some(event) = rx.recv() => {
+                Some(_event) = rx.recv() => {
                     println!("");
                     println!(
                         "{}",
@@ -326,9 +326,9 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
 
         let tokens_per_sec =
             result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
-        let mut footer = style_text("◼ Completed.", MessageType::Footer);
+        let footer = style_text("◼ Completed.", MessageType::Footer);
         println!(
-            "{}",
+            "{footer}{}",
             style_text(
                 &format!(" {:.2} tokens/s.", tokens_per_sec),
                 MessageType::Footer,
