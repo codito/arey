@@ -11,35 +11,37 @@ use tokio::sync::Mutex;
 
 /// Command handler logic
 fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)>) -> Result<bool> {
-    if let Some(cmd) = command_list.iter().find(|(cmd, _)| {
-        user_input.starts_with(*cmd) || cmd.starts_with(user_input)
-    }) {
+    if let Some(cmd) = command_list
+        .iter()
+        .find(|(cmd, _)| user_input.starts_with(*cmd) || cmd.starts_with(user_input))
+    {
         if cmd.0 == user_input {
             match user_input {
-                "/log" => {
-                    match chat.get_last_assistant_logs() {
-                        Some(logs) => println!("\n=== LOGS ===\n{logs}\n============="),
-                        None => println!("No logs available"),
-                    }
+                "/log" => match chat.get_last_assistant_logs() {
+                    Some(logs) => println!("\n=== LOGS ===\n{logs}\n============="),
+                    None => println!("No logs available"),
                 },
                 "/quit" | "/q" => {
                     println!("Bye!");
                     return Ok(true); // Indicate that the chat should exit
-                },
+                }
                 "/help" => {
                     println!("\nAvailable commands:");
                     for (cmd, desc) in command_list.iter() {
                         println!("{:<8} - {}", cmd, desc);
                     }
                     println!();
-                },
+                }
                 _ => {} // Should not happen with exact match
             }
         } else {
             println!("Command suggestion: {}", cmd.0);
         }
     } else {
-        println!("Unknown command '{}'. Type '/help' for available commands.", user_input);
+        println!(
+            "Unknown command '{}'. Type '/help' for available commands.",
+            user_input
+        );
     }
     Ok(false) // Indicate that the chat should continue
 }
@@ -53,9 +55,9 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         ("/quit", "Exit the chat session"),
         ("/help", "Show this help message"),
     ];
-    
+
     println!("Welcome to arey chat! Type '/help' for commands, 'q' to exit.");
-    
+
     loop {
         print!("> ");
         io::stdout().flush()?;
@@ -76,7 +78,7 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
             }
             continue;
         }
-        
+
         // Create per-message cancellation token
         let cancel_token = CancellationToken::new();
 
@@ -106,7 +108,7 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
                 _ = ctrl_c_future.as_mut(), if !cancel_token.is_cancelled() => {
                     cancel_token.cancel();
                 },
-                
+
                 // Process stream response
                 response = stream.next() => {
                     match response {
@@ -176,8 +178,6 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         println!();
         println!("{footer} {footer_details}");
         println!();
-
-        // No need to reset stop flag, as a new CancellationToken is created each loop.
     }
 
     Ok(())
