@@ -187,8 +187,8 @@ impl PlayFile {
             
         let cancel_token = CancellationToken::new();
         
-        // Move locks and references into async block
-        let stream = async move {
+        // Don't use ? on the stream itself - handle the Result directly
+        let stream_result = async move {
             let mut model_guard = model_lock.lock().await;
             model_guard
                 .complete(
@@ -197,8 +197,11 @@ impl PlayFile {
                     cancel_token,
                 )
                 .await
-                .map(|s| s.map_err(anyhow::Error::from))
-        }.await?;
+        }.await;
+
+        // Map the stream items while handling the initial Result
+        let stream = stream_result?
+            .map(|result| result.map_err(anyhow::Error::from));
         
         Ok(stream)
     }
