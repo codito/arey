@@ -1,6 +1,9 @@
 use console::{Style, StyledObject, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
+use crate::core::completion::CancellationToken;
+use tokio::signal;
+use anyhow::Result;
 
 static CONSOLE_INSTANCE: Lazy<Term> = Lazy::new(|| Term::stdout());
 
@@ -28,9 +31,13 @@ pub fn style_text(text: &str, style: MessageType) -> StyledObject<&str> {
     style_obj.apply_to(text)
 }
 
-pub struct Spinner(ProgressBar);
+#[derive(Debug)]
+pub struct GenerationSpinner {
+    spinner: ProgressBar,
+    cancel_token: CancellationToken,
+}
 
-impl Spinner {
+impl GenerationSpinner {
     pub fn new() -> Self {
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
@@ -38,19 +45,55 @@ impl Spinner {
                 .unwrap()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
-        Spinner(spinner)
+        spinner.set_message("Generating...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        Self {
+            spinner,
+            cancel_token: CancellationToken::new(),
+        }
     }
 
-    pub fn set_message(&self, msg: &str) {
-        self.0.set_message(msg.to_string());
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
     }
 
-    pub fn tick(&self) {
-        self.0.tick();
+    pub fn token(&self) -> CancellationToken {
+        self.cancel_token.clone()
     }
 
-    pub fn finish(&self) {
-        self.0.finish_and_clear();
+    pub fn clear_message(&self) {
+        self.spinner.finish_and_clear();
+    }
+
+    pub fn finish(self) {
+        self.spinner.finish_and_clear();
+    }
+
+    /// Utility function to handle spinner during stream processing
+    pub async fn handle_stream<F, T>(mut self, future: F) -> Option<T>
+    where
+        F: std::future::Future<Output = Result<T>> + Send,
+        T: Send + 'static,
+    {
+        let ctrl_c_future = signal::ctrl_c();
+        let result_future = future;
+
+        tokio::select! {
+            _ = self.cancel_token.cancelled() => {
+                self.spinner.finish_and_clear();
+                None
+            }
+            _ = ctrl_c_future => {
+                self.cancel();
+                self.spinner.finish_and_clear();
+                None
+            }
+            result = result_future => {
+                self.spinner.finish_and_clear();
+                result.ok()
+            }
+        }
     }
 }
 

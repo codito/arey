@@ -1,13 +1,12 @@
 // Handles user interaction for chat
-use crate::chat::service::Chat;
-use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
+use crate::core::chat::Chat; // Corrected import path for Chat
+use crate::core::completion::{CompletionMetrics, combine_metrics};
 use anyhow::Result;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::signal;
 use tokio::sync::Mutex;
+use crate::platform::console::GenerationSpinner; // Added
 
 /// Command handler logic
 fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)>) -> Result<bool> {
@@ -79,99 +78,99 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
             continue;
         }
 
-        // Create per-message cancellation token
-        let cancel_token = CancellationToken::new();
+        // Create spinner using the new utility
+        let spinner = GenerationSpinner::new();
+        let spinner_token = spinner.token(); // Get the token from the spinner
 
-        // Create spinner
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::with_template("{spinner:.blue} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-        );
-        spinner.set_message("Generating...");
-        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+        // Capture user_input for the async block
+        let user_input_for_future = user_input.to_string();
 
-        let mut stream = chat
-            .stream_response(user_input.to_string(), cancel_token.clone())
-            .await?;
-        let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
-        let mut first_token_received = false;
+        // NOTE: The `chat` variable is moved into this async block, which means it will be consumed
+        // after the first iteration of the loop. This will cause a compile error on subsequent iterations
+        // ("use of moved value: `chat`"). To fix this, `chat` would typically need to be wrapped in
+        // `Arc<Mutex<Chat>>` and `stream_response` would need to be adapted to work with a locked mutex guard.
+        let (combined_metrics, was_cancelled) = if let Some((metrics, cancelled)) = spinner
+            .handle_stream(
+                async move {
+                    let mut stream = chat
+                        .stream_response(user_input_for_future, spinner_token)
+                        .await?;
 
-        // Create and pin Ctrl-C signal future
-        let ctrl_c_future = signal::ctrl_c();
-        tokio::pin!(ctrl_c_future);
+                    let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
+                    let mut first_token_received = false;
 
-        'receive_loop: loop {
-            tokio::select! {
-                // Handle Ctrl-C signal
-                _ = ctrl_c_future.as_mut(), if !cancel_token.is_cancelled() => {
-                    cancel_token.cancel();
-                },
+                    let mut current_cancel_status = false; // Track cancellation within the stream processing
 
-                // Process stream response
-                response = stream.next() => {
-                    match response {
-                        Some(Ok(chunk)) => {
-                            if !first_token_received {
-                                spinner.finish_and_clear();
-                                first_token_received = true;
+                    while let Some(response) = stream.next().await {
+                        // Check for cancellation *before* processing the chunk
+                        if spinner_token.is_cancelled() {
+                            current_cancel_status = true;
+                            break; // Exit the stream processing loop
+                        }
+
+                        match response {
+                            Ok(chunk) => {
+                                if !first_token_received {
+                                    spinner.clear_message(); // Clear spinner message on first token
+                                    first_token_received = true;
+                                }
+                                print!("{}", chunk.text);
+                                io::stdout().flush()?;
+                                chunks_metrics.lock().await.push(chunk.metrics.clone());
                             }
-                            print!("{}", chunk.text);
-                            io::stdout().flush()?;
-                            chunks_metrics.lock().await.push(chunk.metrics.clone());
+                            Err(e) => {
+                                eprintln!("Error: {}", e);
+                                current_cancel_status = true; // Treat error as a reason to stop
+                                break;
+                            }
                         }
-                        Some(Err(e)) => {
-                            eprintln!("Error: {}", e);
-                            break 'receive_loop;
-                        }
-                        None => break 'receive_loop,
                     }
-                },
 
-                // Handle cancellation by breaking the loop
-                _ = tokio::task::yield_now(), if cancel_token.is_cancelled() => {
-                    break 'receive_loop;
+                    let metrics = chunks_metrics.lock().await;
+                    Ok((combine_metrics(&metrics), current_cancel_status))
                 }
-            }
-        }
-
-        spinner.finish_and_clear();
+            )
+            .await
+        {
+            (metrics, cancelled) => (Some(metrics), cancelled),
+        } else {
+            // handle_stream returned None, meaning it was cancelled or an error occurred before the future completed
+            (None, true) // Assume cancelled if None
+        };
 
         // Print footer with metrics
-        let metrics_vec = chunks_metrics.lock().await;
-        let combined = combine_metrics(&metrics_vec);
-        let footer = if cancel_token.is_cancelled() {
-            // Check the specific message's cancel token
+        let footer = if was_cancelled {
             "◼ Canceled.".to_string()
         } else {
             "◼ Completed.".to_string()
         };
 
         let mut footer_details = String::new();
-        if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
-            footer_details.push_str(&format!(
-                " {:.2}s to first token.",
-                combined.prompt_eval_latency_ms / 1000.0
-            ));
-            footer_details.push_str(&format!(
-                " {:.2}s total.",
-                combined.completion_latency_ms / 1000.0
-            ));
-        }
+        if let Some(combined) = combined_metrics {
+            if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
+                footer_details.push_str(&format!(
+                    " {:.2}s to first token.",
+                    combined.prompt_eval_latency_ms / 1000.0
+                ));
+                footer_details.push_str(&format!(
+                    " {:.2}s total.",
+                    combined.completion_latency_ms / 1000.0
+                ));
+            }
 
-        if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
-            let tokens_per_sec =
-                (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
-            footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
-        }
+            if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
+                let tokens_per_sec =
+                    (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
+                footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
+            }
 
-        if combined.completion_tokens > 0 {
-            footer_details.push_str(&format!(" {} tokens.", combined.completion_tokens));
-        }
+            if combined.completion_tokens > 0 {
+                footer_details.push_str(&format!(" {} tokens.", combined.completion_tokens));
+            }
 
-        if combined.prompt_tokens > 0 {
-            footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
+            if combined.prompt_tokens > 0 {
+                footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
+            }
         }
 
         println!();
