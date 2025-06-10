@@ -102,6 +102,16 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
+    // Add available commands with descriptions
+    let command_list = vec![
+        ("/log", "Show detailed logs for the last assistant message"),
+        ("/q", "Alias for /quit command"),
+        ("/quit", "Exit the chat session"),
+        ("/help", "Show this help message"),
+    ];
+    
+    println!("Welcome to arey chat! Type '/help' for commands, 'q' to exit.");  // Updated welcome message
+    
     loop {
         print!("> ");
         io::stdout().flush()?;
@@ -117,22 +127,43 @@ async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
 
         // Handle commands
         if user_input.starts_with('/') {
-            match user_input {
-                "/log" => {
-                    match chat.get_last_assistant_logs() {
-                        Some(logs) => println!("\n=== LOGS ===\n{logs}\n============="),
-                        None => println!("No logs available"),
+            // Implement autocomplete
+            if let Some(cmd) = command_list.iter().find(|(cmd, _)| {
+                user_input.starts_with(*cmd) || cmd.starts_with(user_input)
+            }) {
+                if cmd.0 == user_input {
+                    // Run the command if it matches exactly
+                    match user_input {
+                        "/log" => {
+                            match chat.get_last_assistant_logs() {
+                                Some(logs) => println!("\n=== LOGS ===\n{logs}\n============="),
+                                None => println!("No logs available"),
+                            }
+                        },
+                        "/quit" | "/q" => {
+                            println!("Bye!");
+                            return Ok(());
+                        },
+                        "/help" => {
+                            // Show contextual help
+                            println!("\nAvailable commands:");
+                            for (cmd, desc) in command_list.iter() {
+                                println!("{:<8} - {}", cmd, desc);
+                            }
+                            println!();
+                        },
+                        _ => {} // Shouldn't happen
                     }
-                },
-                "/quit" | "/q" => {
-                    println!("Bye!");
-                    return Ok(());
+                } else {
+                    // Show autocomplete suggestion
+                    println!("Command suggestion: {}", cmd.0);
                 }
-                _ => println!("Unknown command. Supported: /log, /quit"),
+            } else {
+                println!("Unknown command '{}'. Type '/help' for available commands.", user_input);
             }
             continue;
         }
-
+        
         // Create per-message cancellation token
         let cancel_token = CancellationToken::new();
 
