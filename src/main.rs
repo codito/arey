@@ -6,6 +6,8 @@ use crate::chat::{Chat, start_chat};
 use crate::core::config::get_config;
 use anyhow::Context;
 use clap::{Parser, Subcommand, command};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
@@ -76,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
                 config.chat.model
             };
 
-            let chat_instance = Chat::new(chat_model_config).await?;
+            let chat_instance = Arc::new(Mutex::new(Chat::new(chat_model_config).await?));
             start_chat(chat_instance).await?;
         }
         Commands::Play { file, no_watch } => {

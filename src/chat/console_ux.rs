@@ -1,15 +1,15 @@
 // Handles user interaction for chat
-use crate::core::chat::Chat; // Corrected import path for Chat
+use crate::core::chat::Chat;
 use crate::core::completion::{CompletionMetrics, combine_metrics};
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use crate::platform::console::GenerationSpinner; // Added
+use tokio::sync::Mutex; // Use tokio's Mutex for async operations
+use crate::platform::console::GenerationSpinner;
 
 /// Command handler logic
-fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)>) -> Result<bool> {
+async fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)>) -> Result<bool> {
     if let Some(cmd) = command_list
         .iter()
         .find(|(cmd, _)| user_input.starts_with(*cmd) || cmd.starts_with(user_input))
@@ -46,7 +46,7 @@ fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)
 }
 
 /// Chat UX flow
-pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
+pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     // Add available commands with descriptions
     let command_list = vec![
         ("/log", "Show detailed logs for the last assistant message"),
@@ -72,9 +72,12 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
 
         // Handle commands
         if user_input.starts_with('/') {
-            if handle_command(&chat, user_input, &command_list)? {
+            // Lock the chat for command handling
+            let chat_guard = chat.lock().await;
+            if handle_command(&chat_guard, user_input, &command_list).await? {
                 break; // Exit loop if command handler returns true (e.g., for /quit)
             }
+            drop(chat_guard); // Explicitly drop the guard to release the lock
             continue;
         }
 
@@ -85,16 +88,18 @@ pub async fn start_chat(mut chat: Chat) -> anyhow::Result<()> {
         // Capture user_input for the async block
         let user_input_for_future = user_input.to_string();
 
-        // NOTE: The `chat` variable is moved into this async block, which means it will be consumed
-        // after the first iteration of the loop. This will cause a compile error on subsequent iterations
-        // ("use of moved value: `chat`"). To fix this, `chat` would typically need to be wrapped in
-        // `Arc<Mutex<Chat>>` and `stream_response` would need to be adapted to work with a locked mutex guard.
+        // Clone the Arc for the async block
+        let chat_clone_for_future = chat.clone();
+
         let (combined_metrics, was_cancelled) = if let Some((metrics, cancelled)) = spinner
             .handle_stream(
                 async move {
-                    let mut stream = chat
+                    // Acquire lock inside the async block
+                    let mut chat_guard = chat_clone_for_future.lock().await;
+                    let mut stream = chat_guard
                         .stream_response(user_input_for_future, spinner_token)
                         .await?;
+                    drop(chat_guard); // Release the lock after getting the stream
 
                     let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
                     let mut first_token_received = false;
