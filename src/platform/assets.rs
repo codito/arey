@@ -48,6 +48,20 @@ pub fn get_default_config() -> String {
     include_str!("../data/config.yml").to_string()
 }
 
+pub fn get_default_play_file() -> String {
+    r#"---
+model: llama3-8b
+settings:
+  temperature: 0.7
+profile:
+  max_tokens: 512
+output:
+  format: markdown
+---
+
+Enter your prompt here..."#.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
