@@ -9,8 +9,7 @@ use crate::{
     },
 };
 use anyhow::{Context, Result, anyhow};
-use frontmatter::{Frontmatter, parse as parse_frontmatter};
-use futures::StreamExt;
+use markdown::{to_mdast, ParseOptions, Mdast};
 use serde_yaml::Value;
 use std::{
     collections::HashMap,
@@ -40,19 +39,43 @@ pub struct PlayFile {
     pub result: Option<PlayResult>,
 }
 
+fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
+    let ast = to_mdast(content, &ParseOptions::gfm()).map_err(|e| {
+        anyhow!("Markdown parse error: {e}")
+    })?;
+
+    let mut parsed_yaml = None;
+    let mut body = String::new();
+    let mut in_frontmatter = false;
+    
+    if let Mdast::Node(markdown) = &ast {
+        for node in markdown.children() {
+            if let markdown::mdast::Node::Yaml(yaml) = node {
+                in_frontmatter = true;
+                let yaml_value: Value = serde_yaml::from_str(&yaml.value)
+                    .map_err(|e| anyhow!("YAML parse error: {e}"))?;
+                parsed_yaml = Some(yaml_value);
+            } else if !in_frontmatter {
+                body.push_str(&format!("{}\n", node.to_string()));
+            }
+        }
+    }
+    
+    // If no YAML frontmatter was found, use the entire content as body
+    if parsed_yaml.is_none() {
+        body = content.to_string();
+    }
+    Ok((parsed_yaml, body.trim().to_owned()))
+}
+
 impl PlayFile {
     pub fn new(file_path: impl AsRef<Path>) -> Result<Self> {
         let file_path = file_path.as_ref().to_path_buf();
         let content = fs::read_to_string(&file_path)
             .with_context(|| format!("Failed to read play file: {}", file_path.display()))?;
 
-        let (frontmatter, markdown) =
-            parse_frontmatter(&content).map_err(|e| anyhow!("Frontmatter parse error: {e}"))?;
-
-        let metadata = match frontmatter {
-            Frontmatter::Yaml(data) => data,
-            _ => return Err(anyhow!("Invalid frontmatter format")),
-        };
+        let (metadata, prompt_str) = extract_frontmatter(&content)?;
+        let metadata = metadata.ok_or_else(|| anyhow!("No frontmatter found"))?;
 
         let config = crate::core::config::get_config(None).context("Failed to load config")?;
 
@@ -75,7 +98,7 @@ impl PlayFile {
                         .collect()
                 })
                 .unwrap_or_default(),
-            prompt: markdown.trim().to_owned(),
+            prompt: prompt_str,
             completion_profile: metadata
                 .get("profile")
                 .and_then(Value::as_mapping)
