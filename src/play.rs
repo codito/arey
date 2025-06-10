@@ -1,7 +1,7 @@
 use crate::{
     core::completion::{
         ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, SenderType,
-        combine_metrics,
+        combine_metrics, CancellationToken,
     },
     core::config::AreyConfigError,
     core::model::{ModelConfig, ModelMetrics},
@@ -165,9 +165,14 @@ impl PlayFile {
 
     pub async fn get_response(
         &self,
-    ) -> impl futures::Stream<Item = Result<CompletionResponse>> + Unpin + Send + '_ {
-        let mut model_lock = self.model.as_ref().expect("Model not loaded").lock().await;
-
+    ) -> Result<impl futures::Stream<Item = Result<CompletionResponse>> + 'static> {
+        let model_lock = self.model.as_ref().ok_or_else(|| anyhow!("Model not loaded"))?.clone();
+        
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: self.prompt.clone(),
+        }];
+        
         let settings: HashMap<String, String> = self
             .completion_profile
             .iter()
@@ -179,20 +184,23 @@ impl PlayFile {
                     .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
             })
             .collect();
-
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: self.prompt.clone(),
-        }];
-
-        model_lock
-            .complete(
-                &messages,
-                &settings,
-                crate::core::completion::CancellationToken::new(),
-            )
-            .await
-            .map(|result| result.map_err(anyhow::Error::from))
+            
+        let cancel_token = CancellationToken::new();
+        
+        // Move locks and references into async block
+        let stream = async move {
+            let mut model_guard = model_lock.lock().await;
+            model_guard
+                .complete(
+                    &messages,
+                    &settings,
+                    cancel_token,
+                )
+                .await
+                .map(|s| s.map_err(anyhow::Error::from))
+        }.await?;
+        
+        Ok(stream)
     }
 
     pub async fn process_stream(
@@ -290,7 +298,6 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
 }
 
 async fn run_once(play_file: &mut PlayFile) -> Result<()> {
-    // Load model if not already loaded
     if play_file.model.is_none() {
         let metrics = play_file.load_model().await?;
         println!(
@@ -301,24 +308,20 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
                 MessageType::Footer
             )
         );
-    } else {
-        println!(
-            "{}",
-            style_text("✓ Using pre-loaded model.", MessageType::Footer,)
-        );
     }
 
-    let stream = play_file.get_response().await;
+    // Use an inner block to isolate immutable borrow
+    let stream = {
+        play_file.get_response().await?
+    };
+
     play_file.process_stream(stream).await?;
 
-    // Print result
+    // Print result (unchanged)
     if let Some(result) = &play_file.result {
         let output = match play_file.output_settings.get("format").map(|s| s.as_str()) {
             Some("plain") => &result.response,
-            _ => {
-                // Markdown rendering not implemented
-                &result.response
-            }
+            _ => &result.response,
         };
 
         println!("{}", output);
