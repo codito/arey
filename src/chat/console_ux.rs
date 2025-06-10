@@ -1,12 +1,13 @@
 // Handles user interaction for chat
 use crate::core::chat::Chat;
-use crate::core::completion::{CompletionMetrics, combine_metrics};
+use crate::core::completion::{CompletionMetrics, combine_metrics, CancellationToken};
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex; // Use tokio's Mutex for async operations
 use crate::platform::console::GenerationSpinner;
+use tokio::signal;
 
 /// Command handler logic
 async fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)>) -> Result<bool> {
@@ -36,11 +37,6 @@ async fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str,
         } else {
             println!("Command suggestion: {}", cmd.0);
         }
-    } else {
-        println!(
-            "Unknown command '{}'. Type '/help' for available commands.",
-            user_input
-        );
     }
     Ok(false) // Indicate that the chat should continue
 }
@@ -81,66 +77,71 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             continue;
         }
 
-        // Create spinner using the new utility
+        // Create spinner
         let spinner = GenerationSpinner::new();
-        let spinner_token = spinner.token(); // Get the token from the spinner
+        let cancel_token = CancellationToken::new();
 
-        // Capture user_input for the async block
+        // Spawn a background task to handle Ctrl+C cancellation
+        let ctrl_c_token = cancel_token.clone();
+        tokio::spawn(async move {
+            signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+            ctrl_c_token.cancel();
+        });
+
+        // Clone for async block
+        let chat_clone = chat.clone();
         let user_input_for_future = user_input.to_string();
 
-        // Clone the Arc for the async block
-        let chat_clone_for_future = chat.clone();
+        let (combined_metrics, was_cancelled) = {
+            // Get stream response
+            let mut stream = {
+                let mut chat_guard = chat_clone.lock().await;
+                chat_guard.stream_response(user_input_for_future, cancel_token.clone()).await?
+            };
 
-        let (combined_metrics, was_cancelled) = if let Some((metrics, cancelled)) = spinner
-            .handle_stream(
-                async move {
-                    // Acquire lock inside the async block
-                    let mut chat_guard = chat_clone_for_future.lock().await;
-                    let mut stream = chat_guard
-                        .stream_response(user_input_for_future, spinner_token)
-                        .await?;
-                    drop(chat_guard); // Release the lock after getting the stream
+            let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
+            let mut first_token_received = false;
+            let mut was_cancelled_internal = false; // Use a distinct variable for internal loop state
 
-                    let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
-                    let mut first_token_received = false;
-
-                    let mut current_cancel_status = false; // Track cancellation within the stream processing
-
-                    while let Some(response) = stream.next().await {
-                        // Check for cancellation *before* processing the chunk
-                        if spinner_token.is_cancelled() {
-                            current_cancel_status = true;
-                            break; // Exit the stream processing loop
-                        }
-
-                        match response {
-                            Ok(chunk) => {
-                                if !first_token_received {
-                                    spinner.clear_message(); // Clear spinner message on first token
-                                    first_token_received = true;
-                                }
-                                print!("{}", chunk.text);
-                                io::stdout().flush()?;
-                                chunks_metrics.lock().await.push(chunk.metrics.clone());
-                            }
-                            Err(e) => {
-                                eprintln!("Error: {}", e);
-                                current_cancel_status = true; // Treat error as a reason to stop
-                                break;
-                            }
-                        }
-                    }
-
-                    let metrics = chunks_metrics.lock().await;
-                    Ok((combine_metrics(&metrics), current_cancel_status))
+            // Process stream
+            while let Some(response) = stream.next().await {
+                // Check for cancellation *before* processing the chunk
+                if cancel_token.is_cancelled() {
+                    was_cancelled_internal = true;
+                    break; // Exit the stream processing loop
                 }
-            )
-            .await
-        {
-            (metrics, cancelled) => (Some(metrics), cancelled),
-        } else {
-            // handle_stream returned None, meaning it was cancelled or an error occurred before the future completed
-            (None, true) // Assume cancelled if None
+
+                // First token received, clear spinner
+                if !first_token_received {
+                    spinner.clear();
+                    first_token_received = true;
+                }
+                
+                match response {
+                    Ok(chunk) => {
+                        // Print token to console
+                        print!("{}", chunk.text);
+                        io::stdout().flush()?;
+                        chunks_metrics.lock().await.push(chunk.metrics.clone());
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        was_cancelled_internal = true;
+                        break;
+                    }
+                }
+            }
+
+            // Ensure spinner is cleared after stream processing, regardless of how it exited
+            spinner.clear();
+
+            // Process metrics
+            let metrics = chunks_metrics.lock().await;
+            let combined = combine_metrics(&metrics);
+            
+            // Final check for cancellation status
+            let final_was_cancelled = was_cancelled_internal || cancel_token.is_cancelled();
+            (Some(combined), final_was_cancelled)
         };
 
         // Print footer with metrics

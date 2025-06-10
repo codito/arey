@@ -1,9 +1,6 @@
-use crate::core::completion::CancellationToken;
-use anyhow::Result;
 use console::{Style, StyledObject, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
-use tokio::signal;
 
 static CONSOLE_INSTANCE: Lazy<Term> = Lazy::new(|| Term::stdout());
 
@@ -34,7 +31,6 @@ pub fn style_text(text: &str, style: MessageType) -> StyledObject<&str> {
 #[derive(Debug)]
 pub struct GenerationSpinner {
     spinner: ProgressBar,
-    cancel_token: CancellationToken,
 }
 
 impl GenerationSpinner {
@@ -48,52 +44,11 @@ impl GenerationSpinner {
         spinner.set_message("Generating...");
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
-        Self {
-            spinner,
-            cancel_token: CancellationToken::new(),
-        }
+        Self { spinner }
     }
 
-    pub fn cancel(&self) {
-        self.cancel_token.cancel();
-    }
-
-    pub fn token(&self) -> CancellationToken {
-        self.cancel_token.clone()
-    }
-
-    pub fn clear_message(&self) {
+    pub fn clear(&self) {
         self.spinner.finish_and_clear();
-    }
-
-    pub fn finish(self) {
-        self.spinner.finish_and_clear();
-    }
-
-    /// Utility function to handle spinner during stream processing
-    pub async fn handle_stream<F, T>(mut self, future: F) -> Option<T>
-    where
-        F: std::future::Future<Output = Result<T>> + Send,
-        T: Send + 'static,
-    {
-        let ctrl_c_future = signal::ctrl_c();
-        let result_future = future;
-
-        tokio::select! {
-            _ = self.cancel_token.cancelled() => {
-                self.spinner.finish_and_clear();
-                None
-            }
-            _ = ctrl_c_future => {
-                self.cancel();
-                self.spinner.finish_and_clear();
-                None
-            }
-            result = result_future => {
-                self.spinner.finish_and_clear();
-                result.ok()
-            }
-        }
     }
 }
 
