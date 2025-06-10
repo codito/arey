@@ -1,9 +1,9 @@
+use crate::core::completion::CancellationToken;
+use anyhow::Result;
 use console::{Style, StyledObject, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
-use crate::core::completion::CancellationToken;
 use tokio::signal;
-use anyhow::Result;
 
 static CONSOLE_INSTANCE: Lazy<Term> = Lazy::new(|| Term::stdout());
 
