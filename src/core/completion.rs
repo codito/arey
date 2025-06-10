@@ -3,9 +3,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}}; // Added for CancellationToken
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
-// Added CancellationToken struct
 #[derive(Debug, Clone)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
@@ -100,7 +102,7 @@ pub trait CompletionModel: Send + Sync {
         &mut self,
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
-        cancel_token: CancellationToken, // Added CancellationToken here
+        cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<CompletionResponse>>;
     async fn count_tokens(&self, text: &str) -> usize;
     async fn free(&mut self);
@@ -179,7 +181,7 @@ mod tests {
         };
 
         let chunk_metrics = CompletionMetrics {
-            prompt_tokens: 0, // Should be ignored
+            prompt_tokens: 0,            // Should be ignored
             prompt_eval_latency_ms: 0.0, // Should be ignored
             completion_tokens: 10,
             completion_runs: 1,

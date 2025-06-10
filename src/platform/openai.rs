@@ -109,7 +109,7 @@ impl CompletionModel for OpenAIBaseModel {
         &mut self,
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
-        cancel_token: CancellationToken, // Add parameter
+        cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<CompletionResponse>> {
         // Map messages to OpenAI message types
         let openai_messages: Vec<ChatCompletionRequestMessage> = messages
