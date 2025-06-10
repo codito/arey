@@ -91,6 +91,7 @@ pub struct CompletionResponse {
     pub text: String,
     pub finish_reason: Option<String>,
     pub metrics: CompletionMetrics,
+    pub raw_chunk: Option<String>, // NEW FIELD: add raw JSON chunk
 }
 
 #[async_trait]

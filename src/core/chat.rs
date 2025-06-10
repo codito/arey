@@ -124,6 +124,7 @@ impl Chat {
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
             let mut assistant_response = String::new();
+            let mut raw_logs = String::new(); // ADD THIS FOR LOG ACCUMULATION
             while let Some(result) = stream.next().await {
                 // Check for cancellation *before* processing the chunk
                 if cancel_token.is_cancelled() {
@@ -134,6 +135,10 @@ impl Chat {
 
                 match result {
                     Ok(chunk) => {
+                        // COLLECT RAW LOGS (ADD THIS)
+                        if let Some(ref raw) = chunk.raw_chunk {
+                            raw_logs.push_str(&format!("{}\n", raw));
+                        }
                         // Accumulate response in chat history
                         assistant_response.push_str(&chunk.text);
                         usage_series.push(chunk.metrics.clone()); // Accumulate metrics
@@ -162,7 +167,7 @@ impl Chat {
                 prompt: String::new(), // Python has prompt, but it's not used here.
                 finish_reason: last_finish_reason,
                 metrics: combined_metrics,
-                logs: String::new(), // Logs from stream are not captured yet
+                logs: raw_logs, // STORE ACCUMULATED LOGS
             };
 
             if let Some(msg) = messages.get_mut(assistant_index) {

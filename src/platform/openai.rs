@@ -173,6 +173,9 @@ impl CompletionModel for OpenAIBaseModel {
 
                         match next {
                             Ok(chunk) => {
+                                // CAPTURE RAW CHUNK (ADD THIS NEW CODE)
+                                let raw_json = serde_json::to_string(&chunk).unwrap_or_else(|_| String::from(""));
+
                                 // Check if we have a content block in the first choice
                                 if let Some(choice) = chunk.choices.first() {
                                     let text = choice.delta.content.clone().unwrap_or_else(|| "".to_string());
@@ -196,6 +199,7 @@ impl CompletionModel for OpenAIBaseModel {
                                             completion_runs: 1,
                                             completion_latency_ms: completion_latency,
                                         },
+                                        raw_chunk: Some(raw_json), // ADD THIS FIELD
                                     });
                                 }
                             }
