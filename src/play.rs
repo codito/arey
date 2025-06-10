@@ -163,6 +163,7 @@ impl PlayFile {
         Ok(metrics)
     }
 
+    // REPLACE the get_response method with this version
     pub async fn get_response(
         &self,
     ) -> Result<impl futures::Stream<Item = Result<CompletionResponse>> + 'static> {
@@ -187,7 +188,7 @@ impl PlayFile {
             
         let cancel_token = CancellationToken::new();
         
-        // Don't use ? on the stream itself - handle the Result directly
+        // Handle the result explicitly using match
         let stream_result = async move {
             let mut model_guard = model_lock.lock().await;
             model_guard
@@ -199,11 +200,14 @@ impl PlayFile {
                 .await
         }.await;
 
-        // Map the stream items while handling the initial Result
-        let stream = stream_result?
-            .map(|result| result.map_err(anyhow::Error::from));
-        
-        Ok(stream)
+        // Convert stream_result to function error type
+        match stream_result {
+            Ok(stream) => {
+                let mapped_stream = stream.map(|res| res.map_err(anyhow::Error::from));
+                Ok(mapped_stream)
+            }
+            Err(e) => Err(anyhow::Error::from(e)),
+        }
     }
 
     pub async fn process_stream(
