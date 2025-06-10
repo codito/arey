@@ -1,16 +1,20 @@
 // Handles user interaction for chat
 use crate::core::chat::Chat;
-use crate::core::completion::{CompletionMetrics, combine_metrics, CancellationToken};
+use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
+use crate::platform::console::GenerationSpinner;
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::sync::Mutex; // Use tokio's Mutex for async operations
-use crate::platform::console::GenerationSpinner;
 use tokio::signal;
+use tokio::sync::Mutex;
 
 /// Command handler logic
-async fn handle_command(chat: &Chat, user_input: &str, command_list: &Vec<(&str, &str)>) -> Result<bool> {
+async fn handle_command(
+    chat: &Chat,
+    user_input: &str,
+    command_list: &Vec<(&str, &str)>,
+) -> Result<bool> {
     if let Some(cmd) = command_list
         .iter()
         .find(|(cmd, _)| user_input.starts_with(*cmd) || cmd.starts_with(user_input))
@@ -96,7 +100,9 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             // Get stream response
             let mut stream = {
                 let mut chat_guard = chat_clone.lock().await;
-                chat_guard.stream_response(user_input_for_future, cancel_token.clone()).await?
+                chat_guard
+                    .stream_response(user_input_for_future, cancel_token.clone())
+                    .await?
             };
 
             let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
@@ -116,7 +122,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                     spinner.clear();
                     first_token_received = true;
                 }
-                
+
                 match response {
                     Ok(chunk) => {
                         // Print token to console
@@ -138,7 +144,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             // Process metrics
             let metrics = chunks_metrics.lock().await;
             let combined = combine_metrics(&metrics);
-            
+
             // Final check for cancellation status
             let final_was_cancelled = was_cancelled_internal || cancel_token.is_cancelled();
             (Some(combined), final_was_cancelled)
