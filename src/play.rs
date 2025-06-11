@@ -357,3 +357,94 @@ pub mod watch {
         Ok((watcher, rx))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_yaml::{Value, Number};
+    use tempfile::tempdir;
+
+    const SAMPLE_PLAY_CONTENT: &str = r#"---
+model: test-model
+settings:
+  n_ctx: 4096
+profile:
+  temperature: 0.7
+output:
+  format: plain
+---
+Test prompt
+"#;
+
+    #[test]
+    fn test_play_file_creation() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let file_path = temp_dir.path().join("test_play.md");
+        fs::write(&file_path, SAMPLE_PLAY_CONTENT)?;
+
+        let play_file = PlayFile::new(&file_path)?;
+        
+        assert_eq!(play_file.file_path, file_path);
+        assert_eq!(play_file.prompt, "Test prompt");
+        
+        match &play_file.model_settings["n_ctx"] {
+            Value::Number(n) => assert_eq!(n.as_i64(), Some(4096)),
+            _ => panic!("n_ctx should be a number"),
+        }
+        
+        match &play_file.completion_profile["temperature"] {
+            Value::Number(n) => assert!((n.as_f64().unwrap() - 0.7).abs() < f64::EPSILON),
+            _ => panic!("temperature should be a number"),
+        }
+        
+        assert_eq!(play_file.output_settings["format"], "plain");
+        assert!(play_file.model.is_none());
+        assert!(play_file.result.is_none());
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_missing_file_creation() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let file_path = temp_dir.path().join("missing_play.md");
+        
+        // File shouldn't exist initially
+        assert!(!file_path.exists());
+        
+        // Create file
+        let created_path = PlayFile::create_missing(Some(&file_path))?;
+        assert_eq!(created_path, file_path);
+        assert!(file_path.exists());
+        
+        // Verify content
+        let content = fs::read_to_string(&file_path)?;
+        assert!(!content.is_empty());
+        assert!(content.contains("model:"));
+        assert!(content.contains("profile:"));
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_temp_file_creation() -> Result<()> {
+        // Get initial temp file count for comparison
+        let initial_files = std::fs::read_dir(std::env::temp_dir())?.count();
+        
+        let created_path = PlayFile::create_missing(None)?;
+        assert!(created_path.exists());
+        
+        // Verify filename pattern
+        let file_name = created_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        assert!(file_name.starts_with("arey_play"));
+        assert!(file_name.ends_with(".md"));
+        
+        // Verify temp directory has a new file
+        let new_file_count = std::fs::read_dir(std::env::temp_dir())?.count();
+        assert!(new_file_count > initial_files);
+        
+        Ok(())
+    }
+}

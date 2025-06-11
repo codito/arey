@@ -43,4 +43,9 @@ llama-cpp-2 = { version = "0.1.*", features = ["cuda"] }
 
 [dev-dependencies]
 futures = { version = "0.3", features = ["async-await"] }
+tempfile = "3.8.0"
 wiremock = "0.6.3"
+
+[dev-dependencies.tokio]
+version = "1.0"
+features = ["macros", "rt-multi-thread"]
