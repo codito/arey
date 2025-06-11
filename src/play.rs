@@ -127,9 +127,8 @@ impl PlayFile {
         })
     }
 
-    pub fn create_missing(file_path: Option<impl AsRef<Path>>) -> Result<PathBuf> {
-        let path = file_path.as_ref().map(|p| p.as_ref());
-        let tmp_file = match path {
+    pub fn create_missing(file_path: Option<&Path>) -> Result<PathBuf> {
+        let tmp_file = match file_path {
             Some(p) if p.exists() => p.to_path_buf(),
             Some(p) => {
                 fs::write(p, get_default_play_file()).context("Failed to create play file")?;
@@ -431,7 +430,7 @@ Test prompt
         // Get initial temp file count for comparison
         let initial_files = std::fs::read_dir(std::env::temp_dir())?.count();
 
-        let created_path = PlayFile::create_missing(None)?;
+        let created_path = PlayFile::create_missing(None)?; // FIXED: Type is now clear
         assert!(created_path.exists());
 
         // Verify filename pattern
