@@ -11,6 +11,7 @@ use crate::{
     },
 };
 use anyhow::{Context, Result, anyhow};
+use chrono::Local;
 use futures::StreamExt;
 use markdown::{ParseOptions, to_mdast};
 use serde_yaml::Value;
@@ -135,7 +136,8 @@ impl PlayFile {
                 p.to_path_buf()
             }
             None => {
-                let temp_path = std::env::temp_dir().join("arey_play.md");
+                let temp_name = format!("arey_play_{}.md", Local::now().format("%Y%m%d_%H%M%S"));
+                let temp_path = std::env::temp_dir().join(temp_name);
                 fs::write(&temp_path, get_default_play_file())?;
                 temp_path
             }
@@ -232,7 +234,6 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
 
     // Watch the file for changes and rerun in loop
     use crate::play::watch::watch_file;
-    use chrono::Local;
     let file_path = play_file.file_path.clone();
 
     println!(
