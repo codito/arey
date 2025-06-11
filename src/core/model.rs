@@ -12,13 +12,23 @@ pub struct ModelConfig {
     pub settings: HashMap<String, serde_yaml::Value>,
 }
 
-/// Supported model provider integrations.
-/// make this serializable to str AI!
+/// Supported model provider integrations (serialized as lowercase strings).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum ModelProvider {
     Gguf,
     Openai,
     Ollama,
+}
+
+impl std::fmt::Display for ModelProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelProvider::Gguf => write!(f, "gguf"),
+            ModelProvider::Openai => write!(f, "openai"),
+            ModelProvider::Ollama => write!(f, "ollama"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
