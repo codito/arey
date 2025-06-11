@@ -21,12 +21,18 @@ pub enum ModelProvider {
     Ollama,
 }
 
-impl std::fmt::Display for ModelProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Into<String> for ModelProvider {
+    fn into(self) -> String {
+        self.as_str().into()
+    }
+}
+
+impl ModelProvider {
+    pub fn as_str(self) -> &'static str {
         match self {
-            ModelProvider::Gguf => write!(f, "gguf"),
-            ModelProvider::Openai => write!(f, "openai"),
-            ModelProvider::Ollama => write!(f, "ollama"),
+            ModelProvider::Gguf => "gguf",
+            ModelProvider::Openai => "openai",
+            ModelProvider::Ollama => "ollama",
         }
     }
 }

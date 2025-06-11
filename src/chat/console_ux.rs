@@ -1,14 +1,12 @@
 // Handles user interaction for chat
-use crate::core::chat::Chat;
+use crate::chat::service::Chat;
 use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
 use crate::platform::console::GenerationSpinner;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::signal;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
 
 /// Command handler logic
 async fn handle_command(
@@ -92,8 +90,8 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
         let (combined_metrics, was_cancelled) = {
             // Get stream response
+            let mut chat_guard = chat_clone.lock().await;
             let mut stream = {
-                let mut chat_guard = chat_clone.lock().await;
                 chat_guard
                     .stream_response(user_input_for_future, cancel_token.clone())
                     .await?
@@ -104,7 +102,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             let mut was_cancelled_internal = false;
 
             // Start listening for Ctrl-C
-            let mut ctrl_c_stream = tokio::signal::ctrl_c();
+            let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
 
             // Process stream with Ctrl-C and tokenization detection
             loop {
@@ -115,7 +113,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                         was_cancelled_internal = true;
                         break;
                     },
-                    
+
                     // Process the next stream token
                     next = stream.next() => {
                         match next {
@@ -124,12 +122,12 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                                     spinner.clear();
                                     first_token_received = true;
                                 }
-                                
+
                                 if cancel_token.is_cancelled() {
                                     was_cancelled_internal = true;
                                     break;
                                 }
-                                
+
                                 match response {
                                     Ok(chunk) => {
                                         // Print token to console
@@ -162,7 +160,10 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                 None
             };
 
-            (combined, was_cancelled_internal || cancel_token.is_cancelled())
+            (
+                combined,
+                was_cancelled_internal || cancel_token.is_cancelled(),
+            )
         };
 
         // Print footer with metrics

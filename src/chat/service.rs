@@ -1,7 +1,7 @@
-// All business logic for chat operations
 use crate::core::completion::combine_metrics;
 use crate::core::completion::{
-    ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, CancellationToken, SenderType,
+    CancellationToken, ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+    SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
@@ -113,7 +113,10 @@ impl Chat {
             .collect();
 
         // Get the stream from the model
-        let mut stream = self.model.complete(&model_messages, &HashMap::new(), cancel_token.clone()).await; // Pass cancellation token
+        let mut stream = self
+            .model
+            .complete(&model_messages, &HashMap::new(), cancel_token.clone())
+            .await; // Pass cancellation token
         // This makes the returned stream borrow `self`.
         let shared_messages = self.messages.clone();
 

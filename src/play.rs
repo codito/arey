@@ -1,7 +1,7 @@
 use crate::{
     core::completion::{
-        ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse, SenderType,
-        combine_metrics, CancellationToken,
+        CancellationToken, ChatMessage, CompletionMetrics, CompletionModel, SenderType,
+        combine_metrics,
     },
     core::config::AreyConfigError,
     core::model::{ModelConfig, ModelMetrics},
@@ -26,7 +26,7 @@ pub struct PlayResult {
     pub response: String,
     pub metrics: CompletionMetrics,
     pub finish_reason: Option<String>,
-    pub logs: Option<String>,
+    // pub logs: Option<String>,
 }
 
 /// Play file with model settings and prompt
@@ -163,17 +163,17 @@ impl PlayFile {
         Ok(metrics)
     }
 
-    // REPLACE the get_response method with this version
-    pub async fn get_response(
-        &self,
-    ) -> Result<impl futures::Stream<Item = Result<CompletionResponse>> + 'static> {
-        let model_lock = self.model.as_ref().ok_or_else(|| anyhow!("Model not loaded"))?.clone();
-        
+    pub async fn get_response(&mut self) -> Result<()> {
+        let model_lock = self
+            .model
+            .as_ref()
+            .ok_or_else(|| anyhow!("Model not loaded"))?;
+
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: self.prompt.clone(),
         }];
-        
+
         let settings: HashMap<String, String> = self
             .completion_profile
             .iter()
@@ -185,35 +185,14 @@ impl PlayFile {
                     .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
             })
             .collect();
-            
+
         let cancel_token = CancellationToken::new();
-        
-        // Handle the result explicitly using match
-        let stream_result = async move {
-            let mut model_guard = model_lock.lock().await;
-            model_guard
-                .complete(
-                    &messages,
-                    &settings,
-                    cancel_token,
-                )
-                .await
-        }.await;
 
-        // Convert stream_result to function error type
-        match stream_result {
-            Ok(stream) => {
-                let mapped_stream = stream.map(|res| res.map_err(anyhow::Error::from));
-                Ok(mapped_stream)
-            }
-            Err(e) => Err(anyhow::Error::from(e)),
-        }
-    }
+        let mut model_guard = model_lock.lock().await;
+        let mut stream = model_guard
+            .complete(&messages, &settings, cancel_token)
+            .await;
 
-    pub async fn process_stream(
-        &mut self,
-        mut stream: impl futures::Stream<Item = Result<CompletionResponse>> + Unpin,
-    ) -> Result<()> {
         let mut text = String::new();
         let mut finish_reason = None;
         let mut usage_series = Vec::new();
@@ -229,7 +208,7 @@ impl PlayFile {
             response: text,
             metrics: combine_metrics(&usage_series),
             finish_reason,
-            logs: None, // Stderr capture not implemented for streaming
+            // logs: None,
         });
 
         Ok(())
@@ -248,55 +227,57 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
 
     if no_watch {
         run_once(play_file).await?;
-    } else {
-        use crate::play::watch::watch_file;
-        use chrono::Local;
-        let file_path = play_file.file_path.clone();
+        return Ok(());
+    }
 
-        println!(
-            "{} `{}`",
-            style_text("Watching", MessageType::Footer),
-            file_path.display()
-        );
+    // Watch the file for changes and rerun in loop
+    use crate::play::watch::watch_file;
+    use chrono::Local;
+    let file_path = play_file.file_path.clone();
 
-        let (mut _watcher, mut rx) = watch_file(&file_path).await?;
+    println!(
+        "{} `{}`",
+        style_text("Watching", MessageType::Footer),
+        file_path.display()
+    );
 
-        loop {
-            tokio::select! {
-                Some(_event) = rx.recv() => {
-                    println!("");
-                    println!(
-                        "{}",
-                        style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
-                    );
+    let (mut _watcher, mut rx) = watch_file(&file_path).await?;
 
-                    // Reload file content
-                    match PlayFile::new(&file_path) {
-                        Ok(mut new_play_file) => {
-                            // Reuse existing model if configuration hasn't changed
-                            if play_file.model_config == new_play_file.model_config &&
-                                play_file.model_settings == new_play_file.model_settings {
+    loop {
+        tokio::select! {
+            Some(_event) = rx.recv() => {
+                println!("");
+                println!(
+                    "{}",
+                    style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
+                );
 
-                                new_play_file.model = play_file.model.take();
-                            }
-                            *play_file = new_play_file;
+                // Reload file content
+                match PlayFile::new(&file_path) {
+                    Ok(mut new_play_file) => {
+                        // Reuse existing model if configuration hasn't changed
+                        if play_file.model_config == new_play_file.model_config &&
+                            play_file.model_settings == new_play_file.model_settings {
 
-                            run_once(play_file).await?;
+                            new_play_file.model = play_file.model.take();
                         }
-                        Err(e) => {
-                            println!("{}", style_text(&format!("Error reloading file: {e}"), MessageType::Error));
-                        }
+                        *play_file = new_play_file;
+
+                        run_once(play_file).await?;
                     }
-                    println!("");
-                    println!(
-                        "{} `{}`",
-                        style_text("Watching", MessageType::Footer),
-                        file_path.display()
-                    );
+                    Err(e) => {
+                        println!("{}", style_text(&format!("Error reloading file: {e}"), MessageType::Error));
+                    }
                 }
-                _ = tokio::signal::ctrl_c() => {
-                    break;
-                }
+                println!("");
+                println!(
+                    "{} `{}`",
+                    style_text("Watching", MessageType::Footer),
+                    file_path.display()
+                );
+            }
+            _ = tokio::signal::ctrl_c() => {
+                break;
             }
         }
     }
@@ -317,12 +298,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
         );
     }
 
-    // Use an inner block to isolate immutable borrow
-    let stream = {
-        play_file.get_response().await?
-    };
-
-    play_file.process_stream(stream).await?;
+    play_file.get_response().await?;
 
     // Print result (unchanged)
     if let Some(result) = &play_file.result {
@@ -336,11 +312,14 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
 
         let tokens_per_sec =
             result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
-        let footer = style_text("◼ Completed.", MessageType::Footer);
+        let mut footer_complete = String::from("◼ Completed");
+        if let Some(reason) = result.finish_reason.clone() {
+            footer_complete.push_str(&format!("({reason}"));
+        }
         println!(
-            "{footer}{}",
+            "{}",
             style_text(
-                &format!(" {:.2} tokens/s.", tokens_per_sec),
+                &format!("{footer_complete}. {:.2} tokens/s.", tokens_per_sec),
                 MessageType::Footer,
             )
         );
