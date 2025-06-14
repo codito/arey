@@ -141,7 +141,7 @@ impl Chat {
                         }
                         Completion::Metrics(usage) => {
                             metrics = usage;
-                            break;
+                            // Just process metrics, don't break here
                         }
                     }
                     Err(e) => {
