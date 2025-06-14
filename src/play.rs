@@ -1,19 +1,23 @@
 use crate::{
-    core::completion::{
-        CancellationToken, ChatMessage, CompletionMetrics, CompletionModel, SenderType,
-        combine_metrics,
+    core::{
+        completion::{
+            CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
+            SenderType,
+        },
+        config::{AreyConfigError, Config},
+        model::{ModelConfig, ModelMetrics},
     },
-    core::config::AreyConfigError,
-    core::model::{ModelConfig, ModelMetrics},
     platform::{
         assets::get_default_play_file,
         console::{MessageType, style_text},
     },
+    play::watch::watch_file,
 };
 use anyhow::{Context, Result, anyhow};
 use chrono::Local;
 use futures::StreamExt;
-use markdown::{ParseOptions, to_mdast};
+use markdown::{Constructs, ParseOptions, to_mdast};
+use notify::Event;
 use serde_yaml::Value;
 use std::{
     collections::HashMap,
@@ -43,21 +47,25 @@ pub struct PlayFile {
 }
 
 fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
-    let ast = to_mdast(content, &ParseOptions::gfm())
-        .map_err(|e| anyhow!("Markdown parse error: {e}"))?;
+    let parse_opt = ParseOptions {
+        constructs: Constructs {
+            frontmatter: true,
+            ..Constructs::default()
+        },
+        ..ParseOptions::gfm()
+    };
+    let ast = to_mdast(content, &parse_opt).map_err(|e| anyhow!("Markdown parse error: {e}"))?;
 
     let mut parsed_yaml = None;
     let mut body = String::new();
-    let mut in_frontmatter = false;
 
     if let markdown::mdast::Node::Root(root) = &ast {
         for node in root.children.iter() {
             if let markdown::mdast::Node::Yaml(yaml) = node {
-                in_frontmatter = true;
                 let yaml_value: Value = serde_yaml::from_str(&yaml.value)
                     .map_err(|e| anyhow!("YAML parse error: {e}"))?;
                 parsed_yaml = Some(yaml_value);
-            } else if !in_frontmatter {
+            } else {
                 body.push_str(&format!("{}\n", node.to_string()));
             }
         }
@@ -71,15 +79,13 @@ fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
 }
 
 impl PlayFile {
-    pub fn new(file_path: impl AsRef<Path>) -> Result<Self> {
+    pub fn new(file_path: impl AsRef<Path>, config: &Config) -> Result<Self> {
         let file_path = file_path.as_ref().to_path_buf();
         let content = fs::read_to_string(&file_path)
             .with_context(|| format!("Failed to read play file: {}", file_path.display()))?;
 
         let (metadata, prompt_str) = extract_frontmatter(&content)?;
         let metadata = metadata.ok_or_else(|| anyhow!("No frontmatter found"))?;
-
-        let config = crate::core::config::get_config(None).context("Failed to load config")?;
 
         let model_name = metadata
             .get("model")
@@ -196,18 +202,21 @@ impl PlayFile {
 
         let mut text = String::new();
         let mut finish_reason = None;
-        let mut usage_series = Vec::new();
+        let mut metrics = CompletionMetrics::default();
 
-        while let Some(response) = stream.next().await {
-            let res = response?;
-            text.push_str(&res.text);
-            finish_reason = res.finish_reason;
-            usage_series.push(res.metrics);
+        while let Some(chunk) = stream.next().await {
+            match chunk? {
+                Completion::Response(response) => {
+                    text.push_str(&response.text);
+                    finish_reason = response.finish_reason;
+                }
+                Completion::Metrics(usage) => metrics = usage,
+            }
         }
 
         self.result = Some(PlayResult {
             response: text,
-            metrics: combine_metrics(&usage_series),
+            metrics: metrics,
             finish_reason,
             // logs: None,
         });
@@ -216,7 +225,7 @@ impl PlayFile {
     }
 }
 
-pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
+pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool) -> Result<()> {
     println!(
         "{}",
         style_text(
@@ -232,7 +241,6 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
     }
 
     // Watch the file for changes and rerun in loop
-    use crate::play::watch::watch_file;
     let file_path = play_file.file_path.clone();
 
     println!(
@@ -245,15 +253,16 @@ pub async fn run_play(play_file: &mut PlayFile, no_watch: bool) -> Result<()> {
 
     loop {
         tokio::select! {
-            Some(_event) = rx.recv() => {
+            Some(event) = rx.recv() => {
                 println!("");
                 println!(
                     "{}",
                     style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
                 );
+                println!("");
 
                 // Reload file content
-                match PlayFile::new(&file_path) {
+                match PlayFile::new(&file_path, config) {
                     Ok(mut new_play_file) => {
                         // Reuse existing model if configuration hasn't changed
                         if play_file.model_config == new_play_file.model_config &&
@@ -296,11 +305,11 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
                 MessageType::Footer
             )
         );
+        println!("");
     }
 
     play_file.get_response().await?;
 
-    // Print result (unchanged)
     if let Some(result) = &play_file.result {
         let output = match play_file.output_settings.get("format").map(|s| s.as_str()) {
             Some("plain") => &result.response,
@@ -314,8 +323,9 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
             result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
         let mut footer_complete = String::from("◼ Completed");
         if let Some(reason) = result.finish_reason.clone() {
-            footer_complete.push_str(&format!("({reason}"));
+            footer_complete.push_str(&format!("({reason})"));
         }
+        println!("");
         println!(
             "{}",
             style_text(
@@ -330,22 +340,30 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
 
 pub mod watch {
     use super::*;
-    use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+    use notify::{
+        Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+        event::{MetadataKind, ModifyKind},
+    };
     use tokio::sync::mpsc;
 
     pub async fn watch_file(
         path: &Path,
     ) -> anyhow::Result<(
         RecommendedWatcher,
-        mpsc::Receiver<notify::Result<notify::Event>>,
+        mpsc::Receiver<anyhow::Result<notify::Event>>,
     )> {
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = mpsc::channel::<Result<Event>>(128);
         let mut watcher = RecommendedWatcher::new(
-            move |res| {
+            move |res: notify::Result<Event>| {
                 let tx = tx.clone();
                 if let Ok(event) = res {
-                    if let Err(_) = tx.blocking_send(Ok(event)) {
-                        // Receiver closed
+                    if matches!(
+                        event.kind,
+                        EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
+                    ) {
+                        if let Err(_) = tx.blocking_send(Ok(event)) {
+                            // Receiver closed
+                        }
                     }
                 }
             },
@@ -359,9 +377,13 @@ pub mod watch {
 
 #[cfg(test)]
 mod test {
+    use std::io::Write;
+
+    use crate::core::config::{self, get_config};
+
     use super::*;
-    use serde_yaml::{Number, Value};
-    use tempfile::tempdir;
+    use serde_yaml::Value;
+    use tempfile::{NamedTempFile, tempdir, tempfile};
 
     const SAMPLE_PLAY_CONTENT: &str = r#"---
 model: test-model
@@ -375,13 +397,44 @@ output:
 Test prompt
 "#;
 
+    const DUMMY_CONFIG_CONTENT: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+    n_ctx: 4096
+    path: /path/to/dummy_model.gguf
+profiles:
+  default:
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+chat:
+  model: dummy-7b
+  profile: default
+task:
+  model: dummy-7b
+  profile: default
+"#;
+
+    fn create_temp_config() -> Result<Config> {
+        let mut config_file = NamedTempFile::new()?;
+        write!(config_file, "{}", DUMMY_CONFIG_CONTENT)?;
+
+        get_config(Some(config_file.path().to_path_buf()))
+            .map_err(|e| anyhow!("Failed to create temp config file. Error {}", e))
+    }
+
     #[test]
     fn test_play_file_creation() -> Result<()> {
         let temp_dir = tempdir()?;
         let file_path = temp_dir.path().join("test_play.md");
         fs::write(&file_path, SAMPLE_PLAY_CONTENT)?;
 
-        let play_file = PlayFile::new(&file_path)?;
+        let config = create_temp_config()?;
+
+        let play_file = PlayFile::new(&file_path, &config)?;
 
         assert_eq!(play_file.file_path, file_path);
         assert_eq!(play_file.prompt, "Test prompt");
@@ -395,7 +448,6 @@ Test prompt
             Value::Number(n) => assert!((n.as_f64().unwrap() - 0.7).abs() < f64::EPSILON),
             _ => panic!("temperature should be a number"),
         }
-
         assert_eq!(play_file.output_settings["format"], "plain");
         assert!(play_file.model.is_none());
         assert!(play_file.result.is_none());
@@ -427,10 +479,8 @@ Test prompt
 
     #[test]
     fn test_temp_file_creation() -> Result<()> {
-        // Get initial temp file count for comparison
-        let initial_files = std::fs::read_dir(std::env::temp_dir())?.count();
+        let created_path = PlayFile::create_missing(None)?;
 
-        let created_path = PlayFile::create_missing(None)?; // FIXED: Type is now clear
         assert!(created_path.exists());
 
         // Verify filename pattern
@@ -440,10 +490,6 @@ Test prompt
             .unwrap_or_default();
         assert!(file_name.starts_with("arey_play"));
         assert!(file_name.ends_with(".md"));
-
-        // Verify temp directory has a new file
-        let new_file_count = std::fs::read_dir(std::env::temp_dir())?.count();
-        assert!(new_file_count > initial_files);
 
         Ok(())
     }

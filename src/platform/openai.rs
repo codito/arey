@@ -1,12 +1,16 @@
 use crate::core::completion::{
-    CancellationToken, ChatMessage, CompletionMetrics, CompletionModel, CompletionResponse,
+    CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
+    CompletionResponse,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
+use async_openai::types::CompletionUsage;
 use async_openai::{
     Client as OpenAIClient,
-    types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs},
+    types::{
+        ChatCompletionRequestMessage, ChatCompletionStreamOptions, CreateChatCompletionRequestArgs,
+    },
 };
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
@@ -110,7 +114,7 @@ impl CompletionModel for OpenAIBaseModel {
         messages: &[ChatMessage],
         settings: &HashMap<String, String>,
         cancel_token: CancellationToken,
-    ) -> BoxStream<'_, Result<CompletionResponse>> {
+    ) -> BoxStream<'_, Result<Completion>> {
         // Map messages to OpenAI message types
         let openai_messages: Vec<ChatCompletionRequestMessage> = messages
             .iter()
@@ -128,12 +132,16 @@ impl CompletionModel for OpenAIBaseModel {
             .unwrap_or(0.0);
 
         // Build request
+        let stream_options = ChatCompletionStreamOptions {
+            include_usage: true,
+        };
         let request = CreateChatCompletionRequestArgs::default()
             .model(self.config.name.clone())
             .messages(openai_messages)
             .max_tokens(max_tokens)
             .temperature(temperature)
             .stream(true)
+            .stream_options(stream_options)
             .build();
 
         let request = match request {
@@ -154,6 +162,10 @@ impl CompletionModel for OpenAIBaseModel {
         let outer_stream = async_stream::stream! {
             let _start_time = start_time;
             let mut prev_time = prev_time.clone();
+            let mut prompt_eval_latency = 0.0;
+            let mut completion_latency = 0.0;
+            let mut completion_runs = 0u32;
+
             // Send the request and get back a streaming response
             match self.client.chat().create_stream(request).await {
                 Ok(response) => {
@@ -173,34 +185,36 @@ impl CompletionModel for OpenAIBaseModel {
 
                         match next {
                             Ok(chunk) => {
-                                // CAPTURE RAW CHUNK (ADD THIS NEW CODE)
                                 let raw_json = serde_json::to_string(&chunk).unwrap_or_else(|_| String::from(""));
 
                                 // Check if we have a content block in the first choice
                                 if let Some(choice) = chunk.choices.first() {
                                     let text = choice.delta.content.clone().unwrap_or_else(|| "".to_string());
-                                    let mut prompt_eval_latency = 0.0;
-                                    let mut completion_latency = elapsed;
-
                                     // For the first chunk, set the prompt_eval_latency_ms
                                     if first_chunk {
                                         prompt_eval_latency = elapsed;
-                                        completion_latency = elapsed;
                                         first_chunk = false;
                                     }
 
-                                    yield Ok(CompletionResponse {
+                                    completion_runs += 1;
+                                    completion_latency += elapsed;
+
+                                    yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
                                         finish_reason: choice.finish_reason.as_ref().map(|x| format!("{:?}", x)),
-                                        metrics: CompletionMetrics {
-                                            prompt_tokens: 0, // TODO: token counting
-                                            prompt_eval_latency_ms: prompt_eval_latency,
-                                            completion_tokens: 0, // TODO: token counting
-                                            completion_runs: 1,
-                                            completion_latency_ms: completion_latency,
-                                        },
-                                        raw_chunk: Some(raw_json), // ADD THIS FIELD
-                                    });
+                                        raw_chunk: Some(raw_json),
+                                    }));
+                                }
+                                else if let Some(usage) = chunk.usage {
+                                    // Final completion response has empty choices and includes
+                                    // usage
+                                    yield Ok(Completion::Metrics(CompletionMetrics{
+                                        prompt_tokens: usage.prompt_tokens,
+                                        prompt_eval_latency_ms: prompt_eval_latency,
+                                        completion_tokens: usage.completion_tokens,
+                                        completion_runs: completion_runs,
+                                        completion_latency_ms: completion_latency,
+                                    }));
                                 }
                             }
                             Err(err) => {
@@ -219,11 +233,6 @@ impl CompletionModel for OpenAIBaseModel {
         Box::pin(outer_stream)
     }
 
-    async fn count_tokens(&self, _text: &str) -> usize {
-        // TODO: Implement token counting
-        0
-    }
-
     async fn free(&mut self) {
         // No resources to free
     }
@@ -233,7 +242,7 @@ impl CompletionModel for OpenAIBaseModel {
 mod tests {
     use super::*;
     use crate::core::completion::SenderType;
-    use crate::core::model::{ModelCapability, ModelProvider};
+    use crate::core::model::ModelProvider;
     use serde_json::json;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -274,7 +283,21 @@ mod tests {
                     "delta": {},
                     "index": 0,
                     "finish_reason": "stop"
-                }]
+                }],
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 30,
+                    "total_tokens": 50,
+                    "prompt_tokens_details": {},
+                    "completion_tokens_details": {"reasoning_tokens": 5}
+                }
             }),
         ];
 
@@ -295,8 +318,7 @@ mod tests {
 
         let config = ModelConfig {
             name: "test-model".to_string(),
-            provider: "openai".to_string(), // Changed from ModelProvider::Openai
-            capabilities: vec![ModelCapability::Chat],
+            provider: ModelProvider::Openai,
             settings,
         };
 
@@ -346,10 +368,15 @@ mod tests {
 
         // Collect and assert on responses
         let mut responses = Vec::new();
-        while let Some(response_result) = stream.next().await {
-            let response = response_result.unwrap(); // Unwrap the Result
-            println!("{:?}", response);
-            responses.push(response);
+        let mut metrics = CompletionMetrics::default();
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result.unwrap() {
+                Completion::Response(response) => {
+                    println!("{:?}", response);
+                    responses.push(response);
+                }
+                Completion::Metrics(m) => metrics = m,
+            }
         }
 
         // We expect 3 responses: two content chunks and one finish reason
@@ -358,5 +385,11 @@ mod tests {
         assert_eq!(responses[1].text, " world");
         assert_eq!(responses[2].text, "");
         assert_eq!(responses[2].finish_reason, Some("Stop".to_string()));
+
+        assert_eq!(metrics.prompt_tokens, 20);
+        assert_eq!(metrics.completion_tokens, 30);
+        assert_eq!(metrics.completion_runs, 3);
+        assert!(metrics.completion_latency_ms != 0.0);
+        assert!(metrics.prompt_eval_latency_ms != 0.0)
     }
 }

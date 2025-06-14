@@ -8,7 +8,7 @@ pub struct ModelConfig {
     pub name: String,
     #[serde(alias = "type")]
     pub provider: ModelProvider,
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub settings: HashMap<String, serde_yaml::Value>,
 }
 
@@ -18,7 +18,6 @@ pub struct ModelConfig {
 pub enum ModelProvider {
     Gguf,
     Openai,
-    Ollama,
 }
 
 impl Into<String> for ModelProvider {
@@ -32,7 +31,6 @@ impl ModelProvider {
         match self {
             ModelProvider::Gguf => "gguf",
             ModelProvider::Openai => "openai",
-            ModelProvider::Ollama => "ollama",
         }
     }
 }

@@ -119,7 +119,7 @@ impl RawConfig {
 
         Ok(Config {
             models: models_with_names,
-            profiles: self.profiles, // `self.profiles` can be moved here now
+            profiles: self.profiles,
             chat: ModeConfig {
                 model: chat_model,
                 profile: chat_profile,
@@ -175,29 +175,12 @@ mod tests {
         path::PathBuf,
     };
 
-    use rand;
-    use serde::{Deserialize, Serialize};
-    use thiserror::Error;
-
-    use crate::{
-        core::model::ModelConfig,
-        platform::assets::{get_config_dir, get_default_config},
-    };
+    use tempfile::{env::temp_dir, tempdir};
 
     use super::*;
 
-    // Helpers for test environment setup
-    fn get_test_dir() -> PathBuf {
-        let random_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        std::env::temp_dir().join(format!("arey-test-{}", random_id))
-    }
-
-    // Helper to create a temporary config file for tests
     fn create_temp_config(content: &str) -> PathBuf {
-        let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
+        let temp_dir = temp_dir();
         let config_path = temp_dir.join("arey.yml");
         fs::create_dir_all(&temp_dir).unwrap();
         File::create(&config_path)
@@ -207,18 +190,10 @@ mod tests {
         config_path
     }
 
-    // Helper to create a temporary directory for config file creation tests
-    fn create_temp_config_dir() -> PathBuf {
-        let temp_dir = std::env::temp_dir().join(format!("arey-test-{}", rand::random::<u16>()));
-        temp_dir.join("config")
-    }
-
-    // Helper for creating a dummy ModelConfig object
     fn dummy_model_config(name: &str) -> crate::core::model::ModelConfig {
         crate::core::model::ModelConfig {
             name: name.to_string(),
-            r#type: crate::core::model::ModelProvider::Gguf,
-            capabilities: vec![crate::core::model::ModelCapability::Completion],
+            provider: crate::core::model::ModelProvider::Gguf,
             settings: HashMap::from([(
                 "n_ctx".to_string(),
                 serde_yaml::Value::Number(4096.into()),
@@ -405,11 +380,12 @@ task:
 
     #[test]
     fn test_create_or_get_config_file_when_not_exist() {
-        let config_dir = create_temp_config_dir();
-        let config_file = config_dir.join("arey.yml");
+        let config_dir = tempdir().unwrap();
+        let config_file = config_dir.path().join("arey.yml");
 
         let (exists, file_path) = create_or_get_config_file(Some(config_file.clone())).unwrap();
 
+        println!("{:?} {:?}", config_dir, config_file);
         assert!(!exists);
         assert_eq!(file_path, config_file);
         assert!(file_path.exists());
@@ -426,6 +402,9 @@ task:
         assert_eq!(config.chat.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "dummy-13b");
         assert_eq!(config.task.profile.temperature, 0.8);
+
+        let dummy7b = config.models.get("dummy-7b").unwrap();
+        assert_eq!(dummy7b.settings.len(), 2);
     }
 
     #[test]

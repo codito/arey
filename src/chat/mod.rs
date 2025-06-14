@@ -1,6 +1,6 @@
 // Unified chat interface
+mod chat;
 mod console_ux;
-mod service;
 
+pub use chat::*;
 pub use console_ux::start_chat;
-pub use service::*;

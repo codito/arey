@@ -141,7 +141,7 @@ impl Chat {
                         }
                         Completion::Metrics(usage) => {
                             metrics = usage;
-                            // Just process metrics, don't break here
+                            // Do not break to ensure that stream end can be passed to the clients.
                         }
                     }
                     Err(e) => {

@@ -7,9 +7,9 @@ use crate::chat::{Chat, start_chat};
 use crate::core::config::get_config;
 use anyhow::Context;
 use clap::{Parser, Subcommand, command};
-use tokio::sync::Mutex;
+use std::path::Path;
 use std::sync::Arc;
-use std::path::Path; // Added this line
+use tokio::sync::Mutex; // Added this line
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
@@ -86,8 +86,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Play { file, no_watch } => {
             let file_path = play::PlayFile::create_missing(file.as_deref().map(Path::new))
                 .context("Failed to create play file")?;
-            let mut play_file = play::PlayFile::new(&file_path)?;
-            play::run_play(&mut play_file, *no_watch).await?;
+            let mut play_file = play::PlayFile::new(&file_path, &config)?;
+            play::run_play(&mut play_file, &config, *no_watch).await?;
         }
     }
 

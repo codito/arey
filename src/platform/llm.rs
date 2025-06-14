@@ -1,6 +1,6 @@
 use crate::core::completion::CompletionModel;
 use crate::core::model::ModelProvider;
-use crate::platform::{llama, ollama, openai};
+use crate::platform::{llama, openai};
 use anyhow::Result;
 
 #[derive(thiserror::Error, Debug)]
@@ -17,10 +17,6 @@ pub fn get_completion_llm(
     match model_config.provider {
         ModelProvider::Gguf => {
             let model = llama::LlamaBaseModel::new(model_config)?;
-            Ok(Box::new(model))
-        }
-        ModelProvider::Ollama => {
-            let model = ollama::OllamaBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
         ModelProvider::Openai => {

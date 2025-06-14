@@ -1,5 +1,5 @@
 // Handles user interaction for chat
-use crate::chat::service::Chat;
+use crate::chat::chat::Chat;
 use crate::core::completion::CancellationToken;
 use crate::platform::console::GenerationSpinner;
 use anyhow::Result;
@@ -88,7 +88,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         let chat_clone = chat.clone();
         let user_input_for_future = user_input.to_string();
 
-        let (combined_metrics, was_cancelled) = {
+        let was_cancelled = {
             // Get stream response
             let mut chat_guard = chat_clone.lock().await;
             let mut stream = {
@@ -150,13 +150,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             // Ensure spinner is cleared after stream processing
             spinner.clear();
 
-            // Process metrics
-            let metrics = chat_clone.lock().await.get_last_completion_metrics();
-
-            (
-                metrics,
-                was_cancelled_internal || cancel_token.is_cancelled(),
-            )
+            was_cancelled_internal || cancel_token.is_cancelled()
         };
 
         // Print footer with metrics
@@ -168,7 +162,8 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
         let mut footer_details = String::new();
         if !was_cancelled {
-            if let Some(combined) = combined_metrics {
+            let metrics = chat.clone().lock().await.get_last_completion_metrics();
+            if let Some(combined) = metrics {
                 if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
                     footer_details.push_str(&format!(
                         " {:.2}s to first token.",
@@ -187,7 +182,10 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                 }
 
                 if combined.completion_tokens > 0 {
-                    footer_details.push_str(&format!(" {} tokens.", combined.completion_tokens));
+                    footer_details.push_str(&format!(
+                        " {} completion tokens.",
+                        combined.completion_tokens
+                    ));
                 }
 
                 if combined.prompt_tokens > 0 {
