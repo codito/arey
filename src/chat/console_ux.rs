@@ -1,6 +1,6 @@
 // Handles user interaction for chat
 use crate::chat::service::Chat;
-use crate::core::completion::{CancellationToken, CompletionMetrics, combine_metrics};
+use crate::core::completion::CancellationToken;
 use crate::platform::console::GenerationSpinner;
 use anyhow::Result;
 use futures::StreamExt;
@@ -97,7 +97,6 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                     .await?
             };
 
-            let chunks_metrics = Arc::new(Mutex::new(Vec::<CompletionMetrics>::new()));
             let mut first_token_received = false;
             let mut was_cancelled_internal = false;
 
@@ -133,7 +132,6 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                                         // Print token to console
                                         print!("{}", chunk.text);
                                         io::stdout().flush()?;
-                                        chunks_metrics.lock().await.push(chunk.metrics.clone());
                                     }
                                     Err(e) => {
                                         eprintln!("Error: {}", e);
@@ -153,51 +151,48 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             spinner.clear();
 
             // Process metrics
-            let metrics = chunks_metrics.lock().await;
-            let combined = if !metrics.is_empty() {
-                Some(combine_metrics(&metrics))
-            } else {
-                None
-            };
+            let metrics = chat_clone.lock().await.get_last_completion_metrics();
 
             (
-                combined,
+                metrics,
                 was_cancelled_internal || cancel_token.is_cancelled(),
             )
         };
 
         // Print footer with metrics
         let footer = if was_cancelled {
-            "◼ Canceled.".to_string()
+            "◼ Canceled."
         } else {
-            "◼ Completed.".to_string()
+            "◼ Completed."
         };
 
         let mut footer_details = String::new();
-        if let Some(combined) = combined_metrics {
-            if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
-                footer_details.push_str(&format!(
-                    " {:.2}s to first token.",
-                    combined.prompt_eval_latency_ms / 1000.0
-                ));
-                footer_details.push_str(&format!(
-                    " {:.2}s total.",
-                    combined.completion_latency_ms / 1000.0
-                ));
-            }
+        if !was_cancelled {
+            if let Some(combined) = combined_metrics {
+                if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
+                    footer_details.push_str(&format!(
+                        " {:.2}s to first token.",
+                        combined.prompt_eval_latency_ms / 1000.0
+                    ));
+                    footer_details.push_str(&format!(
+                        " {:.2}s total.",
+                        combined.completion_latency_ms / 1000.0
+                    ));
+                }
 
-            if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
-                let tokens_per_sec =
-                    (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
-                footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
-            }
+                if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
+                    let tokens_per_sec = (combined.completion_tokens as f32 * 1000.0)
+                        / combined.completion_latency_ms;
+                    footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
+                }
 
-            if combined.completion_tokens > 0 {
-                footer_details.push_str(&format!(" {} tokens.", combined.completion_tokens));
-            }
+                if combined.completion_tokens > 0 {
+                    footer_details.push_str(&format!(" {} tokens.", combined.completion_tokens));
+                }
 
-            if combined.prompt_tokens > 0 {
-                footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
+                if combined.prompt_tokens > 0 {
+                    footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
+                }
             }
         }
 
