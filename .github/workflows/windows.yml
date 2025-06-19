@@ -1,6 +1,3 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
-
 name: windows
 
 on:
@@ -15,26 +12,24 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ['3.10', 3.11, 3.12]
+        toolchain: [stable, 1.70.0]
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          # Install a specific version of uv.
-          version: "0.4.18"
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+          toolchain: ${{ matrix.toolchain }}
+          target: x86_64-pc-windows-msvc
+      - name: Cache cargo registry
+        uses: actions/cache@v3
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          uv pip install codecov
-          uv pip freeze
-      - name: Lint with ruff
-        run: |
-          uv run ruff check
-      - name: Test with pytest
-        run: |
-          uv run pytest
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: windows-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
