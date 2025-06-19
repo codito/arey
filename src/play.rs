@@ -325,7 +325,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
         if let Some(reason) = result.finish_reason.clone() {
             footer_complete.push_str(&format!("({reason})"));
         }
-        println!("");
+        println!();
         println!(
             "{}",
             style_text(

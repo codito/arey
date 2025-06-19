@@ -7,6 +7,7 @@ use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::platform::console::{style_text, MessageType}; // Added this import
 
 /// Command handler logic
 async fn handle_command(
@@ -203,7 +204,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
         println!();
         println!();
-        println!("{footer} {footer_details}");
+        println!("{}", style_text(&format!("{footer} {footer_details}"), MessageType::Footer));
         println!();
     }
 
