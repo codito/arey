@@ -61,7 +61,14 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         io::stdout().flush()?;
 
         let mut user_input = String::new();
-        io::stdin().read_line(&mut user_input)?;
+        let num_bytes = io::stdin().read_line(&mut user_input)?;
+        
+        // Handle Ctrl+D (EOF)
+        if num_bytes == 0 {
+            println!("\nBye!");
+            return Ok(());
+        }
+        
         let user_input = user_input.trim();
 
         // Skip empty input
