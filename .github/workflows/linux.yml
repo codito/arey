@@ -18,7 +18,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
+      - name: Install LLVM Coverage
+        uses: taiki-e/install-action@cargo-llvm-cov
       - name: Cache cargo registry
         uses: actions/cache@v3
         with:
@@ -35,3 +37,5 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint with Clippy
         run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
+      - name: Code coverage
+        run: cargo llvm-cov
