@@ -4,7 +4,7 @@ use crate::core::completion::{
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, Stream};
 use llama_cpp_2::model::Special;
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -205,6 +205,6 @@ impl CompletionModel for LlamaBaseModel {
             }
         };
 
-        Box::pin(stream)
+        Box::pin(Box::new(stream) as Box<dyn Stream<Item = Result<Completion>> + Send>)
     }
 }
