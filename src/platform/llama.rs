@@ -11,9 +11,8 @@ use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{LlamaModel, params::LlamaModelParams},
+    model::{LlamaModel, params::LlamaModelParams, AddBos},
     sampling::LlamaSampler,
-    token::AddBos,
 };
 use std::{
     num::NonZeroU32,
@@ -156,7 +155,7 @@ impl CompletionModel for LlamaBaseModel {
 
             let mut n_cur = batch.n_tokens();
             let mut token_count = 0;
-            let mut decoder = Decoder::new_utf8();
+            let mut decoder = encoding_rs::Decoder::new(encoding_rs::UTF_8);
 
             // First yield metrics
             yield Completion::Response(CompletionResponse {
