@@ -205,6 +205,6 @@ impl CompletionModel for LlamaBaseModel {
             }
         };
 
-        Box::pin(Box::new(stream) as Box<dyn Stream<Item = Result<Completion>> + Send>)
+        Box::pin(stream) as BoxStream<'_, Result<Completion>>
     }
 }
