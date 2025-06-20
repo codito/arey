@@ -7,12 +7,9 @@ For other ways to run a local LLM, you can try one of the following:
 
 - [Llama.cpp][] for loading GGUF models downloaded locally. See our [Llama guide](llama.md) if you prefer more customizable way to
   manage your models.
-- [Ollama][] for managing local models. Please refer to the [Ollama
-  guide](ollama.md).
 
 [OpenAI]: https://platform.openai.com/docs/api-reference/chat
 [Llama.cpp]: https://github.com/ggerganov/llama.cpp
-[Ollama]: https://ollama.com
 
 ## Running the server
 

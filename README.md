@@ -96,7 +96,6 @@ See <https://apps.codito.in/arey/contribute>.
 - [x] Define new tasks with only a prompt, no code. See docs/samples directory
       for examples.
 - [x] Markdown formatting for chat mode.
-- [x] Ollama support.
 - [x] OpenAI server support.
 - [ ] Agents and tools.
 - [ ] Server proxy for any arey model.
