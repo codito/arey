@@ -5,10 +5,11 @@ use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::{BoxStream, Stream};
-use llama_cpp_2::model::Special;
+use tokio::sync::mpsc;
 use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
+    model::Special,
     llama_batch::LlamaBatch,
     model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
@@ -105,110 +106,101 @@ impl CompletionModel for LlamaBaseModel {
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion>> {
-        let prompt = Self::format_prompt(messages);
+        // Create channel for results
+        let (tx, rx) = mpsc::channel(32);
+        let prompt = Self::format_prompt(messages).clone();
         let max_tokens = settings
             .get("max_tokens")
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024);
+        let model_config = self.model_config.clone();
+        let context_params = self.context_params.clone();
+        let backend = self.backend.clone();
+        let model_ref = self.model.clone();
+        let cancel_token_clone = cancel_token.clone(); // Clone for the blocking task
 
-        let shared_model = self.model.clone();
-        let stream = async_stream::try_stream! {
-            let model = shared_model.lock().await;
-            let mut ctx = model
-                .new_context(&self.backend, self.context_params.clone())
-                .map_err(|e| anyhow!("Context creation failed: {e}"))?;
+        // Spawn blocking task
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = (|| -> Result<()> {
+                let model = model_ref.blocking_lock();
+                let mut ctx = model
+                    .new_context(&backend, context_params.clone())
+                    .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-            let tokens = model.str_to_token(&prompt, AddBos::Never)
-                .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
+                let tokens = model.str_to_token(&prompt, AddBos::Never)
+                    .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
-            // let start_time = Instant::now();
-            let mut batch = LlamaBatch::new(512, 1);
-            for (i, &token) in tokens.iter().enumerate() {
-                batch.add(token, i as i32, &[], i == tokens.len() - 1)
-                    .map_err(|e| anyhow!("Batch add failed: {e}"))?;
+                let mut batch = LlamaBatch::new(512, 1);
+                for (i, &token) in tokens.iter().enumerate() {
+                    batch.add(token, i as i32, &[], i == tokens.len() - 1)
+                        .map_err(|e| anyhow!("Batch add failed: {e}"))?;
+                }
+
+                // Process prompt
+                ctx.decode(&mut batch)
+                    .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
+
+                // Get seed from settings or default
+                let seed = settings
+                    .get("seed")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1234);
+                let mut sampler = LlamaSampler::chain_simple([
+                    LlamaSampler::dist(seed),
+                    LlamaSampler::greedy(),
+                ]);
+
+                let mut n_cur = batch.n_tokens();
+                let mut token_count = 0;
+                let mut decoder = encoding_rs::UTF_8.new_decoder();
+
+                // Generation loop
+                while token_count < max_tokens {
+                    if cancel_token_clone.is_cancelled() {
+                        break;
+                    }
+
+                    let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+                    sampler.accept(token);
+
+                    // Skip special tokens
+                    if model.is_eog_token(token) {
+                        break;
+                    }
+
+                    // Get token bytes and decode
+                    let token_bytes = model.token_to_bytes(token, Special::Tokenize)
+                        .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
+
+                    let mut last_chunk = String::new();
+                    decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
+
+                    let mut next_batch = LlamaBatch::new(1, 1);
+                    next_batch.add(token, n_cur, &[], true)?;
+                    ctx.decode(&mut next_batch)?;
+
+                    n_cur += 1;
+                    token_count += 1;
+
+                    // Send token through channel
+                    let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
+                        text: last_chunk,
+                        finish_reason: None,
+                        raw_chunk: None,
+                    })));
+                }
+                Ok(())
+            })() {
+                let _ = tx.blocking_send(Err(e));
             }
+        });
 
-            // Process prompt
-            ctx.decode(&mut batch)
-                .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
-            // let prompt_elapsed = start_time.elapsed();
-
-            // let prompt_metrics = CompletionMetrics {
-            //     prompt_tokens: tokens.len() as u32,
-            //     prompt_eval_latency_ms: prompt_elapsed.as_millis() as f32,
-            //     completion_tokens: 0,
-            //     completion_latency_ms: 0.0,
-            // };
-
-            // Get seed from settings or default
-            let seed = settings
-                .get("seed")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1234);
-
-            let mut sampler = LlamaSampler::chain_simple([
-                LlamaSampler::dist(seed),
-                LlamaSampler::greedy(),
-            ]);
-
-            let mut n_cur = batch.n_tokens();
-            let mut token_count = 0;
-            let mut decoder = encoding_rs::UTF_8.new_decoder();
-
-            // First yield metrics
-            yield Completion::Response(CompletionResponse {
-                text: String::new(),
-                finish_reason: None,
-                raw_chunk: None,
-                // metrics: Some(prompt_metrics),
-            });
-
-            // Generation loop
-            while token_count < max_tokens {
-                if cancel_token.is_cancelled() {
-                    break;
-                }
-
-                // let token_start = Instant::now();
-                let token = sampler.sample(&ctx, batch.n_tokens() - 1);
-                sampler.accept(token);
-
-                // Skip special tokens
-                if model.is_eog_token(token) {
-                    break;
-                }
-
-                // Get token bytes and decode
-                let token_bytes = model.token_to_bytes(token, Special::Tokenize)
-                    .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
-
-                let mut last_chunk = String::new();
-                decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
-
-                let mut next_batch = LlamaBatch::new(1, 1);
-                next_batch.add(token, n_cur, &[], true)?;
-                ctx.decode(&mut next_batch)
-                    .map_err(|e| anyhow!("Token decoding failed: {e}"))?;
-
-                n_cur += 1;
-                token_count += 1;
-
-                // Yield token with timing data
-                // let token_elapsed = token_start.elapsed();
-                yield Completion::Response(CompletionResponse {
-                    text: last_chunk,
-                    finish_reason: None,
-                    raw_chunk: None,
-                    // metrics: Some(CompletionMetrics {
-                    //     prompt_tokens: 0,
-                    //     prompt_eval_latency_ms: 0.0,
-                    //     completion_tokens: 1,
-                    //     completion_latency_ms: token_elapsed.as_millis() as f32,
-                    // }),
-                });
+        // Convert receiver to async stream
+        let stream = async_stream::try_stream! {
+            for await result in rx {
+                yield result?;
             }
         };
-
         Box::pin(stream)
     }
 }
