@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        toolchain: [stable, 1.70.0]
+        toolchain: [stable]
 
     steps:
       - uses: actions/checkout@v4
