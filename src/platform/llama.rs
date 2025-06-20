@@ -7,20 +7,18 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use encoding_rs::Decoder;
 use futures::stream::BoxStream;
-use llama_cpp_2::model::Special;
 use llama_cpp_2::{
     context::params::LlamaContextParams,
-    ggml_time_us,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
     model::{LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
+    token::AddBos,
 };
 use std::{
     num::NonZeroU32,
     path::PathBuf,
-    pin::pin,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 pub struct LlamaBaseModel {
@@ -45,7 +43,7 @@ impl LlamaBaseModel {
         let mut model_params = LlamaModelParams::default();
         if let Some(n_gpu_layers) = model_config.settings.get("n_gpu_layers") {
             if let Some(val) = n_gpu_layers.as_i64() {
-                model_params = model_params.with_n_gpu_layers(val as i32);
+                model_params = model_params.with_n_gpu_layers(val as u32);
             }
         }
 
@@ -66,7 +64,7 @@ impl LlamaBaseModel {
             .and_then(|v| v.as_i64())
             .and_then(|v| NonZeroU32::new(v as u32))
         {
-            context_params = context_params.with_n_ctx(n_ctx);
+            context_params = context_params.with_n_ctx(Some(n_ctx));
         }
 
         Ok(Self {
@@ -122,8 +120,8 @@ impl CompletionModel for LlamaBaseModel {
                 .new_context(&self.backend, self.context_params.clone())
                 .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-            // Tokenize prompt
-            let tokens = self.model.str_to_token(&prompt, false)
+            // Tokenize prompt - use AddBos::NotAdd instead of false
+            let tokens = self.model.str_to_token(&prompt, AddBos::NotAdd)
                 .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
             let start_time = Instant::now();
@@ -184,7 +182,7 @@ impl CompletionModel for LlamaBaseModel {
                 }
 
                 // Get token bytes and decode
-                let token_bytes = self.model.token_to_bytes(token, Special::Tokenize)
+                let token_bytes = self.model.token_to_bytes(token, AddBos::NotAdd)
                     .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
 
                 let mut last_chunk = String::new();
