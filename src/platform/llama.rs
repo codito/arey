@@ -1,24 +1,19 @@
 use crate::core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
-    CompletionResponse, SenderType,
+    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse, SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use encoding_rs::Decoder;
 use futures::stream::BoxStream;
+use llama_cpp_2::model::Special;
 use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{LlamaModel, params::LlamaModelParams, AddBos},
+    model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
-use std::{
-    num::NonZeroU32,
-    path::PathBuf,
-    time::Instant,
-};
+use std::{num::NonZeroU32, path::PathBuf};
 
 pub struct LlamaBaseModel {
     backend: LlamaBackend,
@@ -119,11 +114,10 @@ impl CompletionModel for LlamaBaseModel {
                 .new_context(&self.backend, self.context_params.clone())
                 .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-            // Tokenize prompt - use AddBos::NotAdd instead of false
-            let tokens = self.model.str_to_token(&prompt, AddBos::NotAdd)
+            let tokens = self.model.str_to_token(&prompt, AddBos::Never)
                 .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
-            let start_time = Instant::now();
+            // let start_time = Instant::now();
             let mut batch = LlamaBatch::new(512, 1);
             for (i, &token) in tokens.iter().enumerate() {
                 batch.add(token, i as i32, &[], i == tokens.len() - 1)
@@ -133,14 +127,14 @@ impl CompletionModel for LlamaBaseModel {
             // Process prompt
             ctx.decode(&mut batch)
                 .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
-            let prompt_elapsed = start_time.elapsed();
+            // let prompt_elapsed = start_time.elapsed();
 
-            let mut prompt_metrics = CompletionMetrics {
-                prompt_tokens: tokens.len() as u32,
-                prompt_eval_latency_ms: prompt_elapsed.as_millis() as f32,
-                completion_tokens: 0,
-                completion_latency_ms: 0.0,
-            };
+            // let prompt_metrics = CompletionMetrics {
+            //     prompt_tokens: tokens.len() as u32,
+            //     prompt_eval_latency_ms: prompt_elapsed.as_millis() as f32,
+            //     completion_tokens: 0,
+            //     completion_latency_ms: 0.0,
+            // };
 
             // Get seed from settings or default
             let seed = settings
@@ -155,7 +149,7 @@ impl CompletionModel for LlamaBaseModel {
 
             let mut n_cur = batch.n_tokens();
             let mut token_count = 0;
-            let mut decoder = encoding_rs::Decoder::new(encoding_rs::UTF_8);
+            let mut decoder = encoding_rs::UTF_8.new_decoder();
 
             // First yield metrics
             yield Completion::Response(CompletionResponse {
@@ -171,7 +165,7 @@ impl CompletionModel for LlamaBaseModel {
                     break;
                 }
 
-                let token_start = Instant::now();
+                // let token_start = Instant::now();
                 let token = sampler.sample(&ctx, batch.n_tokens() - 1);
                 sampler.accept(token);
 
@@ -181,7 +175,7 @@ impl CompletionModel for LlamaBaseModel {
                 }
 
                 // Get token bytes and decode
-                let token_bytes = self.model.token_to_bytes(token, AddBos::NotAdd)
+                let token_bytes = self.model.token_to_bytes(token, Special::Tokenize)
                     .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
 
                 let mut last_chunk = String::new();
@@ -196,7 +190,7 @@ impl CompletionModel for LlamaBaseModel {
                 token_count += 1;
 
                 // Yield token with timing data
-                let token_elapsed = token_start.elapsed();
+                // let token_elapsed = token_start.elapsed();
                 yield Completion::Response(CompletionResponse {
                     text: last_chunk,
                     finish_reason: None,
