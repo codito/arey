@@ -3,12 +3,11 @@ use crate::core::completion::{
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
-use futures::stream::{BoxStream, Stream};
+use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 use llama_cpp_2::{
     context::params::LlamaContextParams,
-    llama_backend::LlamaBackend,
+    llama_backend::{LlamaBackend, LlamaBackendInitError},
     model::Special,
     llama_batch::LlamaBatch,
     model::{AddBos, LlamaModel, params::LlamaModelParams},
@@ -27,7 +26,7 @@ pub struct LlamaBaseModel {
 }
 
 impl LlamaBaseModel {
-    pub fn new(model_config: ModelConfig) -> Result<Self> {
+    pub fn new(model_config: ModelConfig) -> Result<Self, LlamaBackendInitError> {
         let path = model_config
             .settings
             .get("path")
@@ -105,10 +104,9 @@ impl CompletionModel for LlamaBaseModel {
         messages: &[ChatMessage],
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
-    ) -> BoxStream<'_, Result<Completion>> {
+    ) -> BoxStream<'_, Result<Completion, anyhow::Error>> {
         // Create channel for results
         let (tx, rx) = mpsc::channel(32);
-        let prompt = Self::format_prompt(messages).clone();
         let max_tokens = settings
             .get("max_tokens")
             .and_then(|s| s.parse().ok())
@@ -116,13 +114,13 @@ impl CompletionModel for LlamaBaseModel {
         let model_config = self.model_config.clone();
         let context_params = self.context_params.clone();
         let backend = self.backend.clone();
+        let prompt = Self::format_prompt(messages);
         let model_ref = self.model.clone();
-        let cancel_token_clone = cancel_token.clone(); // Clone for the blocking task
+        let cancel_token = cancel_token.clone();
 
-        // Spawn blocking task
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
-                let model = model_ref.blocking_lock();
+                let mut model = model_ref.blocking_lock();
                 let mut ctx = model
                     .new_context(&backend, context_params.clone())
                     .map_err(|e| anyhow!("Context creation failed: {e}"))?;
@@ -156,7 +154,7 @@ impl CompletionModel for LlamaBaseModel {
 
                 // Generation loop
                 while token_count < max_tokens {
-                    if cancel_token_clone.is_cancelled() {
+                    if cancel_token.is_cancelled() {
                         break;
                     }
 
@@ -195,12 +193,7 @@ impl CompletionModel for LlamaBaseModel {
             }
         });
 
-        // Convert receiver to async stream
-        let stream = async_stream::try_stream! {
-            for await result in rx {
-                yield result?;
-            }
-        };
-        Box::pin(stream)
+        // Use the Receiver as a Stream
+        Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 }
