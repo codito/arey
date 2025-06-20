@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
+        id: rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -27,8 +28,10 @@ jobs:
           path: |
             ~\.cargo\registry
             ~\.cargo\git
+            ~\.rustup
+            ~\.cargo\bin
             target
-          key: windows-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ steps.rust.outputs.cachekey }}-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Build
         run: cargo build --verbose
       - name: Run tests

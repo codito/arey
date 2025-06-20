@@ -14,9 +14,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust toolchain
+      id: rust
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: stable
+    - name: Cache toolchain and deps
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ~/.rustup
+          ~/.cargo/bin
+          target
+        key: ${{ steps.rust.outputs.cachekey }}-${{ runner.os }}-publish
     - name: Cargo build
       run: cargo build --release
     - name: Package artifacts
