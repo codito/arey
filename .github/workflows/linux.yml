@@ -25,10 +25,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.rustup
-            ~/.cargo/bin
             target
-          key: ${{ steps.rust.outputs.cachekey }}-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Build
         run: cargo build --verbose
       - name: Run tests

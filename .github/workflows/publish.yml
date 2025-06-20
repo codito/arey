@@ -24,10 +24,8 @@ jobs:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
-          ~/.rustup
-          ~/.cargo/bin
           target
-        key: ${{ steps.rust.outputs.cachekey }}-${{ runner.os }}-publish
+        key: ${{ runner.os }}-publish
     - name: Cargo build
       run: cargo build --release
     - name: Package artifacts
