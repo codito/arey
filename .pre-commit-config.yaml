@@ -1,13 +1,17 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.12
+-   repo: local
     hooks:
-      - id: ruff
-        types_or: [python, pyi, jupyter]
-        args: [--fix]
-      - id: ruff-format
-        types_or: [python, pyi, jupyter]
-  - repo: https://github.com/DetachHead/basedpyright-pre-commit-mirror
-    rev: 1.18.3
-    hooks:
-      - id: basedpyright
+    -   id: rust-linting
+        name: Rust linting
+        description: Run cargo fmt on files included in the commit. rustfmt should be installed before-hand.
+        entry: cargo fmt --all --
+        pass_filenames: true
+        types: [file, rust]
+        language: system
+    -   id: rust-clippy
+        name: Rust clippy
+        description: Run cargo clippy on files included in the commit. clippy should be installed before-hand.
+        entry: cargo clippy --all-targets --all-features -- -Dclippy::all
+        pass_filenames: false
+        types: [file, rust]
+        language: system

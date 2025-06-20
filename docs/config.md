@@ -20,11 +20,10 @@ refer [here][config-file] for the latest configuration file snapshot.
 
 ### Models
 
-Model section provides a list of local LLM models for [Llama.cpp][] or [Ollama][]
-backends.
+Model section provides a list of local LLM models for [Llama.cpp][] or [OpenAI][]
+compatible backends.
 
 [Llama.cpp]: https://github.com/ggerganov/llama.cpp
-[Ollama]: https://ollama.com
 
 ```yaml
 # Example configuration for arey app
@@ -37,22 +36,16 @@ models:
     path: ~/models/tinydolphin-2.8-1.1b.Q4_K_M.gguf
     type: llama
     template: chatml
-  ollama-tinydolphin:
-    name: tinydolphin:latest # name of the model, see http://localhost:11434/api/tags
-    type: ollama
-    template: chatml
 ```
 
 `models` is a list of following elements. The `key`, e.g., `tinydolphin` can be
 user specified, it is used further to reference the model setting.
 
-- `name` (only for Ollama): specify the ollama model name. Should be a valid
-  name in the local library. Match with value from
-  <http://localhost:11434/api/tags>.
+- `name` (only for OpenAI compatible service): specify the model name.
 - `path` (only for Llama.cpp): specify the model file path. Supports expansion
   of user directory marker `~`.
-- `type`: must be `ollama` for Ollama models. Any other value is considered as
-  `llama` model.
+- `type`: must be `openai` for OpenAI compatible API endpoints. Any other value
+  is considered as `llama` model.
 - `template`: conversation template used by the model. We use this for the `arey
 chat` command to convert user and assistant messages. See the Templates
   section below for details.
@@ -97,11 +90,8 @@ Below are a few common settings.
 | top_k          | 0-30    | Number of tokens to consider for sampling    |
 | top_p          | 0.0-1.0 | Lower value samples from most likely tokens  |
 
-**Ollama models**: see the list of all parameters in [Model file][] API documentation.
-
 **Llama.cpp models**: see the list of all parameters in [create_completion][] API documentation.
 
-[Model file]: https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 [create_completion]: https://llama-cpp-python.readthedocs.io/en/latest/api-reference/#llama_cpp.Llama.create_completion
 
 ### Chat and Task settings
@@ -111,23 +101,15 @@ Below are a few common settings.
 
 ```yaml
 chat:
-  model: ollama-tinydolphin
+  model: tinydolphin
   profile: precise
 task:
-  model: ollama-tinydolphin
+  model: tinydolphin
   profile: precise
-  settings:
-    host: http://localhost:11434/
 ```
 
 For either section, you can specify the model settings in a `settings` member.
 Following model settings are supported for each model type.
-
-**Ollama models**
-
-| Setting key | Value                   | Remark                     |
-| ----------- | ----------------------- | -------------------------- |
-| host        | http://localhost:11434/ | Base url for Ollama server |
 
 **Llama.cpp models**
 

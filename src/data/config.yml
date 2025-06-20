@@ -7,12 +7,15 @@
 # https://github.com/codito/dotfiles/blob/master/.config/arey/arey.yml
 
 models:
-  dummy-7b:
-    path: ~/models/dummy-7b-instruct.Q5_K_M.gguf
+  openhermes25-mistral-7b:
+    path: TODO
     type: gguf
     # uncomment to specify configuration for llama-cpp
     # n_threads: 10
     # n_gpu_layers: 20
+  ollama-tinydolphin:
+    name: tinydolphin:latest   # name of the model, see http://localhost:11434/api/tags
+    type: ollama
   openai-example: # locally hosted openai compatible server, e.g. ollama server
     name: "gemma2-9b-it"
     type: openai
@@ -23,6 +26,7 @@ models:
     base_url: https://api.groq.com/openai/v1
     api_key: env:GROQ_API_KEY # defined as env variable
   # deepseek-coder-6.7b:
+  #   path: ~/docs/models/deepseek-coder-6.7b/deepseek-coder-6.7b-instruct.Q5_K_M.gguf
   #   type: deepseek
 
 profiles:
@@ -47,8 +51,8 @@ profiles:
     top_p: 0.18
 
 chat:
-  model: dummy-7b
+  model: openhermes25-mistral-7b
   profile: precise
 task:
-  model: dummy-7b
+  model: openhermes25-mistral-7b
   profile: precise

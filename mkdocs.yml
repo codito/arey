@@ -8,7 +8,6 @@ nav:
   - Getting Started: 'index.md'
   - Guides:
     - Llama models: 'llama.md'
-    - Ollama: 'ollama.md'
     - OpenAI: 'openai.md'
   - Configuration: 'config.md'
   - Contribute: 'contribute.md'

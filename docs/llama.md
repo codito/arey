@@ -4,12 +4,7 @@ This guide provides step-by-step guidance on using [Llama.cpp][] based models in
 `arey`. We will download a model from Huggingface, configure `arey` to use the
 model and finally run a few commands.
 
-[Ollama][] is an alternate way to automatically download your models and run them
-locally. See our [Ollama guide](ollama.md) if you prefer an automated quick
-start.
-
 [Llama.cpp]: https://github.com/ggerganov/llama.cpp
-[Ollama]: https://ollama.com
 
 ## Concepts
 
@@ -86,10 +81,6 @@ models:
   tinydolphin:
     path: ~/models/tinydolphin-2.8-1.1b.Q4_K_M.gguf
     type: llama
-    template: chatml
-  ollama-tinydolphin:
-    name: tinydolphin:latest # name of the model, see http://localhost:11434/api/tags
-    type: ollama
     template: chatml
 
 profiles:

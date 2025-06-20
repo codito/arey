@@ -4,12 +4,12 @@
 
 Arey is a simple large language model playground in your terminal.
 
-- ✨ Command line interface, works everywhere python is available.  
-- 🤖 Use any llama.cpp, ollama model or an openai compatible endpoint.  
-- 💬 Chat with your favorite local models. CPU friendly 🍀  
-- 🙋 Ask anything to AI models with a single command.  
+- ✨ Command line interface, works everywhere python is available.
+- 🤖 Use any llama.cpp, ollama model or an openai compatible endpoint.
+- 💬 Chat with your favorite local models. CPU friendly 🍀
+- 🙋 Ask anything to AI models with a single command.
 - 📋 Supercharged prompt fine-tuning workflow ❤️ Edit your prompt in _any_ editor
-and `arey` will generate a completion on save.  
+  and `arey` will generate a completion on save.
 - 🔓 No telemetry, no internet, nothing to sell.
 
 See [Get Started](https://apps.codito.in/arey) or notes below for a quick guide.
@@ -96,8 +96,9 @@ See <https://apps.codito.in/arey/contribute>.
 - [x] Define new tasks with only a prompt, no code. See docs/samples directory
       for examples.
 - [x] Markdown formatting for chat mode.
-- [x] Ollama support.
-- [ ] OpenAI server support.
+- [x] OpenAI server support.
+- [ ] Agents and tools.
+- [ ] Server proxy for any arey model.
 - [ ] Command support in chat. E.g., logs, change model, copy, clear, etc.
 - [ ] Discover prompts from user directory
 - [ ] Manage prompts and create new interactively
@@ -106,6 +107,8 @@ See <https://apps.codito.in/arey/contribute>.
 - [ ] Add [textfx](https://github.com/google/generative-ai-docs/tree/main/demos/palm/web/textfx)
 - [ ] Add offline knowledge bases and RAG. See
       <https://library.kiwix.org/#lang=eng>
+- [ ] Search: brave (2000calls/mo), Tavily (1000calls/mo), searxng
+- [ ] Reader API: https://jina.ai/reader/
 
 ## License
 
