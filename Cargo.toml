@@ -34,7 +34,7 @@ thiserror = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-llama-cpp-2 = { version = "0.1.*" }
+llama-cpp-2 = { version = "0.1.107" }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 # llama-cpp-2 = { version = "0.1.*", features = ["cuda"] }
