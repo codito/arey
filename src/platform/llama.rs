@@ -1,94 +1,218 @@
 use crate::core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse,
+    CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, CompletionResponse,
+    SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use encoding_rs::Decoder;
 use futures::stream::BoxStream;
-use serde::Deserialize;
-use std::collections::HashMap;
-
-#[derive(Debug, Deserialize)]
-pub struct LlamaSettings {
-    _n_ctx: usize,
-    _n_gpu_layers: i32,
-    _seed: u32,
-}
+use llama_cpp_2::{
+    context::params::LlamaContextParams,
+    ggml_time_us,
+    llama_backend::LlamaBackend,
+    llama_batch::LlamaBatch,
+    model::{params::LlamaModelParams, LlamaModel},
+    sampling::LlamaSampler,
+};
+use std::{
+    num::NonZeroU32,
+    path::PathBuf,
+    pin::pin,
+    time::{Duration, Instant},
+};
 
 pub struct LlamaBaseModel {
-    _config: ModelConfig,
-    _model: Option<llama_cpp_2::model::LlamaModel>,
-    // context: Option<llama_cpp_2::Context>,
+    backend: LlamaBackend,
+    model: LlamaModel,
+    context_params: LlamaContextParams,
+    model_config: ModelConfig,
     metrics: ModelMetrics,
-    // settings: LlamaSettings,
 }
 
 impl LlamaBaseModel {
-    pub fn new(config: ModelConfig) -> Result<Self> {
-        // let settings: LlamaSettings = serde_yaml::from_value(
-        //     serde_yaml::to_value(&config.settings)
-        //         .map_err(|_e| anyhow!("Invalid settings structure"))?,
-        // )?;
+    pub fn new(model_config: ModelConfig) -> Result<Self> {
+        let path = model_config
+            .settings
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!("'path' setting is required for llama model"))?;
 
-        // let mut model_builder = llama_cpp_2::Model::new();
-        // model_builder.n_ctx(settings.n_ctx);
+        let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
+
+        let mut model_params = LlamaModelParams::default();
+        if let Some(n_gpu_layers) = model_config.settings.get("n_gpu_layers") {
+            if let Some(val) = n_gpu_layers.as_i64() {
+                model_params = model_params.with_n_gpu_layers(val as i32);
+            }
+        }
+
+        let model = LlamaModel::load_from_file(&backend, &path, &model_params)
+            .map_err(|e| anyhow!("Model loading failed: {e}"))?;
+
+        let mut context_params = LlamaContextParams::default();
+        if let Some(threads) = model_config
+            .settings
+            .get("n_threads")
+            .and_then(|v| v.as_i64())
+        {
+            context_params = context_params.with_n_threads(threads as i32);
+        }
+        if let Some(n_ctx) = model_config
+            .settings
+            .get("n_ctx")
+            .and_then(|v| v.as_i64())
+            .and_then(|v| NonZeroU32::new(v as u32))
+        {
+            context_params = context_params.with_n_ctx(n_ctx);
+        }
 
         Ok(Self {
-            _config: config,
-            _model: None,
-            // context: None,
+            backend,
+            model,
+            context_params,
+            model_config,
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
-            // settings,
         })
+    }
+    
+    fn format_prompt(messages: &[ChatMessage]) -> String {
+        let mut prompt = String::new();
+        for msg in messages {
+            let role = match msg.sender {
+                SenderType::System => "system",
+                SenderType::User => "user",
+                SenderType::Assistant => "assistant",
+            };
+            prompt.push_str(&format!("{role}: {}\n", msg.text));
+        }
+        prompt
     }
 }
 
 #[async_trait]
 impl CompletionModel for LlamaBaseModel {
-    // fn context_size(&self) -> usize {
-    //     self.settings.n_ctx
-    // }
-
     fn metrics(&self) -> ModelMetrics {
         self.metrics.clone()
     }
 
     async fn load(&mut self, _text: &str) -> Result<()> {
-        // TODO: Implement actual loading
+        // No-op for GGUF models
         Ok(())
     }
 
     async fn complete(
         &mut self,
-        _messages: &[ChatMessage],
-        _settings: &HashMap<String, String>,
-        cancel_token: CancellationToken, // Add parameter
+        messages: &[ChatMessage],
+        settings: &std::collections::HashMap<String, String>,
+        cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion>> {
-        // Add cancellation token handling
-        let stream = async_stream::stream! {
-            // This would be replaced with actual streaming implementation
-            for i in 0..10 {
-                // Check cancellation token periodically
+        let prompt = Self::format_prompt(messages);
+        let max_tokens = settings
+            .get("max_tokens")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024);
+
+        let stream = async_stream::try_stream! {
+            let mut ctx = self.model
+                .new_context(&self.backend, self.context_params.clone())
+                .map_err(|e| anyhow!("Context creation failed: {e}"))?;
+
+            // Tokenize prompt
+            let tokens = self.model.str_to_token(&prompt, false)
+                .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
+
+            let start_time = Instant::now();
+            let mut batch = LlamaBatch::new(512, 1);
+            for (i, &token) in tokens.iter().enumerate() {
+                batch.add(token, i as i32, &[], i == tokens.len() - 1)
+                    .map_err(|e| anyhow!("Batch add failed: {e}"))?;
+            }
+            
+            // Process prompt
+            ctx.decode(&mut batch)
+                .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
+            let prompt_elapsed = start_time.elapsed();
+            
+            let mut prompt_metrics = CompletionMetrics {
+                prompt_tokens: tokens.len() as u32,
+                prompt_eval_latency_ms: prompt_elapsed.as_millis() as f32,
+                completion_tokens: 0,
+                completion_latency_ms: 0.0,
+            };
+            
+            // Get seed from settings or default
+            let seed = settings
+                .get("seed")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1234);
+            
+            let mut sampler = LlamaSampler::chain_simple([
+                LlamaSampler::dist(seed),
+                LlamaSampler::greedy(),
+            ]);
+            
+            let mut n_cur = batch.n_tokens();
+            let mut token_count = 0;
+            let mut decoder = Decoder::new_utf8();
+            
+            // First yield metrics
+            yield Completion::Response(CompletionResponse {
+                text: String::new(),
+                finish_reason: None,
+                raw_chunk: None,
+                metrics: Some(prompt_metrics), // Changed to Some(prompt_metrics)
+            });
+            
+            // Generation loop
+            while token_count < max_tokens {
                 if cancel_token.is_cancelled() {
-                    yield Err(anyhow::anyhow!("Cancelled by user"));
                     break;
                 }
-
-                // Simulate work
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                yield Ok(Completion::Response(CompletionResponse {
-                    text: format!("Chunk {}\n", i),
+                
+                let token_start = Instant::now();
+                let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+                sampler.accept(token);
+                
+                // Skip special tokens
+                if self.model.is_eog_token(token) {
+                    break;
+                }
+                
+                // Get token bytes and decode
+                let token_bytes = self.model.token_to_bytes(token, true)
+                    .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
+                
+                let mut last_chunk = String::new();
+                decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
+                
+                let mut next_batch = LlamaBatch::new(1, 1);
+                next_batch.add(token, n_cur, &[], true)?;
+                ctx.decode(&mut next_batch)
+                    .map_err(|e| anyhow!("Token decoding failed: {e}"))?;
+                
+                n_cur += 1;
+                token_count += 1;
+                
+                // Yield token with timing data
+                let token_elapsed = token_start.elapsed();
+                yield Completion::Response(CompletionResponse {
+                    text: last_chunk,
                     finish_reason: None,
-                    raw_chunk: None
-                }));
+                    raw_chunk: None,
+                    metrics: Some(CompletionMetrics { // Changed to Some(...)
+                        prompt_tokens: 0,
+                        prompt_eval_latency_ms: 0.0,
+                        completion_tokens: 1,
+                        completion_latency_ms: token_elapsed.as_millis() as f32,
+                    }),
+                });
             }
         };
+        
         Box::pin(stream)
     }
-
-    // async fn free(&mut self) {
-    //     // TODO: Release resources
-    // }
 }
