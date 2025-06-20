@@ -20,15 +20,15 @@ pub enum ModelProvider {
     Openai,
 }
 
-impl Into<String> for ModelProvider {
-    fn into(self) -> String {
-        self.as_str().into()
+impl From<ModelProvider> for String {
+    fn from(val: ModelProvider) -> Self {
+        val.as_str().into()
     }
 }
 
 impl ModelProvider {
-    pub fn as_str(self) -> &'static str {
-        match self {
+    pub fn as_str(&self) -> &'static str {
+        match &self {
             ModelProvider::Gguf => "gguf",
             ModelProvider::Openai => "openai",
         }

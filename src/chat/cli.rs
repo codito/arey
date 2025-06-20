@@ -1,13 +1,13 @@
 // Handles user interaction for chat
-use crate::chat::chat::Chat;
-use crate::core::completion::CancellationToken;
+use crate::chat::Chat;
+use crate::core::completion::{CancellationToken, CompletionMetrics};
 use crate::platform::console::GenerationSpinner;
+use crate::platform::console::{MessageType, style_text};
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use crate::platform::console::{style_text, MessageType}; // Added this import
+use tokio::sync::Mutex; // Added this import
 
 /// Command handler logic
 async fn handle_command(
@@ -21,8 +21,8 @@ async fn handle_command(
     {
         if cmd.0 == user_input {
             match user_input {
-                "/log" => match chat.get_last_assistant_logs() {
-                    Some(logs) => println!("\n=== LOGS ===\n{logs}\n============="),
+                "/log" => match chat.get_last_assistant_context().await {
+                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
                     None => println!("No logs available"),
                 },
                 "/quit" | "/q" => {
@@ -63,13 +63,13 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
         let mut user_input = String::new();
         let num_bytes = io::stdin().read_line(&mut user_input)?;
-        
+
         // Handle Ctrl+D (EOF)
         if num_bytes == 0 {
             println!("\nBye!");
             return Ok(());
         }
-        
+
         let user_input = user_input.trim();
 
         // Skip empty input
@@ -162,51 +162,63 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         };
 
         // Print footer with metrics
-        let footer = if was_cancelled {
-            "◼ Canceled."
-        } else {
-            "◼ Completed."
+        let mut finish_reason = String::new();
+        let footer_details = match was_cancelled {
+            true => match chat.clone().lock().await.get_last_assistant_context().await {
+                Some(ctx) => {
+                    finish_reason = ctx.finish_reason.unwrap_or_default();
+                    get_footer_details(ctx.metrics)
+                }
+                None => String::new(), // error
+            },
+            false => String::new(),
+        };
+        let footer = match was_cancelled {
+            true => "◼ Canceled.".to_string(),
+            false => format!("◼ Completed({finish_reason})."),
         };
 
-        let mut footer_details = String::new();
-        if !was_cancelled {
-            let metrics = chat.clone().lock().await.get_last_completion_metrics();
-            if let Some(combined) = metrics {
-                if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
-                    footer_details.push_str(&format!(
-                        " {:.2}s to first token.",
-                        combined.prompt_eval_latency_ms / 1000.0
-                    ));
-                    footer_details.push_str(&format!(
-                        " {:.2}s total.",
-                        combined.completion_latency_ms / 1000.0
-                    ));
-                }
-
-                if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
-                    let tokens_per_sec = (combined.completion_tokens as f32 * 1000.0)
-                        / combined.completion_latency_ms;
-                    footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
-                }
-
-                if combined.completion_tokens > 0 {
-                    footer_details.push_str(&format!(
-                        " {} completion tokens.",
-                        combined.completion_tokens
-                    ));
-                }
-
-                if combined.prompt_tokens > 0 {
-                    footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
-                }
-            }
-        }
-
         println!();
         println!();
-        println!("{}", style_text(&format!("{footer} {footer_details}"), MessageType::Footer));
+        println!(
+            "{}",
+            style_text(&format!("{footer} {footer_details}"), MessageType::Footer)
+        );
         println!();
     }
 
     Ok(())
+}
+
+fn get_footer_details(combined: CompletionMetrics) -> String {
+    let mut footer_details = String::new();
+    if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
+        footer_details.push_str(&format!(
+            " {:.2}s to first token.",
+            combined.prompt_eval_latency_ms / 1000.0
+        ));
+        footer_details.push_str(&format!(
+            " {:.2}s total.",
+            combined.completion_latency_ms / 1000.0
+        ));
+    }
+
+    if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
+        let tokens_per_sec =
+            (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
+        footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
+    }
+
+    if combined.completion_tokens > 0 {
+        footer_details.push_str(&format!(
+            " {} completion tokens.",
+            combined.completion_tokens
+        ));
+    }
+
+    if combined.prompt_tokens > 0 {
+        footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
+    }
+
+    footer_details
 }

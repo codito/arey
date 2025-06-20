@@ -7,9 +7,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Context associated with a single chat message
+#[derive(Clone)]
 pub struct MessageContext {
     pub finish_reason: Option<String>,
     pub metrics: CompletionMetrics,
@@ -20,7 +22,7 @@ pub struct MessageContext {
 pub struct Message {
     pub text: String,
     pub sender: SenderType,
-    pub timestamp: DateTime<Utc>,
+    pub _timestamp: DateTime<Utc>,
     pub context: Option<MessageContext>,
 }
 
@@ -35,15 +37,15 @@ impl Message {
 
 /// Context associated with a chat
 pub struct ChatContext {
-    pub metrics: Option<ModelMetrics>,
-    pub logs: String,
+    pub _metrics: Option<ModelMetrics>,
+    pub _logs: String,
 }
 
 /// Chat conversation between human and AI model
 pub struct Chat {
     pub messages: Arc<Mutex<Vec<Message>>>,
-    pub context: ChatContext,
-    model_config: ModelConfig,
+    pub _context: ChatContext,
+    _model_config: ModelConfig,
     model: Box<dyn CompletionModel + Send + Sync>,
 }
 
@@ -61,11 +63,11 @@ impl Chat {
         let metrics = model.metrics();
         Ok(Self {
             messages: Arc::new(Mutex::new(Vec::new())),
-            context: ChatContext {
-                metrics: Some(metrics),
-                logs: String::new(), // TODO: stderr capture
+            _context: ChatContext {
+                _metrics: Some(metrics),
+                _logs: String::new(), // TODO: stderr capture
             },
-            model_config,
+            _model_config: model_config,
             model,
         })
     }
@@ -75,17 +77,17 @@ impl Chat {
         message: String,
         cancel_token: CancellationToken, // Added cancellation token
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
-        let timestamp = Utc::now();
+        let _timestamp = Utc::now();
 
         // Create user message and add to history
         let user_message = Message {
             text: message.clone(),
             sender: SenderType::User,
-            timestamp,
+            _timestamp,
             context: None,
         };
 
-        let mut messages_lock = self.messages.lock().unwrap();
+        let mut messages_lock = self.messages.lock().await;
         messages_lock.push(user_message);
 
         // Add assistant message placeholder
@@ -93,7 +95,7 @@ impl Chat {
         messages_lock.push(Message {
             text: String::new(),
             sender: SenderType::Assistant,
-            timestamp: Utc::now(),
+            _timestamp: Utc::now(),
             context: None,
         });
         drop(messages_lock);
@@ -102,7 +104,7 @@ impl Chat {
         let model_messages: Vec<ChatMessage> = self
             .messages
             .lock()
-            .unwrap()
+            .await
             .iter()
             .map(|msg| msg.to_chat_message())
             .collect();
@@ -153,7 +155,7 @@ impl Chat {
             }
 
             // Clear placeholder if error occurred
-            let mut messages = shared_messages.lock().unwrap();
+            let mut messages = shared_messages.lock().await;
             if has_error {
                 messages.truncate(assistant_index);
             }
@@ -162,7 +164,7 @@ impl Chat {
             if let Some(msg) = messages.get_mut(assistant_index) {
                 let msg_context = MessageContext {
                     finish_reason: last_finish_reason,
-                    metrics: metrics,
+                    metrics,
                     logs: raw_logs, // STORE ACCUMULATED LOGS
                 };
 
@@ -174,23 +176,12 @@ impl Chat {
         Ok(Box::pin(wrapped_stream))
     }
 
-    pub fn get_last_completion_metrics(&self) -> Option<CompletionMetrics> {
-        let messages_lock = self.messages.lock().unwrap();
+    pub async fn get_last_assistant_context(&self) -> Option<MessageContext> {
+        let messages_lock = self.messages.lock().await;
         messages_lock
             .iter()
             .rev()
             .find(|m| m.sender == SenderType::Assistant)
-            .and_then(|m| m.context.as_ref())
-            .map(|ctx| ctx.metrics.clone())
-    }
-
-    pub fn get_last_assistant_logs(&self) -> Option<String> {
-        let messages = self.messages.lock().unwrap();
-        messages
-            .iter()
-            .rev()
-            .find(|m| m.sender == SenderType::Assistant)
-            .and_then(|m| m.context.as_ref())
-            .map(|ctx| ctx.logs.clone())
+            .and_then(|m| m.context.clone())
     }
 }

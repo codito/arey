@@ -80,46 +80,52 @@ struct RawModeConfig {
 }
 
 impl RawConfig {
-    fn to_config(self) -> Result<Config, AreyConfigError> {
+    fn to_config(&self) -> Result<Config, AreyConfigError> {
         let mut models_with_names = HashMap::new();
-        for (k, mut v) in self.models {
+        for (k, v) in &self.models {
             // Update model name if not set
-            if v.name.is_empty() {
-                v.name = k.clone();
-            }
-            models_with_names.insert(k, v);
+            let model_name = if v.name.is_empty() {
+                k.clone()
+            } else {
+                v.name.clone()
+            };
+            let model = ModelConfig {
+                name: model_name,
+                ..v.clone()
+            };
+            models_with_names.insert(k.clone(), model);
         }
 
         let resolve_model =
-            |model_entry: StringOrObject<ModelConfig>| -> Result<ModelConfig, AreyConfigError> {
+            |model_entry: &StringOrObject<ModelConfig>| -> Result<ModelConfig, AreyConfigError> {
                 match model_entry {
                     StringOrObject::String(s) => models_with_names
-                        .get(&s)
+                        .get(s)
                         .cloned()
                         .ok_or_else(|| AreyConfigError::Config(format!("Model '{}' not found", s))),
-                    StringOrObject::Object(m) => Ok(m),
+                    StringOrObject::Object(m) => Ok(m.clone()),
                 }
             };
 
-        let resolve_profile = |profile_entry: Option<StringOrObject<ProfileConfig>>| -> Result<ProfileConfig, AreyConfigError> {
+        let resolve_profile = |profile_entry: &Option<StringOrObject<ProfileConfig>>| -> Result<ProfileConfig, AreyConfigError> {
             match profile_entry {
                 Some(StringOrObject::String(s)) => self.profiles
-                    .get(&s)
+                    .get(s)
                     .cloned()
                     .ok_or_else(|| AreyConfigError::Config(format!("Profile '{}' not found", s))),
-                Some(StringOrObject::Object(p)) => Ok(p),
+                Some(StringOrObject::Object(p)) => Ok(p.clone()),
                 None => Ok(ProfileConfig::default()),
             }
         };
 
-        let chat_model = resolve_model(self.chat.model)?;
-        let chat_profile = resolve_profile(self.chat.profile)?;
-        let task_model = resolve_model(self.task.model)?;
-        let task_profile = resolve_profile(self.task.profile)?;
+        let chat_model = resolve_model(&self.chat.model)?;
+        let chat_profile = resolve_profile(&self.chat.profile)?;
+        let task_model = resolve_model(&self.task.model)?;
+        let task_profile = resolve_profile(&self.task.profile)?;
 
         Ok(Config {
             models: models_with_names,
-            profiles: self.profiles,
+            profiles: self.profiles.clone(),
             chat: ModeConfig {
                 model: chat_model,
                 profile: chat_profile,
@@ -175,13 +181,13 @@ mod tests {
         path::PathBuf,
     };
 
-    use tempfile::{env::temp_dir, tempdir};
+    use tempfile::{NamedTempFile, env::temp_dir, tempdir};
 
     use super::*;
 
     fn create_temp_config(content: &str) -> PathBuf {
         let temp_dir = temp_dir();
-        let config_path = temp_dir.join("arey.yml");
+        let config_path = NamedTempFile::new().unwrap().path().to_owned();
         fs::create_dir_all(&temp_dir).unwrap();
         File::create(&config_path)
             .unwrap()

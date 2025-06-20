@@ -5,7 +5,6 @@ use crate::core::completion::{
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
-use async_openai::types::CompletionUsage;
 use async_openai::{
     Client as OpenAIClient,
     types::{
@@ -27,7 +26,6 @@ pub struct OpenAIBaseModel {
     config: ModelConfig,
     client: OpenAIClient<OpenAIConfig>,
     metrics: ModelMetrics,
-    settings: OpenAISettings,
 }
 
 impl OpenAIBaseModel {
@@ -63,29 +61,28 @@ impl OpenAIBaseModel {
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
-            settings: resolved_settings,
         })
     }
 
     fn to_openai_message(msg: &ChatMessage) -> ChatCompletionRequestMessage {
         match msg.sender {
-            crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
-                async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
-                    .content(msg.text.as_str()) // Use as_str to get &str
-                    .build()
-                    .unwrap(),
-            ),
+            // crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
+            //     async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
+            //         .content(msg.text.as_str())
+            //         .build()
+            //         .unwrap(),
+            // ),
             crate::core::completion::SenderType::Assistant => {
                 ChatCompletionRequestMessage::Assistant(
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(msg.text.as_str()) // Use as_str to get &str
+                        .content(msg.text.as_str())
                         .build()
                         .unwrap(),
                 )
             }
             crate::core::completion::SenderType::User => ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
-                    .content(msg.text.as_str()) // Use as_str to get &str
+                    .content(msg.text.as_str())
                     .build()
                     .unwrap(),
             ),
@@ -95,10 +92,10 @@ impl OpenAIBaseModel {
 
 #[async_trait]
 impl CompletionModel for OpenAIBaseModel {
-    fn context_size(&self) -> usize {
-        // TODO: Implement actual context size
-        4096
-    }
+    // fn context_size(&self) -> usize {
+    //     // TODO: Implement actual context size
+    //     4096
+    // }
 
     fn metrics(&self) -> ModelMetrics {
         self.metrics.clone()
@@ -161,10 +158,9 @@ impl CompletionModel for OpenAIBaseModel {
         // Create the stream
         let outer_stream = async_stream::stream! {
             let _start_time = start_time;
-            let mut prev_time = prev_time.clone();
+            let mut prev_time = prev_time;
             let mut prompt_eval_latency = 0.0;
             let mut completion_latency = 0.0;
-            let mut completion_runs = 0u32;
 
             // Send the request and get back a streaming response
             match self.client.chat().create_stream(request).await {
@@ -196,7 +192,6 @@ impl CompletionModel for OpenAIBaseModel {
                                         first_chunk = false;
                                     }
 
-                                    completion_runs += 1;
                                     completion_latency += elapsed;
 
                                     yield Ok(Completion::Response(CompletionResponse {
@@ -212,7 +207,6 @@ impl CompletionModel for OpenAIBaseModel {
                                         prompt_tokens: usage.prompt_tokens,
                                         prompt_eval_latency_ms: prompt_eval_latency,
                                         completion_tokens: usage.completion_tokens,
-                                        completion_runs: completion_runs,
                                         completion_latency_ms: completion_latency,
                                     }));
                                 }
@@ -233,9 +227,9 @@ impl CompletionModel for OpenAIBaseModel {
         Box::pin(outer_stream)
     }
 
-    async fn free(&mut self) {
-        // No resources to free
-    }
+    // async fn free(&mut self) {
+    //     // No resources to free
+    // }
 }
 
 #[cfg(test)]
@@ -335,7 +329,6 @@ mod tests {
         let model = OpenAIBaseModel::new(config).unwrap();
 
         assert_eq!(model.config.name, "test-model");
-        assert_eq!(model.settings.api_key, "MOCK_OPENAI_API_KEY");
     }
 
     #[tokio::test]
@@ -388,7 +381,6 @@ mod tests {
 
         assert_eq!(metrics.prompt_tokens, 20);
         assert_eq!(metrics.completion_tokens, 30);
-        assert_eq!(metrics.completion_runs, 3);
         assert!(metrics.completion_latency_ms != 0.0);
         assert!(metrics.prompt_eval_latency_ms != 0.0)
     }

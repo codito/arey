@@ -216,7 +216,7 @@ impl PlayFile {
 
         self.result = Some(PlayResult {
             response: text,
-            metrics: metrics,
+            metrics,
             finish_reason,
             // logs: None,
         });
@@ -233,7 +233,7 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
             MessageType::Footer
         )
     );
-    println!("");
+    println!();
 
     if no_watch {
         run_once(play_file).await?;
@@ -253,13 +253,13 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
 
     loop {
         tokio::select! {
-            Some(event) = rx.recv() => {
-                println!("");
+            Some(_event) = rx.recv() => {
+                println!();
                 println!(
                     "{}",
                     style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
                 );
-                println!("");
+                println!();
 
                 // Reload file content
                 match PlayFile::new(&file_path, config) {
@@ -278,7 +278,7 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
                         println!("{}", style_text(&format!("Error reloading file: {e}"), MessageType::Error));
                     }
                 }
-                println!("");
+                println!();
                 println!(
                     "{} `{}`",
                     style_text("Watching", MessageType::Footer),
@@ -305,7 +305,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
                 MessageType::Footer
             )
         );
-        println!("");
+        println!();
     }
 
     play_file.get_response().await?;
@@ -317,7 +317,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
         };
 
         println!("{}", output);
-        println!("");
+        println!();
 
         let tokens_per_sec =
             result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
@@ -360,10 +360,9 @@ pub mod watch {
                     if matches!(
                         event.kind,
                         EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
-                    ) {
-                        if let Err(_) = tx.blocking_send(Ok(event)) {
-                            // Receiver closed
-                        }
+                    ) && tx.blocking_send(Ok(event)).is_err()
+                    {
+                        // Receiver closed
                     }
                 }
             },
@@ -379,11 +378,11 @@ pub mod watch {
 mod test {
     use std::io::Write;
 
-    use crate::core::config::{self, get_config};
+    use crate::core::config::get_config;
 
     use super::*;
     use serde_yaml::Value;
-    use tempfile::{NamedTempFile, tempdir, tempfile};
+    use tempfile::{NamedTempFile, tempdir};
 
     const SAMPLE_PLAY_CONTENT: &str = r#"---
 model: test-model

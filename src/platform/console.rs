@@ -1,27 +1,20 @@
-use console::{Style, StyledObject, Term};
+use console::{Style, StyledObject};
 use indicatif::{ProgressBar, ProgressStyle};
-use once_cell::sync::Lazy;
-
-static CONSOLE_INSTANCE: Lazy<Term> = Lazy::new(|| Term::stdout());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
-    Prompt,
-    User,
-    AI,
+    // Prompt,
+    // User,
+    // AI,
     Footer,
     Error,
 }
 
-pub fn get_console() -> &'static Term {
-    &CONSOLE_INSTANCE
-}
-
 pub fn style_text(text: &str, style: MessageType) -> StyledObject<&str> {
     let style_obj = match style {
-        MessageType::Prompt => Style::new().blue().bold(),
-        MessageType::User => Style::new().blue(),
-        MessageType::AI => Style::new().white().bright(),
+        // MessageType::Prompt => Style::new().blue().bold(),
+        // MessageType::User => Style::new().blue(),
+        // MessageType::AI => Style::new().white().bright(),
         MessageType::Footer => Style::new().dim(),
         MessageType::Error => Style::new().red().bold(),
     };
@@ -50,16 +43,6 @@ impl GenerationSpinner {
     pub fn clear(&self) {
         self.spinner.finish_and_clear();
     }
-}
-
-pub fn capture_stderr<F>(f: F) -> String
-where
-    F: FnOnce() -> (),
-{
-    // In a real implementation we would capture stderr output
-    // For simplicity we'll just return an empty string
-    f();
-    "".to_string()
 }
 
 #[cfg(test)]
