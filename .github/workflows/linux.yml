@@ -38,4 +38,9 @@ jobs:
       - name: Lint with Clippy
         run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
       - name: Code coverage
-        run: cargo llvm-cov
+        run: cargo llvm-cov --codecov --output-path coverage.json
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: codito/arey
