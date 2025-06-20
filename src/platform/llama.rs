@@ -13,11 +13,13 @@ use llama_cpp_2::{
     model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
+use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
+use tokio::sync::Mutex;
 
 pub struct LlamaBaseModel {
     backend: LlamaBackend,
-    model: LlamaModel,
+    model: Arc<Mutex<LlamaModel>>,
     context_params: LlamaContextParams,
     model_config: ModelConfig,
     metrics: ModelMetrics,
@@ -63,7 +65,7 @@ impl LlamaBaseModel {
 
         Ok(Self {
             backend,
-            model,
+            model: Arc::new(Mutex::new(model)),
             context_params,
             model_config,
             metrics: ModelMetrics {
@@ -109,12 +111,14 @@ impl CompletionModel for LlamaBaseModel {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024);
 
+        let shared_model = self.model.clone();
         let stream = async_stream::try_stream! {
-            let mut ctx = self.model
+            let model = shared_model.lock().await;
+            let mut ctx = model
                 .new_context(&self.backend, self.context_params.clone())
                 .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-            let tokens = self.model.str_to_token(&prompt, AddBos::Never)
+            let tokens = model.str_to_token(&prompt, AddBos::Never)
                 .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
             // let start_time = Instant::now();
@@ -170,12 +174,12 @@ impl CompletionModel for LlamaBaseModel {
                 sampler.accept(token);
 
                 // Skip special tokens
-                if self.model.is_eog_token(token) {
+                if model.is_eog_token(token) {
                     break;
                 }
 
                 // Get token bytes and decode
-                let token_bytes = self.model.token_to_bytes(token, Special::Tokenize)
+                let token_bytes = model.token_to_bytes(token, Special::Tokenize)
                     .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
 
                 let mut last_chunk = String::new();
@@ -205,6 +209,6 @@ impl CompletionModel for LlamaBaseModel {
             }
         };
 
-        Box::pin(stream) as BoxStream<'_, Result<Completion>>
+        Box::pin(stream)
     }
 }
