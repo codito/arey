@@ -34,7 +34,7 @@ jobs:
       if: matrix.cuda
       uses: jimver/cuda-toolkit@master
       with:
-        cuda: 12.9
+        cuda: 12.9.0
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
