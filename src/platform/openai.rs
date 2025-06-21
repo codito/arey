@@ -66,12 +66,12 @@ impl OpenAIBaseModel {
 
     fn to_openai_message(msg: &ChatMessage) -> ChatCompletionRequestMessage {
         match msg.sender {
-            // crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
-            //     async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
-            //         .content(msg.text.as_str())
-            //         .build()
-            //         .unwrap(),
-            // ),
+            crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
+                async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
+                    .content(msg.text.as_str())
+                    .build()
+                    .unwrap(),
+            ),
             crate::core::completion::SenderType::Assistant => {
                 ChatCompletionRequestMessage::Assistant(
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()

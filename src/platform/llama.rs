@@ -1,38 +1,48 @@
 use crate::core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse, SenderType,
+    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use futures::stream::BoxStream;
-use tokio::sync::mpsc;
+use llama_cpp_2::model::LlamaChatMessage;
+use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
-    llama_backend::{LlamaBackend, LlamaBackendInitError},
-    model::Special,
+    llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
+    model::Special,
     model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
 use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 pub struct LlamaBaseModel {
-    backend: LlamaBackend,
+    backend: Arc<LlamaBackend>,
     model: Arc<Mutex<LlamaModel>>,
     context_params: LlamaContextParams,
-    model_config: ModelConfig,
+    // model_config: ModelConfig,
     metrics: ModelMetrics,
 }
 
 impl LlamaBaseModel {
-    pub fn new(model_config: ModelConfig) -> Result<Self, LlamaBackendInitError> {
+    pub fn new(model_config: ModelConfig) -> Result<Self> {
+        // if verbose {
+        //     tracing_subscriber::fmt().init();
+        // }
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+
         let path = model_config
             .settings
             .get("path")
-            .and_then(|v| v.as_str())
-            .map(PathBuf::from)
-            .ok_or_else(|| anyhow!("'path' setting is required for llama model"))?;
+            .ok_or_else(|| anyhow!("'path' setting is required for llama model"))?
+            .as_str()
+            .unwrap();
+        let expand_path = shellexpand::tilde(path).into_owned();
+        let model_path = PathBuf::from(expand_path);
 
         let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
 
@@ -43,7 +53,7 @@ impl LlamaBaseModel {
             }
         }
 
-        let model = LlamaModel::load_from_file(&backend, &path, &model_params)
+        let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
             .map_err(|e| anyhow!("Model loading failed: {e}"))?;
 
         let mut context_params = LlamaContextParams::default();
@@ -64,27 +74,14 @@ impl LlamaBaseModel {
         }
 
         Ok(Self {
-            backend,
+            backend: Arc::new(backend),
             model: Arc::new(Mutex::new(model)),
             context_params,
-            model_config,
+            // model_config,
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
         })
-    }
-
-    fn format_prompt(messages: &[ChatMessage]) -> String {
-        let mut prompt = String::new();
-        for msg in messages {
-            let role = match msg.sender {
-                SenderType::System => "system",
-                SenderType::User => "user",
-                SenderType::Assistant => "assistant",
-            };
-            prompt.push_str(&format!("{role}: {}\n", msg.text));
-        }
-        prompt
     }
 }
 
@@ -95,7 +92,6 @@ impl CompletionModel for LlamaBaseModel {
     }
 
     async fn load(&mut self, _text: &str) -> Result<()> {
-        // No-op for GGUF models
         Ok(())
     }
 
@@ -111,26 +107,45 @@ impl CompletionModel for LlamaBaseModel {
             .get("max_tokens")
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024);
-        let model_config = self.model_config.clone();
+        // Get seed from settings or default
+        let seed = settings
+            .get("seed")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1234);
+
         let context_params = self.context_params.clone();
-        let backend = self.backend.clone();
-        let prompt = Self::format_prompt(messages);
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
+        let shared_backend = self.backend.clone();
+        let llama_messages: Vec<LlamaChatMessage> = messages
+            .iter()
+            .map(|m| LlamaChatMessage::new(m.sender.clone().into(), m.text.clone()).unwrap())
+            .collect();
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
-                let mut model = model_ref.blocking_lock();
+                let model = model_ref.blocking_lock();
                 let mut ctx = model
-                    .new_context(&backend, context_params.clone())
+                    .new_context(&shared_backend, context_params)
                     .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-                let tokens = model.str_to_token(&prompt, AddBos::Never)
+                let prompt = model
+                    .chat_template(None)
+                    .map_err(|e| anyhow!("Failed to retrieve default chat template: {e}"))
+                    .and_then(|tmpl| {
+                        model
+                            .apply_chat_template(&tmpl, &llama_messages, true)
+                            .map_err(|e| anyhow!("Failed to apply chat template to messages: {e}"))
+                    })?;
+
+                let tokens = model
+                    .str_to_token(&prompt, AddBos::Always)
                     .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
                 let mut batch = LlamaBatch::new(512, 1);
                 for (i, &token) in tokens.iter().enumerate() {
-                    batch.add(token, i as i32, &[], i == tokens.len() - 1)
+                    batch
+                        .add(token, i as i32, &[0], i == tokens.len() - 1)
                         .map_err(|e| anyhow!("Batch add failed: {e}"))?;
                 }
 
@@ -138,15 +153,8 @@ impl CompletionModel for LlamaBaseModel {
                 ctx.decode(&mut batch)
                     .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
 
-                // Get seed from settings or default
-                let seed = settings
-                    .get("seed")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(1234);
-                let mut sampler = LlamaSampler::chain_simple([
-                    LlamaSampler::dist(seed),
-                    LlamaSampler::greedy(),
-                ]);
+                let mut sampler =
+                    LlamaSampler::chain_simple([LlamaSampler::dist(seed), LlamaSampler::greedy()]);
 
                 let mut n_cur = batch.n_tokens();
                 let mut token_count = 0;
@@ -161,21 +169,22 @@ impl CompletionModel for LlamaBaseModel {
                     let token = sampler.sample(&ctx, batch.n_tokens() - 1);
                     sampler.accept(token);
 
-                    // Skip special tokens
+                    // Skip special tokens: break on end of stream
                     if model.is_eog_token(token) {
                         break;
                     }
 
                     // Get token bytes and decode
-                    let token_bytes = model.token_to_bytes(token, Special::Tokenize)
+                    let token_bytes = model
+                        .token_to_bytes(token, Special::Tokenize)
                         .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
 
-                    let mut last_chunk = String::new();
-                    decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
+                    let mut last_chunk = String::with_capacity(32);
+                    let _ = decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
 
-                    let mut next_batch = LlamaBatch::new(1, 1);
-                    next_batch.add(token, n_cur, &[], true)?;
-                    ctx.decode(&mut next_batch)?;
+                    batch.clear();
+                    batch.add(token, n_cur, &[0], true)?;
+                    ctx.decode(&mut batch)?;
 
                     n_cur += 1;
                     token_count += 1;
