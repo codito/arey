@@ -1,5 +1,5 @@
 use crate::core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse,
+    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse, CompletionMetrics,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
@@ -149,9 +149,17 @@ impl CompletionModel for LlamaBaseModel {
                         .map_err(|e| anyhow!("Batch add failed: {e}"))?;
                 }
 
+                // Start timing for prompt evaluation
+                let start_time = std::time::Instant::now();
+
                 // Process prompt
                 ctx.decode(&mut batch)
                     .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
+
+                // Capture prompt metrics
+                let prompt_token_count = tokens.len() as u32;
+                let prompt_eval_end = std::time::Instant::now();
+                let prompt_eval_latency_ms = prompt_eval_end.duration_since(start_time).as_millis() as f32;
 
                 let mut sampler =
                     LlamaSampler::chain_simple([LlamaSampler::dist(seed), LlamaSampler::greedy()]);
@@ -196,6 +204,18 @@ impl CompletionModel for LlamaBaseModel {
                         raw_chunk: None,
                     })));
                 }
+
+                // After generation loop, send completion metrics
+                let completion_end = std::time::Instant::now();
+                let completion_latency_ms = completion_end.duration_since(prompt_eval_end).as_millis() as f32;
+
+                let _ = tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
+                    prompt_tokens: prompt_token_count,
+                    prompt_eval_latency_ms,
+                    completion_tokens: token_count,
+                    completion_latency_ms,
+                })));
+
                 Ok(())
             })() {
                 let _ = tx.blocking_send(Err(e));
