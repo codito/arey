@@ -1,5 +1,6 @@
 use crate::core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionModel, CompletionResponse, CompletionMetrics,
+    CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
+    CompletionResponse,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
@@ -159,7 +160,8 @@ impl CompletionModel for LlamaBaseModel {
                 // Capture prompt metrics
                 let prompt_token_count = tokens.len() as u32;
                 let prompt_eval_end = std::time::Instant::now();
-                let prompt_eval_latency_ms = prompt_eval_end.duration_since(start_time).as_millis() as f32;
+                let prompt_eval_latency_ms =
+                    prompt_eval_end.duration_since(start_time).as_millis() as f32;
 
                 let mut sampler =
                     LlamaSampler::chain_simple([LlamaSampler::dist(seed), LlamaSampler::greedy()]);
@@ -205,9 +207,22 @@ impl CompletionModel for LlamaBaseModel {
                     })));
                 }
 
+                // Send finish reason
+                let finish_reason = if token_count < max_tokens {
+                    "Stop"
+                } else {
+                    "Length"
+                };
+                let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
+                    text: "".to_string(),
+                    finish_reason: Some(finish_reason.to_string()),
+                    raw_chunk: None,
+                })));
+
                 // After generation loop, send completion metrics
                 let completion_end = std::time::Instant::now();
-                let completion_latency_ms = completion_end.duration_since(prompt_eval_end).as_millis() as f32;
+                let completion_latency_ms =
+                    completion_end.duration_since(prompt_eval_end).as_millis() as f32;
 
                 let _ = tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
                     prompt_tokens: prompt_token_count,

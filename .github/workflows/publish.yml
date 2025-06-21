@@ -80,7 +80,7 @@ jobs:
     - name: Install CUDA
       uses: jimver/cuda-toolkit@master
       with:
-        install-cudnn: false
+        cuda: 12.9
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -117,8 +117,7 @@ jobs:
     - name: Install CUDA
       uses: jimver/cuda-toolkit@master
       with:
-        cuda: 11.7
-        install-cudnn: false
+        cuda: 12.9
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
