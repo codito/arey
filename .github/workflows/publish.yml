@@ -185,7 +185,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: release-artifacts
-        path: dist_original/
+        path: dist_linux/
         
     - name: Download Windows artifacts
       uses: actions/download-artifact@v4
@@ -209,7 +209,7 @@ jobs:
       uses: sigstore/gh-action-sigstore-python@v1.2.3
       with:
         inputs: >-
-          ./dist_original/*.tar.gz
+          ./dist_linux/*.tar.gz
           ./dist_windows/*.zip
           ./dist_cuda_linux/*.tar.gz
           ./dist_cuda_windows/*.zip
@@ -220,7 +220,7 @@ jobs:
       run: |
         gh release upload \
           '${{ github.ref_name }}' \
-          ./dist_original/* \
+          ./dist_linux/* \
           ./dist_windows/* \
           ./dist_cuda_linux/* \
           ./dist_cuda_windows/* \
