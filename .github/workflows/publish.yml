@@ -17,16 +17,16 @@ jobs:
         include:
           - os: ubuntu-latest
             cuda: false
-            artifact_name: arey-release-x86_64-linux
+            artifact_name: arey-x86_64-linux
           - os: ubuntu-latest
             cuda: true
-            artifact_name: arey-release-x86_64-linux-cuda
+            artifact_name: arey-cuda-x86_64-linux
           - os: windows-latest
             cuda: false
-            artifact_name: arey-release-x86_64-windows
+            artifact_name: arey-x86_64-windows
           - os: windows-latest
             cuda: true
-            artifact_name: arey-release-x86_64-windows-cuda
+            artifact_name: arey-cuda-x86_64-windows
 
     steps:
     - uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
   publish-to-crates-io:
     name: publish to crates.io
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [release-please] # Removed build dependencies as per instructions
+    needs: [release-please, build]
     runs-on: ubuntu-latest
 
     steps:
@@ -93,7 +93,7 @@ jobs:
 
   github-release:
     name: sign release
-    needs: [publish-to-crates-io, build] # Depends on the new 'build' matrix job
+    needs: [publish-to-crates-io, build]
     runs-on: ubuntu-latest
 
     permissions:
@@ -109,7 +109,7 @@ jobs:
     - name: Sign artifacts
       uses: sigstore/gh-action-sigstore-python@v1.2.3
       with:
-        inputs: artifacts/*/* # This will match files like artifacts/arey-release-x86_64-linux/arey-release-x86_64-linux.tar.gz
+        inputs: artifacts/*/* # match artifacts/arey-x86_64-linux/arey-x86_64-linux.tar.gz
           
     - name: Upload to GitHub Release
       env:
