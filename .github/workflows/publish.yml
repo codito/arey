@@ -39,14 +39,14 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: stable
-    - name: Cache toolchain and deps
-      uses: actions/cache@v3
-      with:
-        path: |
-          {{ matrix.os == 'windows-latest' && '~\.cargo\registry' || '~/.cargo/registry' }}
-          {{ matrix.os == 'windows-latest' && '~\.cargo\git' || '~/.cargo/git' }}
-          target
-        key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
+    # - name: Cache toolchain and deps
+    #   uses: actions/cache@v3
+    #   with:
+    #     path: |
+    #       {{ matrix.os == 'windows-latest' && '~\.cargo\registry' || '~/.cargo/registry' }}
+    #       {{ matrix.os == 'windows-latest' && '~\.cargo\git' || '~/.cargo/git' }}
+    #       target
+    #     key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
     - name: Build
       run: cargo build --release ${{ matrix.cuda && '--features cuda' || '' }}
     - name: Package artifacts
