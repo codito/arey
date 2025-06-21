@@ -7,46 +7,34 @@ permissions:
   pull-requests: write
 
 jobs:
-  build-linux:
-    name: build Linux (non-CUDA) 📦
-    runs-on: ubuntu-latest
+  build:
+    name: build ${{ matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }} (${{ matrix.cuda && 'CUDA' || 'CPU' }}) 📦
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        cuda: [true, false]
+        include:
+          - os: ubuntu-latest
+            cuda: false
+            artifact_name: arey-release-x86_64-linux
+          - os: ubuntu-latest
+            cuda: true
+            artifact_name: arey-release-x86_64-linux-cuda
+          - os: windows-latest
+            cuda: false
+            artifact_name: arey-release-x86_64-windows
+          - os: windows-latest
+            cuda: true
+            artifact_name: arey-release-x86_64-windows-cuda
 
     steps:
     - uses: actions/checkout@v4
-    - name: Install Rust toolchain
-      id: rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Install CUDA
+      if: matrix.cuda
+      uses: jimver/cuda-toolkit@master
       with:
-        toolchain: stable
-    - name: Cache toolchain and deps
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-publish
-    - name: Cargo build
-      run: cargo build --release
-    - name: Package artifacts
-      run: |
-        mkdir dist
-        tar -czvf dist/${GITHUB_REPOSITORY##*/}-release-x86_64-linux.tar.gz \
-            -C target/release \
-            arey \
-            --owner=0 --group=0
-    - name: Store artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-artifacts
-        path: dist/
-        
-  build-windows:
-    name: build Windows (non-CUDA) 📦
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v4
+        cuda: 12.9
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -55,92 +43,25 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          C:\Users\runneradmin\.cargo\registry
-          C:\Users\runneradmin\.cargo\git
+          ${{ matrix.os == 'windows-latest' && 'C:\\Users\\runneradmin\\.cargo\\registry' || '~/.cargo/registry' }}
+          ${{ matrix.os == 'windows-latest' && 'C:\\Users\\runneradmin\\.cargo\\git' || '~/.cargo/git' }}
           target
-        key: ${{ runner.os }}-publish-windows-${{ hashFiles('Cargo.lock') }}
+        key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
     - name: Build
-      run: cargo build --release
+      run: cargo build --release ${{ matrix.cuda && '--features cuda' || '' }}
     - name: Package artifacts
       run: |
         mkdir dist
-        Compress-Archive -Path "target/release/arey.exe" -DestinationPath "dist/arey-release-x86_64-windows.zip"
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          tar -czvf dist/${{ matrix.artifact_name }}.tar.gz -C target/release arey --owner=0 --group=0
+        else
+          Compress-Archive -Path "target/release/arey.exe" -DestinationPath "dist/${{ matrix.artifact_name }}.zip"
+        fi
     - name: Store artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: release-artifacts-windows
-        path: dist/
-
-  build-cuda-linux:
-    name: build CUDA (Linux) 📦
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    - name: Install CUDA
-      uses: jimver/cuda-toolkit@master
-      with:
-        cuda: 12.9
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-    - name: Cache toolchain and deps
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-publish-cuda-${{ hashFiles('Cargo.lock') }}
-    - name: Build with CUDA
-      run: cargo build --release --features cuda
-    - name: Package artifacts
-      run: |
-        mkdir dist
-        tar -czvf dist/${GITHUB_REPOSITORY##*/}-release-x86_64-linux-cuda.tar.gz \
-            -C target/release \
-            arey \
-            --owner=0 --group=0
-    - name: Store CUDA artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-artifacts-cuda-linux
-        path: dist/
-
-  build-cuda-windows:
-    name: build CUDA (Windows) 📦
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    - name: Install CUDA
-      uses: jimver/cuda-toolkit@master
-      with:
-        cuda: 12.9
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-    - name: Cache toolchain and deps
-      uses: actions/cache@v3
-      with:
-        path: |
-          C:\Users\runneradmin\.cargo\registry
-          C:\Users\runneradmin\.cargo\git
-          target
-        key: ${{ runner.os }}-publish-cuda-${{ hashFiles('Cargo.lock') }}
-    - name: Build with CUDA
-      run: cargo build --release --features cuda
-    - name: Package artifacts
-      run: |
-        mkdir dist
-        Compress-Archive -Path "target/release/arey.exe" -DestinationPath "dist/arey-release-x86_64-windows-cuda.zip"
-    - name: Store CUDA artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-artifacts-cuda-windows
-        path: dist/
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.artifact_name }}.*
 
   release-please:
     runs-on: ubuntu-latest
@@ -155,7 +76,7 @@ jobs:
   publish-to-crates-io:
     name: publish to crates.io
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-linux, release-please]
+    needs: [release-please] # Removed build dependencies as per instructions
     runs-on: ubuntu-latest
 
     steps:
@@ -172,7 +93,7 @@ jobs:
 
   github-release:
     name: sign release
-    needs: [publish-to-crates-io, build-linux, build-windows, build-cuda-linux, build-cuda-windows]
+    needs: [publish-to-crates-io, build] # Depends on the new 'build' matrix job
     runs-on: ubuntu-latest
 
     permissions:
@@ -180,38 +101,15 @@ jobs:
       id-token: write
 
     steps:
-    - name: Download main artifacts
+    - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        name: release-artifacts
-        path: dist_linux/
-        
-    - name: Download Windows artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: release-artifacts-windows
-        path: dist_windows/
-        
-    - name: Download CUDA Linux artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: release-artifacts-cuda-linux
-        path: dist_cuda_linux/
-        
-    - name: Download CUDA Windows artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: release-artifacts-cuda-windows
-        path: dist_cuda_windows/
+        path: artifacts # All artifacts will be downloaded into this directory, each in its own sub-directory named after the artifact name.
         
     - name: Sign artifacts
       uses: sigstore/gh-action-sigstore-python@v1.2.3
       with:
-        inputs: >-
-          ./dist_linux/*.tar.gz
-          ./dist_windows/*.zip
-          ./dist_cuda_linux/*.tar.gz
-          ./dist_cuda_windows/*.zip
+        inputs: artifacts/*/* # This will match files like artifacts/arey-release-x86_64-linux/arey-release-x86_64-linux.tar.gz
           
     - name: Upload to GitHub Release
       env:
@@ -219,8 +117,5 @@ jobs:
       run: |
         gh release upload \
           '${{ github.ref_name }}' \
-          ./dist_linux/* \
-          ./dist_windows/* \
-          ./dist_cuda_linux/* \
-          ./dist_cuda_windows/* \
+          artifacts/*/* \
           --repo '${{ github.repository }}'
