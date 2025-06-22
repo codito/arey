@@ -39,3 +39,11 @@ impl ModelProvider {
 pub struct ModelMetrics {
     pub init_latency_ms: f32,
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum ModelInitError {
+    // #[error("Unsupported model type: {0}")]
+    // UnsupportedType(String),
+    // #[error("Initialization error: {0}")]
+    // InitError(String),
+}

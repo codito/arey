@@ -8,17 +8,23 @@ name = "arey"
 path = "src/main.rs"
 
 [dependencies]
-arey-core = { path = "../core" }
-clap.workspace = true
-notify.workspace = true
-tokio.workspace = true
+arey-core = { path = "../core", version = "*" }
 anyhow.workspace = true
-thiserror.workspace = true
-serde_yaml.workspace = true
-indicatif.workspace = true
-futures.workspace = true
-tokio-stream.workspace = true
+async-stream.workspace = true
+chrono.workspace = true
+clap.workspace = true
 console.workspace = true
+futures.workspace = true
+indicatif.workspace = true
+markdown.workspace = true
+notify.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio-stream.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [features]
 cuda = ["arey-core/cuda"]

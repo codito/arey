@@ -26,7 +26,3 @@ pub fn get_config_dir() -> PathBuf {
 pub fn get_default_config() -> String {
     include_str!("../data/config.yml").to_string()
 }
-
-pub fn get_default_play_file() -> String {
-    include_str!("../data/play.md").to_string()
-}

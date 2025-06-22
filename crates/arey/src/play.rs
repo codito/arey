@@ -1,19 +1,15 @@
 use crate::{
-    core::{
-        completion::{
-            CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
-            SenderType,
-        },
-        config::{AreyConfigError, Config},
-        model::{ModelConfig, ModelMetrics},
-    },
-    platform::{
-        assets::get_default_play_file,
-        console::{MessageType, format_footer_metrics, style_text},
-    },
+    console::{MessageType, format_footer_metrics, style_text},
     play::watch::watch_file,
 };
 use anyhow::{Context, Result, anyhow};
+use arey_core::{
+    completion::{
+        CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
+    },
+    config::{AreyConfigError, Config},
+    model::{ModelConfig, ModelMetrics},
+};
 use chrono::Local;
 use futures::StreamExt;
 use markdown::{Constructs, ParseOptions, to_mdast};
@@ -45,6 +41,10 @@ pub struct PlayFile {
     pub output_settings: HashMap<String, String>,
     pub model: Option<Mutex<Box<dyn CompletionModel + Send + Sync>>>,
     pub result: Option<PlayResult>,
+}
+
+fn get_default_play_file() -> String {
+    include_str!("../data/play.md").to_string()
 }
 
 fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
@@ -162,7 +162,7 @@ impl PlayFile {
             config.settings.insert(key.clone(), value.clone());
         }
 
-        let mut model = crate::platform::llm::get_completion_llm(config.clone())
+        let mut model = arey_core::get_completion_llm(config.clone())
             .map_err(|e| anyhow!("Model init error: {e}"))?;
         model.load("").await?;
 
@@ -369,7 +369,7 @@ pub mod watch {
 mod test {
     use std::io::Write;
 
-    use crate::core::config::get_config;
+    use arey_core::config::get_config;
 
     use super::*;
     use serde_yaml::Value;

@@ -3,12 +3,12 @@ use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::io::Write;
 
-use crate::core::completion::{
+use crate::console::{MessageType, format_footer_metrics, style_text};
+use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
 };
-use crate::core::model::{ModelConfig, ModelMetrics};
-use crate::platform::console::{MessageType, format_footer_metrics, style_text};
-use crate::platform::llm::get_completion_llm;
+use arey_core::get_completion_llm;
+use arey_core::model::{ModelConfig, ModelMetrics};
 
 pub struct Task {
     instruction: String,

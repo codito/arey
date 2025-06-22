@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    core::model::ModelConfig,
-    platform::assets::{get_config_dir, get_default_config},
+    assets::{get_config_dir, get_default_config},
+    model::ModelConfig,
 };
 
 #[derive(Error, Debug)]
@@ -196,10 +196,10 @@ mod tests {
         config_path
     }
 
-    fn dummy_model_config(name: &str) -> crate::core::model::ModelConfig {
-        crate::core::model::ModelConfig {
+    fn dummy_model_config(name: &str) -> crate::model::ModelConfig {
+        crate::model::ModelConfig {
             name: name.to_string(),
-            provider: crate::core::model::ModelProvider::Gguf,
+            provider: crate::model::ModelProvider::Gguf,
             settings: HashMap::from([(
                 "n_ctx".to_string(),
                 serde_yaml::Value::Number(4096.into()),
@@ -279,11 +279,11 @@ task:
         let raw_config = RawConfig {
             models: models.clone(),
             profiles: profiles.clone(),
-            chat: crate::core::config::RawModeConfig {
+            chat: crate::config::RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
                 profile: Some(StringOrObject::String("default".to_string())),
             },
-            task: crate::core::config::RawModeConfig {
+            task: crate::config::RawModeConfig {
                 model: StringOrObject::String("dummy-13b".to_string()),
                 profile: Some(StringOrObject::String("concise".to_string())),
             },
@@ -307,11 +307,11 @@ task:
         let raw_config = RawConfig {
             models,
             profiles: HashMap::new(),
-            chat: crate::core::config::RawModeConfig {
+            chat: crate::config::RawModeConfig {
                 model: StringOrObject::String("non-existent-model".to_string()),
                 profile: None,
             },
-            task: crate::core::config::RawModeConfig {
+            task: crate::config::RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
                 profile: None,
             },
@@ -331,11 +331,11 @@ task:
         let raw_config = RawConfig {
             models,
             profiles: HashMap::new(),
-            chat: crate::core::config::RawModeConfig {
+            chat: crate::config::RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
                 profile: Some(StringOrObject::String("non-existent-profile".to_string())),
             },
-            task: crate::core::config::RawModeConfig {
+            task: crate::config::RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
                 profile: None,
             },
@@ -352,14 +352,14 @@ task:
         let raw_config = RawConfig {
             models: HashMap::new(),   // No named models
             profiles: HashMap::new(), // No named profiles
-            chat: crate::core::config::RawModeConfig {
+            chat: crate::config::RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-chat-model")),
                 profile: Some(StringOrObject::Object(ProfileConfig {
                     temperature: 0.8,
                     ..Default::default()
                 })),
             },
-            task: crate::core::config::RawModeConfig {
+            task: crate::config::RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-task-model")),
                 profile: None, // Should use default profile
             },

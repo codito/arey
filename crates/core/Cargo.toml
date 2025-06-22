@@ -3,6 +3,9 @@ name = "arey-core"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-openai.workspace = true
@@ -35,6 +38,12 @@ tracing-subscriber.workspace = true
 notify.workspace = true
 
 [dev-dependencies]
-tempfile = { workspace = true, features = [] } # Changed to inherit from workspace.dependencies
-wiremock = { workspace = true, features = [] } # Changed to inherit from workspace.dependencies
+tempfile = { workspace = true, features = [
+] } # Changed to inherit from workspace.dependencies
+wiremock = { workspace = true, features = [
+] } # Changed to inherit from workspace.dependencies
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+
+[features]
+cuda = ["llama-cpp-2/cuda"]

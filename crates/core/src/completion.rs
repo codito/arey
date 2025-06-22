@@ -1,4 +1,4 @@
-use crate::core::model::ModelMetrics;
+use crate::model::ModelMetrics;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -26,6 +26,12 @@ impl CancellationToken {
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
