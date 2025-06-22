@@ -77,11 +77,12 @@ impl Task {
 pub async fn run_ask(
     instruction: &str,
     config: &Config,
+    model_config: ModelConfig,
     overrides_file: Option<&str>,
 ) -> Result<()> {
     let mut task = Task::new(
         instruction.to_string(),
-        config.task.model.clone(),
+        model_config,
         parse_overrides_file(overrides_file).await?,
     );
 
