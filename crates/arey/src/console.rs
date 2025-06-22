@@ -1,4 +1,4 @@
-use crate::core::completion::CompletionMetrics;
+use arey_core::completion::CompletionMetrics;
 use console::{Style, StyledObject};
 use indicatif::{ProgressBar, ProgressStyle};
 

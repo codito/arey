@@ -1,8 +1,8 @@
-use crate::core::completion::{
+use crate::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
-    CompletionResponse,
+    CompletionResponse, SenderType,
 };
-use crate::core::model::{ModelConfig, ModelMetrics};
+use crate::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
 use async_openai::{
@@ -66,21 +66,19 @@ impl OpenAIBaseModel {
 
     fn to_openai_message(msg: &ChatMessage) -> ChatCompletionRequestMessage {
         match msg.sender {
-            crate::core::completion::SenderType::System => ChatCompletionRequestMessage::System(
+            SenderType::System => ChatCompletionRequestMessage::System(
                 async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
                     .content(msg.text.as_str())
                     .build()
                     .unwrap(),
             ),
-            crate::core::completion::SenderType::Assistant => {
-                ChatCompletionRequestMessage::Assistant(
-                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(msg.text.as_str())
-                        .build()
-                        .unwrap(),
-                )
-            }
-            crate::core::completion::SenderType::User => ChatCompletionRequestMessage::User(
+            SenderType::Assistant => ChatCompletionRequestMessage::Assistant(
+                async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                    .content(msg.text.as_str())
+                    .build()
+                    .unwrap(),
+            ),
+            SenderType::User => ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
                     .content(msg.text.as_str())
                     .build()
@@ -235,8 +233,8 @@ impl CompletionModel for OpenAIBaseModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::completion::SenderType;
-    use crate::core::model::ModelProvider;
+    use crate::completion::SenderType;
+    use crate::model::ModelProvider;
     use serde_json::json;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,

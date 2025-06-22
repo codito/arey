@@ -1,12 +1,11 @@
 mod ask;
 mod chat;
-mod core;
-mod platform;
+mod console;
 mod play;
 
 use crate::chat::{Chat, start_chat};
-use crate::core::config::get_config;
 use anyhow::Context;
+use arey_core::config::get_config;
 use clap::{Parser, Subcommand, command};
 use std::path::Path;
 use std::sync::Arc;

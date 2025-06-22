@@ -1,8 +1,8 @@
-use crate::core::completion::{
+use crate::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
     CompletionResponse,
 };
-use crate::core::model::{ModelConfig, ModelMetrics};
+use crate::model::{ModelConfig, ModelMetrics};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
