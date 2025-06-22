@@ -35,6 +35,8 @@ jobs:
       uses: jimver/cuda-toolkit@v0.2.24 # see https://github.com/Jimver/cuda-toolkit/issues/395
       with:
         cuda: 12.9.0
+        method: 'network'
+        sub-packages: '["nvcc", "cudart"]'
         log-file-suffix: '${{matrix.os}}.txt'
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
