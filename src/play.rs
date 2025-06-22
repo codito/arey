@@ -9,7 +9,7 @@ use crate::{
     },
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, style_text},
+        console::{MessageType, style_text, format_footer_metrics},
     },
     play::watch::watch_file,
 };
@@ -319,20 +319,13 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
         println!("{}", output);
         println!();
 
-        let tokens_per_sec =
-            result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
-        let mut footer_complete = String::from("◼ Completed");
-        if let Some(reason) = result.finish_reason.clone() {
-            footer_complete.push_str(&format!("({reason})"));
-        }
-        println!();
-        println!(
-            "{}",
-            style_text(
-                &format!("{footer_complete}. {:.2} tokens/s.", tokens_per_sec),
-                MessageType::Footer,
-            )
+        let footer = format_footer_metrics(
+            &result.metrics,
+            result.finish_reason.as_deref(),
+            false,
         );
+        println!();
+        println!("{}", style_text(&footer, MessageType::Footer));
     }
 
     Ok(())

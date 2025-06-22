@@ -2,7 +2,7 @@
 use crate::chat::Chat;
 use crate::core::completion::{CancellationToken, CompletionMetrics};
 use crate::platform::console::GenerationSpinner;
-use crate::platform::console::{MessageType, style_text};
+use crate::platform::console::{MessageType, style_text, format_footer_metrics};
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
@@ -162,63 +162,30 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         };
 
         // Print footer with metrics
-        let mut finish_reason = String::new();
-        let footer_details = match was_cancelled {
-            true => String::new(),
-            false => match chat.clone().lock().await.get_last_assistant_context().await {
-                Some(ctx) => {
-                    finish_reason = ctx.finish_reason.unwrap_or_default();
-                    get_footer_details(ctx.metrics)
+        let (metrics, finish_reason_option) = match was_cancelled {
+            true => (CompletionMetrics::default(), None),
+            false => {
+                if let Some(ctx) = chat.clone().lock().await.get_last_assistant_context().await {
+                    (ctx.metrics, ctx.finish_reason)
+                } else {
+                    (CompletionMetrics::default(), None)
                 }
-                None => String::new(), // error
-            },
-        };
-        let footer = match was_cancelled {
-            true => "◼ Canceled.".to_string(),
-            false => format!("◼ Completed({finish_reason})."),
+            }
         };
 
+        let footer = format_footer_metrics(
+            &metrics,
+            finish_reason_option.as_deref(),
+            was_cancelled,
+        );
         println!();
         println!();
         println!(
             "{}",
-            style_text(&format!("{footer} {footer_details}"), MessageType::Footer)
+            style_text(&footer, MessageType::Footer)
         );
         println!();
     }
 
     Ok(())
-}
-
-fn get_footer_details(combined: CompletionMetrics) -> String {
-    let mut footer_details = String::new();
-    if combined.prompt_eval_latency_ms > 0.0 || combined.completion_latency_ms > 0.0 {
-        footer_details.push_str(&format!(
-            " {:.2}s to first token.",
-            combined.prompt_eval_latency_ms / 1000.0
-        ));
-        footer_details.push_str(&format!(
-            " {:.2}s total.",
-            combined.completion_latency_ms / 1000.0
-        ));
-    }
-
-    if combined.completion_tokens > 0 && combined.completion_latency_ms > 0.0 {
-        let tokens_per_sec =
-            (combined.completion_tokens as f32 * 1000.0) / combined.completion_latency_ms;
-        footer_details.push_str(&format!(" {:.2} tokens/s.", tokens_per_sec));
-    }
-
-    if combined.completion_tokens > 0 {
-        footer_details.push_str(&format!(
-            " {} completion tokens.",
-            combined.completion_tokens
-        ));
-    }
-
-    if combined.prompt_tokens > 0 {
-        footer_details.push_str(&format!(" {} prompt tokens.", combined.prompt_tokens));
-    }
-
-    footer_details
 }

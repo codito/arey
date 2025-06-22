@@ -7,7 +7,7 @@ use crate::core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
-use crate::platform::console::{MessageType, style_text};
+use crate::platform::console::{MessageType, style_text, format_footer_metrics};
 use crate::platform::llm::get_completion_llm;
 
 pub struct Task {
@@ -109,26 +109,13 @@ pub async fn run_ask(
         }
     }
 
-    // Calculate tokens per second and prepare footer
-    let tokens_per_sec = if metrics.completion_latency_ms > 0.0 {
-        metrics.completion_tokens as f32 * 1000.0 / metrics.completion_latency_ms
-    } else {
-        0.0
-    };
-
-    let mut footer_complete = String::from("◼ Completed");
-    if let Some(reason) = finish_reason {
-        footer_complete.push_str(&format!(" ({reason})"));
-    }
-
-    println!();
-    println!(
-        "{}",
-        style_text(
-            &format!("{footer_complete}. {:.2} tokens/s.", tokens_per_sec),
-            MessageType::Footer,
-        )
+    let footer = format_footer_metrics(
+        &metrics,
+        finish_reason.as_deref(),
+        false,
     );
+    println!();
+    println!("{}", style_text(&footer, MessageType::Footer));
 
     Ok(())
 }
