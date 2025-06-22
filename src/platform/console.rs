@@ -1,6 +1,6 @@
+use crate::core::completion::CompletionMetrics;
 use console::{Style, StyledObject};
 use indicatif::{ProgressBar, ProgressStyle};
-use crate::core::completion::CompletionMetrics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
@@ -43,20 +43,6 @@ impl GenerationSpinner {
 
     pub fn clear(&self) {
         self.spinner.finish_and_clear();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_message_styles() {
-        let styled = style_text("test", MessageType::Error);
-        assert_eq!(
-            styled.force_styling(true).to_string(),
-            "\u{1b}[31m\u{1b}[1mtest\u{1b}[0m"
-        );
     }
 }
 
@@ -110,5 +96,18 @@ pub fn format_footer_metrics(
         footer_complete
     } else {
         format!("{} {}", footer_complete, details.join(". "))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_styles() {
+        let styled = style_text("test", MessageType::Error);
+        assert_eq!(
+            styled.force_styling(true).to_string(),
+            "\u{1b}[31m\u{1b}[1mtest\u{1b}[0m"
+        );
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     },
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, style_text, format_footer_metrics},
+        console::{MessageType, format_footer_metrics, style_text},
     },
     play::watch::watch_file,
 };
@@ -320,11 +320,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
             _ => &result.response,
         };
 
-        let footer = format_footer_metrics(
-            &result.metrics,
-            result.finish_reason.as_deref(),
-            false,
-        );
+        let footer = format_footer_metrics(&result.metrics, result.finish_reason.as_deref(), false);
         println!();
         println!();
         println!("{}", style_text(&footer, MessageType::Footer));

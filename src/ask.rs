@@ -7,7 +7,7 @@ use crate::core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
-use crate::platform::console::{MessageType, style_text, format_footer_metrics};
+use crate::platform::console::{MessageType, format_footer_metrics, style_text};
 use crate::platform::llm::get_completion_llm;
 
 pub struct Task {
@@ -17,10 +17,7 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(
-        instruction: String,
-        model_config: ModelConfig,
-    ) -> Self {
+    pub fn new(instruction: String, model_config: ModelConfig) -> Self {
         Self {
             instruction,
             model_config,
@@ -63,14 +60,8 @@ impl Task {
 }
 
 /// Run the ask command with given instruction and overrides
-pub async fn run_ask(
-    instruction: &str,
-    model_config: ModelConfig,
-) -> Result<()> {
-    let mut task = Task::new(
-        instruction.to_string(),
-        model_config,
-    );
+pub async fn run_ask(instruction: &str, model_config: ModelConfig) -> Result<()> {
+    let mut task = Task::new(instruction.to_string(), model_config);
 
     println!("Loading model...");
     let model_metrics = task.load_model().await?;
@@ -96,11 +87,7 @@ pub async fn run_ask(
         }
     }
 
-    let footer = format_footer_metrics(
-        &metrics,
-        finish_reason.as_deref(),
-        false,
-    );
+    let footer = format_footer_metrics(&metrics, finish_reason.as_deref(), false);
     println!();
     println!();
     println!("{}", style_text(&footer, MessageType::Footer));
