@@ -53,15 +53,17 @@ jobs:
         key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
     - name: Build
       run: cargo build --release ${{ matrix.cuda && '--features cuda' || '' }}
-    - name: Package artifacts
-      shell: bash
+    - name: Package artifacts (Linux)
+      if: matrix.os == "ubuntu-latest"
       run: |
         mkdir dist
         if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
           tar -czvf dist/${{ matrix.artifact_name }}.tar.gz -C target/release arey --owner=0 --group=0
-        else
-          Compress-Archive -Path "target/release/arey.exe" -DestinationPath "dist/${{ matrix.artifact_name }}.zip"
-        fi
+    - name: Package artifacts (Windows)
+      if: matrix.os == "windows-latest"
+      run: |
+        mkdir dist
+        Compress-Archive -Path "target/release/arey.exe" -DestinationPath "dist/${{ matrix.artifact_name }}.zip"
     - name: Store artifacts
       uses: actions/upload-artifact@v4
       with:
