@@ -1,0 +1,21 @@
+[package]
+name = "arey"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "arey"
+path = "src/main.rs"
+
+[dependencies]
+arey-core = { path = "../core" }
+clap.workspace = true
+notify.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde_yaml.workspace = true
+indicatif.workspace = true
+futures.workspace = true
+tokio-stream.workspace = true
+console.workspace = true
