@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::io::Write;    // Added for stdout().flush()
 use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 use futures::{Stream, StreamExt};
 
-use crate::core::completion::{ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType, CancellationToken};
+use crate::core::completion::{ChatMessage, Completion, CompletionModel, SenderType, CancellationToken};
 use crate::core::config::Config;
-use crate::core::model::ModelConfig;
+use crate::core::model::{ModelConfig, ModelMetrics};  // Added ModelMetrics
 use crate::platform::llm::get_completion_llm;
 
 pub struct Task {
@@ -30,7 +31,7 @@ impl Task {
         }
     }
 
-    pub async fn load_model(&mut self) -> Result<CompletionMetrics> {
+    pub async fn load_model(&mut self) -> Result<ModelMetrics> {
         let mut config = self.model_config.clone();
         
         // Apply overrides to model configuration
@@ -41,7 +42,6 @@ impl Task {
         }
 
         let model = get_completion_llm(config.clone())
-            .await
             .context("Failed to initialize model")?;
 
         // Load empty system prompt for tasks
@@ -70,8 +70,8 @@ impl Task {
         let settings = HashMap::new(); // Use default settings for now
         let cancel_token = CancellationToken::new();
 
-        let mut model = model_lock.lock().await;
-        let stream = model.complete(&[message], &settings, cancel_token).await?;
+        let mut model_guard = model_lock.lock().await;
+        let stream = model_guard.complete(&[message], &settings, cancel_token).await;
         Ok(stream)
     }
 }
@@ -89,16 +89,20 @@ pub async fn run_ask(
     );
 
     println!("Loading model...");
-    let metrics = task.load_model().await?;
-    println!("Model loaded in {:.2}ms", metrics.init_latency_ms);
+    let model_metrics = task.load_model().await?;
+    println!("Model loaded in {:.2}ms", model_metrics.init_latency_ms);
 
     println!("Generating response...");
     let mut stream = task.run().await?;
     
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        print!("{}", chunk.text);
-        std::io::stdout().flush()?;
+    while let Some(result) = stream.next().await {
+        match result? {
+            Completion::Response(r) => {
+                print!("{}", r.text);
+                std::io::stdout().flush()?;
+            }
+            Completion::Metrics(_) => {}  // Ignoring metrics chunks
+        }
     }
     println!();
 
