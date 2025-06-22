@@ -36,7 +36,8 @@ jobs:
       with:
         cuda: 12.9.0
         method: 'network'
-        sub-packages: '["nvcc", "cudart", "cublas"]'
+        sub-packages: '["nvcc", "cudart"]'
+        non-cuda-sub-packages: '["libcublas"]'
         log-file-suffix: '${{matrix.os}}.txt'
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
