@@ -8,23 +8,23 @@ permissions:
 
 jobs:
   build:
-    name: build ${{ matrix.os == 'ubuntu' && 'Linux' || 'Windows' }} (${{ matrix.cuda && 'CUDA' || 'CPU' }}) 📦
+    name: build ${{ matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }} (${{ matrix.cuda && 'CUDA' || 'CPU' }}) 📦
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-2022]
+        os: [ubuntu-latest, windows-latest]
         cuda: [true, false]
         include:
-          - os: ubuntu
+          - os: ubuntu-latest
             cuda: false
             artifact_name: arey-x86_64-linux
-          - os: ubuntu
+          - os: ubuntu-latest
             cuda: true
             artifact_name: arey-cuda-x86_64-linux
-          - os: windows
+          - os: windows-latest
             cuda: false
             artifact_name: arey-x86_64-windows
-          - os: windows
+          - os: windows-latest
             cuda: true
             artifact_name: arey-cuda-x86_64-windows
 
@@ -32,7 +32,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install CUDA
       if: matrix.cuda
-      uses: jimver/cuda-toolkit@master
+      uses: jimver/cuda-toolkit@v0.2.24 # see https://github.com/Jimver/cuda-toolkit/issues/395
       with:
         cuda: 12.9.0
         log-file-suffix: '${{matrix.os}}.txt'
@@ -53,7 +53,7 @@ jobs:
     - name: Package artifacts
       run: |
         mkdir dist
-        if [ "${{ matrix.os }}" = "ubuntu" ]; then
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
           tar -czvf dist/${{ matrix.artifact_name }}.tar.gz -C target/release arey --owner=0 --group=0
         else
           Compress-Archive -Path "target/release/arey.exe" -DestinationPath "dist/${{ matrix.artifact_name }}.zip"
