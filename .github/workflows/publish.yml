@@ -8,13 +8,38 @@ permissions:
 
 jobs:
   build:
-    name: build 📦
-    runs-on: ubuntu-latest
+    name: build ${{ matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }} (${{ matrix.cuda && 'CUDA' || 'CPU' }}) 📦
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest] #, windows-latest]
+        cuda: [true, false]
+        include:
+          - os: ubuntu-latest
+            cuda: false
+            artifact_name: arey-x86_64-linux
+          - os: ubuntu-latest
+            cuda: true
+            artifact_name: arey-cuda-x86_64-linux
+          - os: windows-latest
+            cuda: false
+            artifact_name: arey-x86_64-windows
+         # - os: windows-latest
+         #   cuda: true
+         #   artifact_name: arey-cuda-x86_64-windows
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install CUDA
+      if: matrix.cuda
+      uses: jimver/cuda-toolkit@v0.2.24 # see https://github.com/Jimver/cuda-toolkit/issues/395
+      with:
+        cuda: 12.9.0
+        method: 'network'
+        # sub-packages: '["nvcc", "cudart", "cccl", "nvtx", "nvrtc"]'
+        # non-cuda-sub-packages: '["libcublas"]'
+        log-file-suffix: '${{matrix.os}}.txt'
     - name: Install Rust toolchain
-      id: rust
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: stable
@@ -25,21 +50,24 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-publish
-    - name: Cargo build
-      run: cargo build --release
-    - name: Package artifacts
+        key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
+    - name: Build
+      run: cargo build --release ${{ matrix.cuda && '--features cuda' || '' }}
+    - name: Package artifacts (Linux)
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: |
+        mkdir -p dist
+        tar -czvf dist/${{ matrix.artifact_name }}.tar.gz -C target/release arey --owner=0 --group=0
+    - name: Package artifacts (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
       run: |
         mkdir dist
-        tar -czvf dist/${GITHUB_REPOSITORY##*/}-release-x86_64-linux.tar.gz \
-            -C target/release \
-            arey \
-            --owner=0 --group=0
+        Compress-Archive -Path "target\release\arey.exe" -DestinationPath "dist\${{ matrix.artifact_name }}.zip"
     - name: Store artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: release-artifacts
-        path: dist/
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.artifact_name }}.*
 
   release-please:
     runs-on: ubuntu-latest
@@ -54,7 +82,7 @@ jobs:
   publish-to-crates-io:
     name: publish to crates.io
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, release-please]
+    needs: [release-please, build]
     runs-on: ubuntu-latest
 
     steps:
@@ -71,7 +99,7 @@ jobs:
 
   github-release:
     name: sign release
-    needs: [publish-to-crates-io]
+    needs: [publish-to-crates-io, build]
     runs-on: ubuntu-latest
 
     permissions:
@@ -79,21 +107,21 @@ jobs:
       id-token: write
 
     steps:
-    - name: Download artifacts
+    - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        name: release-artifacts
-        path: dist/
+        path: artifacts # All artifacts will be downloaded into this directory, each in its own sub-directory named after the artifact name.
+        
     - name: Sign artifacts
       uses: sigstore/gh-action-sigstore-python@v1.2.3
       with:
-        inputs: >-
-          ./dist/*.tar.gz
+        inputs: artifacts/*/* # match artifacts/arey-x86_64-linux/arey-x86_64-linux.tar.gz
+          
     - name: Upload to GitHub Release
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         gh release upload \
           '${{ github.ref_name }}' \
-          dist/* \
+          artifacts/*/* \
           --repo '${{ github.repository }}'

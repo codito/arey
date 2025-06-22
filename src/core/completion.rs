@@ -31,9 +31,25 @@ impl CancellationToken {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SenderType {
-    // System,
+    System,
     Assistant,
     User,
+}
+
+impl From<SenderType> for String {
+    fn from(val: SenderType) -> Self {
+        val.as_str().into()
+    }
+}
+
+impl SenderType {
+    pub fn as_str(&self) -> &'static str {
+        match &self {
+            SenderType::System => "system",
+            SenderType::User => "user",
+            SenderType::Assistant => "assistant",
+        }
+    }
 }
 
 #[derive(Debug)]

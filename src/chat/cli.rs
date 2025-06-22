@@ -164,14 +164,14 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         // Print footer with metrics
         let mut finish_reason = String::new();
         let footer_details = match was_cancelled {
-            true => match chat.clone().lock().await.get_last_assistant_context().await {
+            true => String::new(),
+            false => match chat.clone().lock().await.get_last_assistant_context().await {
                 Some(ctx) => {
                     finish_reason = ctx.finish_reason.unwrap_or_default();
                     get_footer_details(ctx.metrics)
                 }
                 None => String::new(), // error
             },
-            false => String::new(),
         };
         let footer = match was_cancelled {
             true => "◼ Canceled.".to_string(),
