@@ -1,8 +1,8 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
-use crate::core::completion::{CancellationToken, CompletionMetrics};
-use crate::platform::console::GenerationSpinner;
-use crate::platform::console::{MessageType, format_footer_metrics, style_text};
+use arey_core::core::completion::{CancellationToken, CompletionMetrics};
+use arey_core::platform::console::GenerationSpinner;
+use arey_core::platform::console::{MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};

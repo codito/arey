@@ -1,8 +1,8 @@
-use crate::core::completion::{
+use arey_core::core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
     CompletionResponse, SenderType,
 };
-use crate::core::model::{ModelConfig, ModelMetrics};
+use arey_core::core::model::{ModelConfig, ModelMetrics};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
@@ -51,7 +51,7 @@ pub struct Chat {
 
 impl Chat {
     pub async fn new(model_config: ModelConfig) -> Result<Self> {
-        let mut model = crate::platform::llm::get_completion_llm(model_config.clone())
+        let mut model = arey_core::platform::llm::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
 
         // TODO: empty system prompt
