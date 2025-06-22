@@ -1,3 +1,4 @@
+mod ask; // Add this line
 mod chat;
 mod core;
 mod platform;
@@ -5,10 +6,12 @@ mod play; // Added this line
 
 use crate::chat::{Chat, start_chat};
 use crate::core::config::get_config;
+use ask::run_ask;
 use anyhow::Context;
 use clap::{Parser, Subcommand, command};
 use std::path::Path;
 use std::sync::Arc;
+use std::io::Write; // For stdout flush
 use tokio::sync::Mutex; // Added this line
 
 /// Arey - a simple large language model app.
@@ -62,12 +65,8 @@ async fn main() -> anyhow::Result<()> {
             instruction,
             overrides_file,
         } => {
-            // Placeholder for ask command logic
-            println!("Running ask command with instruction: {:?}", instruction);
-            if let Some(file) = overrides_file {
-                println!("Overrides file: {}", file);
-            }
-            println!("Verbose: {}", cli.verbose);
+            let instruction = instruction.join(" ");
+            run_ask(&instruction, &config, overrides_file.as_deref()).await?;
         }
         Commands::Chat { model } => {
             let chat_model_config = if let Some(model_name) = model {
