@@ -24,9 +24,9 @@ jobs:
           - os: windows-latest
             cuda: false
             artifact_name: arey-x86_64-windows
-          - os: windows-latest
-            cuda: true
-            artifact_name: arey-cuda-x86_64-windows
+         # - os: windows-latest
+         #   cuda: true
+         #   artifact_name: arey-cuda-x86_64-windows
 
     steps:
     - uses: actions/checkout@v4
