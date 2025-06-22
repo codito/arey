@@ -6,7 +6,6 @@ use std::io::Write;
 use crate::core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
 };
-use crate::core::config::Config;
 use crate::core::model::{ModelConfig, ModelMetrics};
 use crate::platform::llm::get_completion_llm;
 
@@ -76,7 +75,6 @@ impl Task {
 /// Run the ask command with given instruction and overrides
 pub async fn run_ask(
     instruction: &str,
-    config: &Config,
     model_config: ModelConfig,
     overrides_file: Option<&str>,
 ) -> Result<()> {
@@ -99,9 +97,7 @@ pub async fn run_ask(
                 print!("{}", r.text);
                 std::io::stdout().flush()?;
             }
-            Completion::Metrics(_) => {
-                todo!()
-            } // Ignoring metrics chunks
+            Completion::Metrics(_) => {}
         }
     }
     println!();
