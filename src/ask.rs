@@ -7,6 +7,7 @@ use crate::core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
 };
 use crate::core::model::{ModelConfig, ModelMetrics};
+use crate::platform::console::{style_text, MessageType};
 use crate::platform::llm::get_completion_llm;
 
 pub struct Task {
@@ -90,17 +91,46 @@ pub async fn run_ask(
 
     println!("Generating response...");
     let mut stream = task.run().await?;
+    
+    // Collect the response and metrics
+    let mut response = String::new();
+    let mut metrics = CompletionMetrics::default();
+    let mut finish_reason = None;
 
     while let Some(result) = stream.next().await {
         match result? {
             Completion::Response(r) => {
-                print!("{}", r.text);
-                std::io::stdout().flush()?;
+                if let Some(reason) = r.finish_reason {
+                    finish_reason = Some(reason);
+                }
+                response.push_str(&r.text);
             }
-            Completion::Metrics(_) => {}
+            Completion::Metrics(m) => metrics = m,
         }
     }
-    println!();
+
+    // Print the full response
+    println!("{}", response);
+    
+    // Calculate tokens per second and prepare footer
+    let tokens_per_sec = if metrics.completion_latency_ms > 0.0 {
+        metrics.completion_tokens as f32 * 1000.0 / metrics.completion_latency_ms
+    } else {
+        0.0
+    };
+
+    let mut footer_complete = String::from("◼ Completed");
+    if let Some(reason) = finish_reason {
+        footer_complete.push_str(&format!(" ({reason})"));
+    }
+
+    println!(
+        "{}",
+        style_text(
+            &format!("{footer_complete}. {:.2} tokens/s.", tokens_per_sec),
+            MessageType::Footer,
+        )
+    );
 
     Ok(())
 }
