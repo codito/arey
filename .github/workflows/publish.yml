@@ -54,12 +54,12 @@ jobs:
     - name: Build
       run: cargo build --release ${{ matrix.cuda && '--features cuda' || '' }}
     - name: Package artifacts (Linux)
-      if: ${{matrix.os == "ubuntu-latest"}}
+      if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
         mkdir -p dist
         tar -czvf dist/${{ matrix.artifact_name }}.tar.gz -C target/release arey --owner=0 --group=0
     - name: Package artifacts (Windows)
-      if: ${{matrix.os == "windows-latest"}}
+      if: ${{ matrix.os == 'windows-latest' }}
       run: |
         mkdir dist
         Compress-Archive -Path "target\release\arey.exe" -DestinationPath "dist\${{ matrix.artifact_name }}.zip"
