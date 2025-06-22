@@ -54,6 +54,7 @@ jobs:
     - name: Build
       run: cargo build --release ${{ matrix.cuda && '--features cuda' || '' }}
     - name: Package artifacts
+      shell: bash
       run: |
         mkdir dist
         if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
