@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
-use futures::stream::StreamExt;
+use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
-use std::io::Write; // Added for stdout().flush()
-// Removed unused imports: Stream, Arc, Mutex
+use std::io::Write;
 
 use crate::core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
@@ -55,7 +54,7 @@ impl Task {
         Ok(metrics)
     }
 
-    pub async fn run(&mut self) -> Result<BoxStream<'_, Result<Completion>> + '_> {
+    pub async fn run(&mut self) -> Result<BoxStream<'_, Result<Completion>>> {
         let message = ChatMessage {
             sender: SenderType::User,
             text: self.instruction.clone(),
@@ -64,16 +63,13 @@ impl Task {
         let settings = HashMap::new(); // Use default settings for now
         let cancel_token = CancellationToken::new();
 
-        let model = self.model.as_mut()
+        let model = self
+            .model
+            .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
-        
-        let stream = model.complete(&[message], &settings, cancel_token)
-            .await;
-
-        // let wrapped_stream = async_stream::stream! { stream };
+        let stream = model.complete(&[message], &settings, cancel_token).await;
 
         Ok(stream)
-        // Ok(Box::pin(wrapped_stream))
     }
 }
 
