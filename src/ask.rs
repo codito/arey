@@ -1,20 +1,23 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::io::Write;    // Added for stdout().flush()
 use anyhow::{Context, Result};
-use tokio::sync::Mutex;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
+use std::collections::HashMap;
+use std::io::Write; // Added for stdout().flush()
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::core::completion::{ChatMessage, Completion, CompletionModel, SenderType, CancellationToken};
+use crate::core::completion::{
+    CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
+};
 use crate::core::config::Config;
-use crate::core::model::{ModelConfig, ModelMetrics};  // Added ModelMetrics
+use crate::core::model::{ModelConfig, ModelMetrics};
 use crate::platform::llm::get_completion_llm;
 
 pub struct Task {
     instruction: String,
     model_config: ModelConfig,
     overrides: Option<HashMap<String, serde_yaml::Value>>,
-    model: Option<Arc<Mutex<Box<dyn CompletionModel + Send + Sync>>>>,
+    model: Option<Box<dyn CompletionModel + Send + Sync>>,
 }
 
 impl Task {
@@ -33,7 +36,7 @@ impl Task {
 
     pub async fn load_model(&mut self) -> Result<ModelMetrics> {
         let mut config = self.model_config.clone();
-        
+
         // Apply overrides to model configuration
         if let Some(overrides) = &self.overrides {
             for (key, value) in overrides {
@@ -41,27 +44,20 @@ impl Task {
             }
         }
 
-        let model = get_completion_llm(config.clone())
-            .context("Failed to initialize model")?;
+        let mut model = get_completion_llm(config.clone()).context("Failed to initialize model")?;
 
         // Load empty system prompt for tasks
         model
-            .lock().await
             .load("")
             .await
             .context("Failed to load model with system prompt")?;
 
-        let metrics = model.lock().await.metrics();
+        let metrics = model.metrics();
         self.model = Some(model);
         Ok(metrics)
     }
 
-    pub async fn run(&mut self) -> Result<impl Stream<Item = Result<Completion>>> {
-        let model_lock = self.model
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?
-            .clone();
-
+    pub async fn run(&mut self) -> Result<BoxStream<'_, Result<Completion>>> {
         let message = ChatMessage {
             sender: SenderType::User,
             text: self.instruction.clone(),
@@ -70,9 +66,16 @@ impl Task {
         let settings = HashMap::new(); // Use default settings for now
         let cancel_token = CancellationToken::new();
 
-        let mut model_guard = model_lock.lock().await;
-        let stream = model_guard.complete(&[message], &settings, cancel_token).await;
+        let stream = self
+            .model
+            .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?
+            .complete(&[message], &settings, cancel_token)
+            .await;
+
+        // let wrapped_stream = async_stream::stream! { stream };
+
         Ok(stream)
+        // Ok(Box::pin(wrapped_stream))
     }
 }
 
@@ -80,12 +83,12 @@ impl Task {
 pub async fn run_ask(
     instruction: &str,
     config: &Config,
-    overrides_file: Option<&str>
+    overrides_file: Option<&str>,
 ) -> Result<()> {
     let mut task = Task::new(
         instruction.to_string(),
         config.task.model.clone(),
-        parse_overrides_file(overrides_file).await?
+        parse_overrides_file(overrides_file).await?,
     );
 
     println!("Loading model...");
@@ -94,14 +97,16 @@ pub async fn run_ask(
 
     println!("Generating response...");
     let mut stream = task.run().await?;
-    
+
     while let Some(result) = stream.next().await {
         match result? {
             Completion::Response(r) => {
                 print!("{}", r.text);
                 std::io::stdout().flush()?;
             }
-            Completion::Metrics(_) => {}  // Ignoring metrics chunks
+            Completion::Metrics(_) => {
+                todo!()
+            } // Ignoring metrics chunks
         }
     }
     println!();
@@ -111,7 +116,7 @@ pub async fn run_ask(
 
 /// Parse YAML overrides file into settings map
 async fn parse_overrides_file(
-    path: Option<&str>
+    path: Option<&str>,
 ) -> Result<Option<HashMap<String, serde_yaml::Value>>> {
     let Some(path) = path else {
         return Ok(None);
@@ -121,8 +126,8 @@ async fn parse_overrides_file(
         .await
         .context("Failed to read overrides file")?;
 
-    let overrides: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&content)
-        .context("Failed to parse overrides YAML")?;
+    let overrides: HashMap<String, serde_yaml::Value> =
+        serde_yaml::from_str(&content).context("Failed to parse overrides YAML")?;
 
     Ok(Some(overrides))
 }
