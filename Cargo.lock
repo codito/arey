@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "arey"
-version = "0.0.1"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-openai",
