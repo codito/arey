@@ -9,7 +9,7 @@ use crate::{
     },
     platform::{
         assets::get_default_play_file,
-        console::{MessageType, style_text},
+        console::{MessageType, format_footer_metrics, style_text},
     },
     play::watch::watch_file,
 };
@@ -22,6 +22,7 @@ use serde_yaml::Value;
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 use tokio::sync::Mutex;
@@ -209,6 +210,9 @@ impl PlayFile {
                 Completion::Response(response) => {
                     text.push_str(&response.text);
                     finish_reason = response.finish_reason;
+
+                    print!("{}", response.text);
+                    std::io::stdout().flush()?;
                 }
                 Completion::Metrics(usage) => metrics = usage,
             }
@@ -311,28 +315,15 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     play_file.get_response().await?;
 
     if let Some(result) = &play_file.result {
-        let output = match play_file.output_settings.get("format").map(|s| s.as_str()) {
+        let _ = match play_file.output_settings.get("format").map(|s| s.as_str()) {
             Some("plain") => &result.response,
             _ => &result.response,
         };
 
-        println!("{}", output);
+        let footer = format_footer_metrics(&result.metrics, result.finish_reason.as_deref(), false);
         println!();
-
-        let tokens_per_sec =
-            result.metrics.completion_tokens as f32 * 1000.0 / result.metrics.completion_latency_ms;
-        let mut footer_complete = String::from("◼ Completed");
-        if let Some(reason) = result.finish_reason.clone() {
-            footer_complete.push_str(&format!("({reason})"));
-        }
         println!();
-        println!(
-            "{}",
-            style_text(
-                &format!("{footer_complete}. {:.2} tokens/s.", tokens_per_sec),
-                MessageType::Footer,
-            )
-        );
+        println!("{}", style_text(&footer, MessageType::Footer));
     }
 
     Ok(())

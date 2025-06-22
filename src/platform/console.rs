@@ -1,3 +1,4 @@
+use crate::core::completion::CompletionMetrics;
 use console::{Style, StyledObject};
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -45,6 +46,58 @@ impl GenerationSpinner {
     }
 }
 
+pub fn format_footer_metrics(
+    metrics: &CompletionMetrics,
+    finish_reason: Option<&str>,
+    is_cancelled: bool,
+) -> String {
+    if is_cancelled {
+        return "◼ Cancelled.".to_string();
+    }
+
+    let mut footer_complete = String::from("◼ Completed");
+    if let Some(reason) = finish_reason {
+        footer_complete.push_str(&format!(" ({reason})"));
+    }
+    footer_complete.push('.');
+
+    let mut details = Vec::new();
+
+    // Time metrics
+    if metrics.prompt_eval_latency_ms > 0.0 {
+        details.push(format!(
+            "{:.2}s to first token",
+            metrics.prompt_eval_latency_ms / 1000.0
+        ));
+    }
+    if metrics.completion_latency_ms > 0.0 {
+        details.push(format!(
+            "{:.2}s total",
+            (metrics.prompt_eval_latency_ms + metrics.completion_latency_ms) / 1000.0
+        ));
+    }
+
+    // Tokens/s rate
+    if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
+        let tokens_per_sec =
+            metrics.completion_tokens as f32 * 1000.0 / metrics.completion_latency_ms;
+        details.push(format!("{:.2} tokens/s", tokens_per_sec));
+    }
+
+    // Token counts
+    if metrics.completion_tokens > 0 {
+        details.push(format!("{} completion tokens", metrics.completion_tokens));
+    }
+    if metrics.prompt_tokens > 0 {
+        details.push(format!("{} prompt tokens", metrics.prompt_tokens));
+    }
+
+    if details.is_empty() {
+        footer_complete
+    } else {
+        format!("{} {}", footer_complete, details.join(". "))
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

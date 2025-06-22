@@ -1,7 +1,8 @@
+mod ask;
 mod chat;
 mod core;
 mod platform;
-mod play; // Added this line
+mod play;
 
 use crate::chat::{Chat, start_chat};
 use crate::core::config::get_config;
@@ -9,7 +10,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand, command};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Mutex; // Added this line
+use tokio::sync::Mutex;
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
@@ -29,9 +30,9 @@ enum Commands {
     Ask {
         /// Instruction to run.
         instruction: Vec<String>,
-        /// Path to overrides file.
+        /// Model to use for completion
         #[arg(short, long)]
-        overrides_file: Option<String>,
+        model: Option<String>,
     },
     /// Chat with an AI model.
     Chat {
@@ -58,16 +59,18 @@ async fn main() -> anyhow::Result<()> {
     let config = get_config(None).context("Failed to load configuration")?;
 
     match &cli.command {
-        Commands::Ask {
-            instruction,
-            overrides_file,
-        } => {
-            // Placeholder for ask command logic
-            println!("Running ask command with instruction: {:?}", instruction);
-            if let Some(file) = overrides_file {
-                println!("Overrides file: {}", file);
-            }
-            println!("Verbose: {}", cli.verbose);
+        Commands::Ask { instruction, model } => {
+            let instruction = instruction.join(" ");
+            let ask_model_config = if let Some(model_name) = model {
+                config
+                    .models
+                    .get(model_name.as_str())
+                    .cloned()
+                    .context(format!("Model '{}' not found in config.", model_name))?
+            } else {
+                config.task.model.clone()
+            };
+            ask::run_ask(&instruction, ask_model_config).await?;
         }
         Commands::Chat { model } => {
             let chat_model_config = if let Some(model_name) = model {
@@ -77,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
                     .cloned()
                     .context(format!("Model '{}' not found in config.", model_name))?
             } else {
-                config.chat.model
+                config.chat.model.clone()
             };
 
             let chat_instance = Arc::new(Mutex::new(Chat::new(chat_model_config).await?));
