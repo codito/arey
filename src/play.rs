@@ -22,6 +22,7 @@ use serde_yaml::Value;
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 use tokio::sync::Mutex;
@@ -209,6 +210,9 @@ impl PlayFile {
                 Completion::Response(response) => {
                     text.push_str(&response.text);
                     finish_reason = response.finish_reason;
+
+                    print!("{}", response.text);
+                    std::io::stdout().flush()?;
                 }
                 Completion::Metrics(usage) => metrics = usage,
             }
@@ -311,19 +315,17 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     play_file.get_response().await?;
 
     if let Some(result) = &play_file.result {
-        let output = match play_file.output_settings.get("format").map(|s| s.as_str()) {
+        let _ = match play_file.output_settings.get("format").map(|s| s.as_str()) {
             Some("plain") => &result.response,
             _ => &result.response,
         };
-
-        println!("{}", output);
-        println!();
 
         let footer = format_footer_metrics(
             &result.metrics,
             result.finish_reason.as_deref(),
             false,
         );
+        println!();
         println!();
         println!("{}", style_text(&footer, MessageType::Footer));
     }

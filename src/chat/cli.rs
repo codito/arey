@@ -2,12 +2,12 @@
 use crate::chat::Chat;
 use crate::core::completion::{CancellationToken, CompletionMetrics};
 use crate::platform::console::GenerationSpinner;
-use crate::platform::console::{MessageType, style_text, format_footer_metrics};
+use crate::platform::console::{MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use futures::StreamExt;
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::sync::Mutex; // Added this import
+use tokio::sync::Mutex;
 
 /// Command handler logic
 async fn handle_command(
@@ -173,17 +173,11 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             }
         };
 
-        let footer = format_footer_metrics(
-            &metrics,
-            finish_reason_option.as_deref(),
-            was_cancelled,
-        );
+        let footer =
+            format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
         println!();
         println!();
-        println!(
-            "{}",
-            style_text(&footer, MessageType::Footer)
-        );
+        println!("{}", style_text(&footer, MessageType::Footer));
         println!();
     }
 

@@ -13,7 +13,6 @@ use crate::platform::llm::get_completion_llm;
 pub struct Task {
     instruction: String,
     model_config: ModelConfig,
-    overrides: Option<HashMap<String, serde_yaml::Value>>,
     model: Option<Box<dyn CompletionModel + Send + Sync>>,
 }
 
@@ -21,27 +20,17 @@ impl Task {
     pub fn new(
         instruction: String,
         model_config: ModelConfig,
-        overrides: Option<HashMap<String, serde_yaml::Value>>,
     ) -> Self {
         Self {
             instruction,
             model_config,
-            overrides,
             model: None,
         }
     }
 
     pub async fn load_model(&mut self) -> Result<ModelMetrics> {
-        let mut config = self.model_config.clone();
-
-        // Apply overrides to model configuration
-        if let Some(overrides) = &self.overrides {
-            for (key, value) in overrides {
-                config.settings.insert(key.clone(), value.clone());
-            }
-        }
-
-        let mut model = get_completion_llm(config.clone()).context("Failed to initialize model")?;
+        let config = self.model_config.clone();
+        let mut model = get_completion_llm(config).context("Failed to initialize model")?;
 
         // Load empty system prompt for tasks
         model
@@ -77,12 +66,10 @@ impl Task {
 pub async fn run_ask(
     instruction: &str,
     model_config: ModelConfig,
-    overrides_file: Option<&str>,
 ) -> Result<()> {
     let mut task = Task::new(
         instruction.to_string(),
         model_config,
-        parse_overrides_file(overrides_file).await?,
     );
 
     println!("Loading model...");
@@ -115,25 +102,8 @@ pub async fn run_ask(
         false,
     );
     println!();
+    println!();
     println!("{}", style_text(&footer, MessageType::Footer));
 
     Ok(())
-}
-
-/// Parse YAML overrides file into settings map
-async fn parse_overrides_file(
-    path: Option<&str>,
-) -> Result<Option<HashMap<String, serde_yaml::Value>>> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .context("Failed to read overrides file")?;
-
-    let overrides: HashMap<String, serde_yaml::Value> =
-        serde_yaml::from_str(&content).context("Failed to parse overrides YAML")?;
-
-    Ok(Some(overrides))
 }

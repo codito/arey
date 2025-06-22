@@ -30,9 +30,6 @@ enum Commands {
     Ask {
         /// Instruction to run.
         instruction: Vec<String>,
-        /// Path to overrides file.
-        #[arg(short, long)]
-        overrides_file: Option<String>,
         /// Model to use for completion
         #[arg(short, long)]
         model: Option<String>,
@@ -62,11 +59,7 @@ async fn main() -> anyhow::Result<()> {
     let config = get_config(None).context("Failed to load configuration")?;
 
     match &cli.command {
-        Commands::Ask {
-            instruction,
-            overrides_file,
-            model,
-        } => {
+        Commands::Ask { instruction, model } => {
             let instruction = instruction.join(" ");
             let ask_model_config = if let Some(model_name) = model {
                 config
@@ -77,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 config.task.model.clone()
             };
-            ask::run_ask(&instruction, &config, ask_model_config, overrides_file.as_deref()).await?;
+            ask::run_ask(&instruction, ask_model_config).await?;
         }
         Commands::Chat { model } => {
             let chat_model_config = if let Some(model_name) = model {
