@@ -1,6 +1,6 @@
 {
   "packages": {
-    ".": {
+    "crates/arey": {
       "changelog-path": "CHANGELOG.md",
       "release-type": "rust",
       "bump-minor-pre-major": false,
