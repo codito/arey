@@ -1,4 +1,5 @@
 {
+  "bootstrap-sha": "32fbb9d3fda23c36e9ab805c445c5872eaacee11",
   "packages": {
     "crates/arey": {
       "changelog-path": "CHANGELOG.md",
