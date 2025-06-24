@@ -1,22 +1,19 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
 use crate::console::GenerationSpinner;
-use crate::console::{format_footer_metrics, style_text, MessageType};
+use crate::console::{MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use futures::StreamExt;
-use rustyline::{
-    completion::Completer, error::ReadlineError, highlight::Highlighter, hint::Hinter, Config,
-    Context, Editor, Helper,
-};
-use rustyline::validate::{ValidationContext, ValidationResult};
+use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter;
 
-impl Completer for CommandCompleter {
+impl rustyline::completion::Completer for CommandCompleter {
     type Candidate = String;
 
     fn complete(
@@ -27,7 +24,7 @@ impl Completer for CommandCompleter {
     ) -> Result<(usize, Vec<String>), ReadlineError> {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
-            let commands = vec!["/log", "/quit", "/q", "/help"];
+            let commands = ["/log", "/quit", "/q", "/help"];
             let candidates = commands
                 .iter()
                 .filter(|cmd| cmd.starts_with(line))
@@ -41,12 +38,10 @@ impl Completer for CommandCompleter {
     }
 }
 
-impl Highlighter for CommandCompleter {}
-
-impl Hinter for CommandCompleter {
+impl rustyline::hint::Hinter for CommandCompleter {
     type Hint = String;
 
-    fn hint(&self, line: &str, pos: usize, ctx: &Context) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context) -> Option<String> {
         if line.is_empty() || pos < line.len() {
             return None;
         }
@@ -55,18 +50,10 @@ impl Hinter for CommandCompleter {
             vec!["/log", "/quit", "/q", "/help"]
                 .into_iter()
                 .find(|cmd| cmd.starts_with(line))
-                .map(str::to_string)
+                .map(|cmd| cmd[line.len()..].to_string())
         } else {
             None
         }
-    }
-}
-
-impl Helper for CommandCompleter {}
-
-impl Validator for CommandCompleter {
-    fn validate(&self, _ctx: &mut ValidationContext) -> Result<ValidationResult, ReadlineError> {
-        Ok(ValidationResult::Valid)
     }
 }
 
@@ -131,7 +118,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         let readline = rl.readline("> ");
         match readline {
             Ok(line) => {
-                rl.add_history_entry(&line);
+                rl.add_history_entry(&line)?;
                 let user_input = line.trim();
 
                 // Skip empty input
