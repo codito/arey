@@ -9,6 +9,7 @@ use rustyline::{
     completion::Completer, error::ReadlineError, highlight::Highlighter, hint::Hinter, Config,
     Context, Editor, Helper,
 };
+use rustyline::validate::{ValidationContext, ValidationResult};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -41,10 +42,33 @@ impl Completer for CommandCompleter {
 }
 
 impl Highlighter for CommandCompleter {}
+
 impl Hinter for CommandCompleter {
-    type Hint;
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &Context) -> Option<String> {
+        if line.is_empty() || pos < line.len() {
+            return None;
+        }
+        if line.starts_with('/') {
+            // Suggest command completions
+            vec!["/log", "/quit", "/q", "/help"]
+                .into_iter()
+                .find(|cmd| cmd.starts_with(line))
+                .map(str::to_string)
+        } else {
+            None
+        }
+    }
 }
+
 impl Helper for CommandCompleter {}
+
+impl Validator for CommandCompleter {
+    fn validate(&self, _ctx: &mut ValidationContext) -> Result<ValidationResult, ReadlineError> {
+        Ok(ValidationResult::Valid)
+    }
+}
 
 /// Command handler logic
 async fn handle_command(
