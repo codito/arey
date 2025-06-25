@@ -75,6 +75,7 @@ pub struct CompletionMetrics {
     pub prompt_eval_latency_ms: f32,
     pub completion_tokens: u32,
     pub completion_latency_ms: f32,
+    pub raw_chunk: Option<String>,
 }
 
 #[derive(Debug)]

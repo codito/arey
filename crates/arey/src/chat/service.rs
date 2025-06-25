@@ -136,12 +136,17 @@ impl Chat {
                             if let Some(raw) = &response.raw_chunk {
                                 raw_logs.push_str(&format!("{raw}\n"));
                             }
+
                             // Accumulate response in chat history
                             assistant_response.push_str(&response.text);
                             last_finish_reason = response.finish_reason.clone();
                             yield Ok(response);
                         }
                         Completion::Metrics(usage) => {
+                            if let Some(raw) = &usage.raw_chunk {
+                                raw_logs.push_str(&format!("{raw}\n"));
+                            }
+
                             metrics = usage;
                             // Do not break to ensure that stream end can be passed to the clients.
                         }

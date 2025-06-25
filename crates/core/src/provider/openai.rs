@@ -195,17 +195,20 @@ impl CompletionModel for OpenAIBaseModel {
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
                                         finish_reason: choice.finish_reason.as_ref().map(|x| format!("{:?}", x)),
-                                        raw_chunk: Some(raw_json),
+                                        raw_chunk: Some(raw_json.clone()),
                                     }));
                                 }
-                                else if let Some(usage) = chunk.usage {
-                                    // Final completion response has empty choices and includes
-                                    // usage
+
+                                // Some openai compatible servers (Gemini) club usage with the
+                                // final response, others send a separate chunk.
+                                if let Some(usage) = chunk.usage {
+                                    // FIXME possible duplicate logs in raw_chunk
                                     yield Ok(Completion::Metrics(CompletionMetrics{
                                         prompt_tokens: usage.prompt_tokens,
                                         prompt_eval_latency_ms: prompt_eval_latency,
                                         completion_tokens: usage.completion_tokens,
                                         completion_latency_ms: completion_latency,
+                                        raw_chunk: Some(raw_json.clone())
                                     }));
                                 }
                             }

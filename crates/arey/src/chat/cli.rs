@@ -5,10 +5,13 @@ use crate::console::{MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use futures::StreamExt;
+use rustyline::CompletionType;
 use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+static COMMANDS: [&str; 4] = ["/log", "/quit", "/q", "/help"];
 
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter;
@@ -24,8 +27,7 @@ impl rustyline::completion::Completer for CommandCompleter {
     ) -> Result<(usize, Vec<String>), ReadlineError> {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
-            let commands = ["/log", "/quit", "/q", "/help"];
-            let candidates = commands
+            let candidates = COMMANDS
                 .iter()
                 .filter(|cmd| cmd.starts_with(line))
                 .map(|s| s.to_string())
@@ -47,7 +49,7 @@ impl rustyline::hint::Hinter for CommandCompleter {
         }
         if line.starts_with('/') {
             // Suggest command completions
-            vec!["/log", "/quit", "/q", "/help"]
+            COMMANDS
                 .into_iter()
                 .find(|cmd| cmd.starts_with(line))
                 .map(|cmd| cmd[line.len()..].to_string())
@@ -73,7 +75,7 @@ async fn handle_command(
                     Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
                     None => println!("No logs available"),
                 },
-                "/quit" | "/q" => {
+                "/quit" => {
                     println!("Bye!");
                     return Ok(true); // Indicate that the chat should exit
                 }
@@ -109,6 +111,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     let config = Config::builder()
         .history_ignore_dups(true)?
         .history_ignore_space(true)
+        .completion_type(CompletionType::List)
         .build();
 
     let mut rl = Editor::with_config(config)?;
