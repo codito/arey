@@ -4,6 +4,7 @@ use crate::console::GenerationSpinner;
 use crate::console::{format_footer_metrics, style_text, MessageType};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
+use clap::{Parser, Subcommand};
 use console::Style;
 use futures::StreamExt;
 use rustyline::completion::Candidate;
@@ -41,22 +42,27 @@ impl Candidate for CompletionCandidate {
     }
 }
 
-struct Command {
-    name: &'static str,
-    aliases: Vec<&'static str>,
-    description: &'static str,
-    action: fn(&Chat) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>,
+#[derive(Parser, Debug)]
+#[command(multicall = true, no_binary_name = true)]
+struct CliCommand {
+    #[command(subcommand)]
+    command: Command,
 }
 
-impl Command {
-    fn matches(&self, input: &str) -> bool {
-        self.name == input || self.aliases.contains(&input)
-    }
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Show detailed logs for the last assistant message
+    Log,
+    /// Exit the chat session
+    #[command(alias = "q", alias = "quit")]
+    Exit,
+    /// Show help message
+    Help,
 }
 
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter {
-    commands: Arc<Vec<Command>>,
+    command_names: Arc<Vec<String>>,
 }
 
 impl rustyline::completion::Completer for CommandCompleter {
@@ -71,15 +77,10 @@ impl rustyline::completion::Completer for CommandCompleter {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
             let candidates = self
-                .commands
+                .command_names
                 .iter()
-                .flat_map(|cmd| {
-                    let mut names = vec![cmd.name];
-                    names.extend_from_slice(&cmd.aliases);
-                    names
-                })
                 .filter(|&cmd_name| cmd_name.starts_with(line))
-                .map(|s| CompletionCandidate::new(s.to_string()))
+                .map(|s| CompletionCandidate::new(s.clone()))
                 .collect();
 
             Ok((0, candidates))
@@ -98,13 +99,8 @@ impl rustyline::hint::Hinter for CommandCompleter {
         }
         if line.starts_with('/') {
             // Suggest command completions
-            self.commands
+            self.command_names
                 .iter()
-                .flat_map(|cmd| {
-                    let mut names = vec![cmd.name];
-                    names.extend_from_slice(&cmd.aliases);
-                    names
-                })
                 .find(|&cmd_name| cmd_name.starts_with(line))
                 .map(|cmd_name| {
                     format!("{}", Style::new().white().apply_to(&cmd_name[line.len()..]))
@@ -113,10 +109,6 @@ impl rustyline::hint::Hinter for CommandCompleter {
             None
         }
     }
-}
-
-async fn handle_command(chat: &Chat, command: &Command) -> Result<bool> {
-    (command.action)(chat).await
 }
 
 /// Chat UX flow
@@ -130,53 +122,17 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         .completion_type(CompletionType::List)
         .build();
 
-    let commands = Arc::new(vec![
-        Command {
-            name: "/log",
-            aliases: vec![],
-            description: "Show detailed logs for the last assistant message",
-            action: |&'a chat| {
-                Box::pin(async move {
-                    match chat.get_last_assistant_context().await {
-                        Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
-                        None => println!("No logs available"),
-                    }
-                    Ok(false)
-                })
-            },
-        },
-        Command {
-            name: "/quit",
-            aliases: vec!["/q"],
-            description: "Exit the chat session",
-            action: |chat| {
-                Box::pin(async move {
-                    println!("Bye!");
-                    Ok(true)
-                })
-            },
-        },
-        Command {
-            name: "/help",
-            aliases: vec![],
-            description: "Show this help message",
-            action: |chat| {
-                Box::pin(async move {
-                    println!("\nAvailable commands:");
-                    println!("{:<8} - {}", "/log", "Show detailed logs");
-                    println!("{:<8} - {}", "/quit", "Exit the chat");
-                    println!("{:<8} - {}", "/q", "Alias for /quit");
-                    println!("{:<8} - {}", "/help", "Show this help");
-                    println!();
-                    Ok(false)
-                })
-            },
-        },
+    let command_names = Arc::new(vec![
+        "/log".to_string(),
+        "/exit".to_string(),
+        "/q".to_string(),
+        "/quit".to_string(),
+        "/help".to_string(),
     ]);
 
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(CommandCompleter {
-        commands: commands.clone(),
+        command_names: command_names.clone(),
     }));
 
     loop {
@@ -184,7 +140,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                match process_message(&chat, &line, &commands).await {
+                match process_message(&chat, &line).await {
                     Ok(true) => continue,
                     Ok(false) => return Ok(()),
                     Err(err) => return Err(err),
@@ -208,11 +164,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     }
 }
 
-async fn process_message(
-    chat: &Arc<Mutex<Chat>>,
-    line: &str,
-    commands: &Arc<Vec<Command>>,
-) -> Result<bool> {
+async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
     let user_input = line.trim();
 
     // Skip empty input
@@ -222,104 +174,137 @@ async fn process_message(
 
     // Handle commands
     if user_input.starts_with('/') {
-        let chat_guard = chat.lock().await;
-        match commands.iter().find(|cmd| cmd.matches(user_input)) {
-            Some(cmd) => return handle_command(&chat_guard, cmd).await,
-            None => println!("Unknown command. Use /help for available commands"),
-        }
-        return Ok(true);
-    }
-
-    // Create spinner
-    let spinner = GenerationSpinner::new();
-    let cancel_token = CancellationToken::new();
-
-    // Clone for async block
-    let chat_clone = chat.clone();
-    let user_input_for_future = user_input.to_string();
-
-    let was_cancelled = {
-        // Get stream response
-        let mut chat_guard = chat_clone.lock().await;
-        let mut stream = {
-            chat_guard
-                .stream_response(user_input_for_future, cancel_token.clone())
-                .await?
+        let args = match shlex::split(user_input) {
+            Some(args) => args,
+            None => {
+                println!("Invalid command syntax");
+                return Ok(true);
+            }
         };
 
-        let mut first_token_received = false;
-        let mut was_cancelled_internal = false;
+        // Parse using clap
+        match CliCommand::try_parse_from(args) {
+            Ok(CliCommand { command }) => match command {
+                Command::Log => {
+                    let chat_guard = chat.lock().await;
+                    match chat_guard.get_last_assistant_context().await {
+                        Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
+                        None => println!("No logs available"),
+                    }
+                    Ok(false)
+                }
+                Command::Exit => {
+                    println!("Bye!");
+                    Ok(true)
+                }
+                Command::Help => {
+                    println!("Available commands:");
+                    println!("{:<8} - {}", "/log", "Show detailed logs");
+                    println!("{:<8} - {}", "/exit", "Exit the chat");
+                    println!("{:<8} - {}", "/q, /quit", "Aliases for /exit");
+                    println!("{:<8} - {}", "/help", "Show this help");
+                    println!();
+                    Ok(false)
+                }
+            },
+            Err(e) => {
+                println!("{e}");
+                e.print().unwrap(); // Show help automatically
+                Ok(false)
+            }
+        }
+    } else {
+        // Create spinner
+        let spinner = GenerationSpinner::new();
+        let cancel_token = CancellationToken::new();
 
-        // Start listening for Ctrl-C
-        let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
+        // Clone for async block
+        let chat_clone = chat.clone();
+        let user_input_for_future = user_input.to_string();
 
-        // Process stream with Ctrl-C and tokenization detection
-        loop {
-            tokio::select! {
-                // Ctrl-C handling
-                _ = &mut ctrl_c_stream => {
-                    cancel_token.cancel();
-                    was_cancelled_internal = true;
-                    break;
-                },
+        let was_cancelled = {
+            // Get stream response
+            let mut chat_guard = chat_clone.lock().await;
+            let mut stream = {
+                chat_guard
+                    .stream_response(user_input_for_future, cancel_token.clone())
+                    .await?
+            };
 
-                // Process the next stream token
-                next = stream.next() => {
-                    match next {
-                        Some(response) => {
-                            if !first_token_received {
-                                spinner.clear();
-                                first_token_received = true;
-                            }
+            let mut first_token_received = false;
+            let mut was_cancelled_internal = false;
 
-                            if cancel_token.is_cancelled() {
-                                was_cancelled_internal = true;
-                                break;
-                            }
+            // Start listening for Ctrl-C
+            let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
 
-                            match response {
-                                Ok(chunk) => {
-                                    // Print token to console
-                                    print!("{}", chunk.text);
-                                    io::stdout().flush()?;
+            // Process stream with Ctrl-C and tokenization detection
+            loop {
+                tokio::select! {
+                    // Ctrl-C handling
+                    _ = &mut ctrl_c_stream => {
+                        cancel_token.cancel();
+                        was_cancelled_internal = true;
+                        break;
+                    },
+
+                    // Process the next stream token
+                    next = stream.next() => {
+                        match next {
+                            Some(response) => {
+                                if !first_token_received {
+                                    spinner.clear();
+                                    first_token_received = true;
                                 }
-                                Err(e) => {
-                                    eprintln!("Error: {}", e);
+
+                                if cancel_token.is_cancelled() {
                                     was_cancelled_internal = true;
                                     break;
                                 }
+
+                                match response {
+                                    Ok(chunk) => {
+                                        // Print token to console
+                                        print!("{}", chunk.text);
+                                        io::stdout().flush()?;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error: {}", e);
+                                        was_cancelled_internal = true;
+                                        break;
+                                    }
+                                }
                             }
+                            // End of stream
+                            None => break,
                         }
-                        // End of stream
-                        None => break,
                     }
                 }
             }
-        }
 
-        // Ensure spinner is cleared after stream processing
-        spinner.clear();
+            // Ensure spinner is cleared after stream processing
+            spinner.clear();
 
-        was_cancelled_internal || cancel_token.is_cancelled()
-    };
+            was_cancelled_internal || cancel_token.is_cancelled()
+        };
 
-    // Print footer with metrics
-    let (metrics, finish_reason_option) = match was_cancelled {
-        true => (CompletionMetrics::default(), None),
-        false => {
-            if let Some(ctx) = chat.clone().lock().await.get_last_assistant_context().await {
-                (ctx.metrics, ctx.finish_reason)
-            } else {
-                (CompletionMetrics::default(), None)
+        // Print footer with metrics
+        let (metrics, finish_reason_option) = match was_cancelled {
+            true => (CompletionMetrics::default(), None),
+            false => {
+                if let Some(ctx) = chat.clone().lock().await.get_last_assistant_context().await {
+                    (ctx.metrics, ctx.finish_reason)
+                } else {
+                    (CompletionMetrics::default(), None)
+                }
             }
-        }
-    };
+        };
 
-    let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
-    println!();
-    println!();
-    println!("{}", style_text(&footer, MessageType::Footer));
-    println!();
+        let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
+        println!();
+        println!();
+        println!("{}", style_text(&footer, MessageType::Footer));
+        println!();
 
-    Ok(true)
+        Ok(true)
+    }
 }
