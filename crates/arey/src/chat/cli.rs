@@ -1,12 +1,12 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
 use crate::console::GenerationSpinner;
-use crate::console::{MessageType, format_footer_metrics, style_text};
+use crate::console::{format_footer_metrics, style_text, MessageType};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use futures::StreamExt;
 use rustyline::CompletionType;
-use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
+use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlighter, Validator};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -34,7 +34,7 @@ impl rustyline::completion::Completer for CommandCompleter {
             let candidates = COMMANDS
                 .iter()
                 .filter(|cmd| cmd.starts_with(line))
-                .map(|s| format!("{}{}{}", DIM_START, s, DIM_RESET))  // Wrap in dim
+                .map(|s| format!("{}{}{}", DIM_START, s, DIM_RESET)) // Wrap in dim
                 .collect();
 
             Ok((0, candidates))
@@ -75,7 +75,11 @@ async fn handle_command(
     {
         // Remove dim styling when command is fully typed
         let raw_cmd = cmd.0;
-        if raw_cmd == user_input.trim_end_matches(DIM_RESET).trim_end_matches(DIM_START) {
+        if raw_cmd
+            == user_input
+                .trim_end_matches(DIM_RESET)
+                .trim_end_matches(DIM_START)
+        {
             match raw_cmd {
                 "/log" => match chat.get_last_assistant_context().await {
                     Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
@@ -262,5 +266,5 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
     println!("{}", style_text(&footer, MessageType::Footer));
     println!();
 
-    Ok(false)
+    Ok(true)
 }
