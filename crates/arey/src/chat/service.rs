@@ -74,14 +74,14 @@ impl Chat {
 
     pub async fn stream_response(
         &mut self,
-        message: String,
+        message: &str,
         cancel_token: CancellationToken, // Added cancellation token
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
         let _timestamp = Utc::now();
 
         // Create user message and add to history
         let user_message = Message {
-            text: message.clone(),
+            text: message.to_string(),
             sender: SenderType::User,
             _timestamp,
             context: None,

@@ -1,18 +1,16 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
 use crate::console::GenerationSpinner;
-use crate::console::{format_footer_metrics, style_text, MessageType};
+use crate::console::{MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use clap::{Parser, Subcommand};
 use console::Style;
 use futures::StreamExt;
-use rustyline::completion::Candidate;
 use rustyline::CompletionType;
-use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlighter, Validator};
-use std::future::Future;
+use rustyline::completion::Candidate;
+use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
 use std::io::{self, Write};
-use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -43,7 +41,7 @@ impl Candidate for CompletionCandidate {
 }
 
 #[derive(Parser, Debug)]
-#[command(multicall = true, no_binary_name = true)]
+#[command(multicall = true)]
 struct CliCommand {
     #[command(subcommand)]
     command: Command,
@@ -56,8 +54,6 @@ enum Command {
     /// Exit the chat session
     #[command(alias = "q", alias = "quit")]
     Exit,
-    /// Show help message
-    Help,
 }
 
 #[derive(Helper, Validator, Highlighter)]
@@ -140,11 +136,23 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                match process_message(&chat, &line).await {
-                    Ok(true) => continue,
-                    Ok(false) => return Ok(()),
-                    Err(err) => return Err(err),
+                let user_input = line.trim();
+
+                // Skip empty input
+                if user_input.is_empty() {
+                    continue;
                 }
+
+                let continue_repl = match user_input.starts_with('/') {
+                    true => process_command(&chat, user_input).await?,
+                    false => process_message(&chat, user_input).await?,
+                };
+
+                if continue_repl {
+                    continue;
+                }
+
+                return Ok(());
             }
             Err(ReadlineError::Interrupted) => {
                 // Ctrl-C pressed, but not during generation.
@@ -164,147 +172,132 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     }
 }
 
-async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
-    let user_input = line.trim();
-
-    // Skip empty input
-    if user_input.is_empty() {
-        return Ok(true);
-    }
-
+/// Returns false if the REPL should break.
+async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bool> {
     // Handle commands
-    if user_input.starts_with('/') {
-        let args = match shlex::split(user_input) {
-            Some(args) => args,
-            None => {
-                println!("Invalid command syntax");
-                return Ok(true);
+    let args = match shlex::split(user_input) {
+        Some(args) => args,
+        None => {
+            println!("Invalid command syntax");
+            return Ok(true);
+        }
+    };
+
+    let continue_repl = match CliCommand::try_parse_from(args) {
+        Ok(CliCommand { command }) => match command {
+            Command::Log => {
+                let chat_guard = chat.lock().await;
+                match chat_guard.get_last_assistant_context().await {
+                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
+                    None => println!("No logs available"),
+                }
+                true
             }
+            Command::Exit => {
+                println!("Bye!");
+                false
+            }
+        },
+        Err(e) => {
+            e.print().unwrap();
+            true
+        }
+    };
+
+    Ok(continue_repl)
+}
+
+/// Returns false if the REPL should break.
+async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
+    // Create spinner
+    let spinner = GenerationSpinner::new();
+    let cancel_token = CancellationToken::new();
+
+    // Clone for async block
+    let chat_clone = chat.clone();
+
+    let was_cancelled = {
+        // Get stream response
+        let mut chat_guard = chat_clone.lock().await;
+        let mut stream = {
+            chat_guard
+                .stream_response(line, cancel_token.clone())
+                .await?
         };
 
-        // Parse using clap
-        match CliCommand::try_parse_from(args) {
-            Ok(CliCommand { command }) => match command {
-                Command::Log => {
-                    let chat_guard = chat.lock().await;
-                    match chat_guard.get_last_assistant_context().await {
-                        Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
-                        None => println!("No logs available"),
-                    }
-                    Ok(false)
-                }
-                Command::Exit => {
-                    println!("Bye!");
-                    Ok(true)
-                }
-                Command::Help => {
-                    println!("Available commands:");
-                    println!("{:<8} - {}", "/log", "Show detailed logs");
-                    println!("{:<8} - {}", "/exit", "Exit the chat");
-                    println!("{:<8} - {}", "/q, /quit", "Aliases for /exit");
-                    println!("{:<8} - {}", "/help", "Show this help");
-                    println!();
-                    Ok(false)
-                }
-            },
-            Err(e) => {
-                println!("{e}");
-                e.print().unwrap(); // Show help automatically
-                Ok(false)
-            }
-        }
-    } else {
-        // Create spinner
-        let spinner = GenerationSpinner::new();
-        let cancel_token = CancellationToken::new();
+        let mut first_token_received = false;
+        let mut was_cancelled_internal = false;
 
-        // Clone for async block
-        let chat_clone = chat.clone();
-        let user_input_for_future = user_input.to_string();
+        // Start listening for Ctrl-C
+        let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
 
-        let was_cancelled = {
-            // Get stream response
-            let mut chat_guard = chat_clone.lock().await;
-            let mut stream = {
-                chat_guard
-                    .stream_response(user_input_for_future, cancel_token.clone())
-                    .await?
-            };
+        // Process stream with Ctrl-C and tokenization detection
+        loop {
+            tokio::select! {
+                // Ctrl-C handling
+                _ = &mut ctrl_c_stream => {
+                    cancel_token.cancel();
+                    was_cancelled_internal = true;
+                    break;
+                },
 
-            let mut first_token_received = false;
-            let mut was_cancelled_internal = false;
+                // Process the next stream token
+                next = stream.next() => {
+                    match next {
+                        Some(response) => {
+                            if !first_token_received {
+                                spinner.clear();
+                                first_token_received = true;
+                            }
 
-            // Start listening for Ctrl-C
-            let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
+                            if cancel_token.is_cancelled() {
+                                was_cancelled_internal = true;
+                                break;
+                            }
 
-            // Process stream with Ctrl-C and tokenization detection
-            loop {
-                tokio::select! {
-                    // Ctrl-C handling
-                    _ = &mut ctrl_c_stream => {
-                        cancel_token.cancel();
-                        was_cancelled_internal = true;
-                        break;
-                    },
-
-                    // Process the next stream token
-                    next = stream.next() => {
-                        match next {
-                            Some(response) => {
-                                if !first_token_received {
-                                    spinner.clear();
-                                    first_token_received = true;
+                            match response {
+                                Ok(chunk) => {
+                                    // Print token to console
+                                    print!("{}", chunk.text);
+                                    io::stdout().flush()?;
                                 }
-
-                                if cancel_token.is_cancelled() {
+                                Err(e) => {
+                                    eprintln!("Error: {}", e);
                                     was_cancelled_internal = true;
                                     break;
                                 }
-
-                                match response {
-                                    Ok(chunk) => {
-                                        // Print token to console
-                                        print!("{}", chunk.text);
-                                        io::stdout().flush()?;
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Error: {}", e);
-                                        was_cancelled_internal = true;
-                                        break;
-                                    }
-                                }
                             }
-                            // End of stream
-                            None => break,
                         }
+                        // End of stream
+                        None => break,
                     }
                 }
             }
+        }
 
-            // Ensure spinner is cleared after stream processing
-            spinner.clear();
+        // Ensure spinner is cleared after stream processing
+        spinner.clear();
 
-            was_cancelled_internal || cancel_token.is_cancelled()
-        };
+        was_cancelled_internal || cancel_token.is_cancelled()
+    };
 
-        // Print footer with metrics
-        let (metrics, finish_reason_option) = match was_cancelled {
-            true => (CompletionMetrics::default(), None),
-            false => {
-                if let Some(ctx) = chat.clone().lock().await.get_last_assistant_context().await {
-                    (ctx.metrics, ctx.finish_reason)
-                } else {
-                    (CompletionMetrics::default(), None)
-                }
+    // Print footer with metrics
+    let (metrics, finish_reason_option) = match was_cancelled {
+        true => (CompletionMetrics::default(), None),
+        false => {
+            if let Some(ctx) = chat.clone().lock().await.get_last_assistant_context().await {
+                (ctx.metrics, ctx.finish_reason)
+            } else {
+                (CompletionMetrics::default(), None)
             }
-        };
+        }
+    };
 
-        let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
-        println!();
-        println!();
-        println!("{}", style_text(&footer, MessageType::Footer));
-        println!();
+    let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
+    println!();
+    println!();
+    println!("{}", style_text(&footer, MessageType::Footer));
+    println!();
 
-        Ok(true)
-    }
+    Ok(true)
 }

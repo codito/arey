@@ -116,6 +116,7 @@ dependencies = [
  "notify",
  "rustyline",
  "serde_yaml",
+ "shlex",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
