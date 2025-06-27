@@ -72,12 +72,14 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-    - uses: googleapis/release-please-action@v4
+    - name: release-please
       id: release
       if: github.ref == 'refs/heads/master'
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        release-type: rust
+      run: |
+        npm i release-please -g
+        release-please release-pr --token $GITHUB_TOKEN --repo-url codito/arey --debug
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-to-crates-io:
     name: publish to crates.io
