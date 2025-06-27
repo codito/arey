@@ -7,7 +7,6 @@ use arey_core::completion::{CancellationToken, CompletionMetrics};
 use console::Style;
 use futures::StreamExt;
 use rustyline::completion::Candidate;
-use rustyline::CompletionType;
 use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlighter, Validator};
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -46,11 +45,26 @@ impl Candidate for StyledCandidate {
     }
 }
 
+struct Command {
+    name: &'static str,
+    aliases: Vec<&'static str>, // Add aliases list
+    description: &'static str,
+    action: fn(&Chat) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>,
+}
+
+impl Command {
+    fn matches(&self, input: &str) -> bool {
+        self.name == input || self.aliases.contains(&input)
+    }
+}
+
 #[derive(Helper, Validator, Highlighter)]
-struct CommandCompleter;
+struct CommandCompleter {
+    commands: Arc<Vec<Command>>, // Store commands here
+}
 
 impl rustyline::completion::Completer for CommandCompleter {
-    type Candidate = StyledCandidate; // Changed
+    type Candidate = StyledCandidate;
 
     fn complete(
         &self,
@@ -60,12 +74,15 @@ impl rustyline::completion::Completer for CommandCompleter {
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
-            // NOTE: This will cause a compilation error as COMMANDS is removed.
-            // This completer needs to be updated to use the new `Command` struct.
-            let candidates = COMMANDS
+            let candidates = self.commands
                 .iter()
-                .filter(|cmd| cmd.starts_with(line))
-                .map(|s| StyledCandidate::new(s.to_string())) // Changed
+                .flat_map(|cmd| {
+                    let mut names = vec![cmd.name];
+                    names.extend_from_slice(&cmd.aliases);
+                    names
+                })
+                .filter(|&cmd_name| cmd_name.starts_with(line))
+                .map(|s| StyledCandidate::new(s.to_string()))
                 .collect();
 
             Ok((0, candidates))
@@ -84,22 +101,19 @@ impl rustyline::hint::Hinter for CommandCompleter {
         }
         if line.starts_with('/') {
             // Suggest command completions
-            // NOTE: This will cause a compilation error as COMMANDS is removed.
-            // This hinter needs to be updated to use the new `Command` struct.
-            COMMANDS
-                .into_iter()
-                .find(|cmd| cmd.starts_with(line))
-                .map(|cmd| format!("{}", Style::new().white().apply_to(&cmd[line.len()..])))
+            self.commands
+                .iter()
+                .flat_map(|cmd| {
+                    let mut names = vec![cmd.name];
+                    names.extend_from_slice(&cmd.aliases);
+                    names
+                })
+                .find(|&cmd_name| cmd_name.starts_with(line))
+                .map(|cmd_name| format!("{}", Style::new().white().apply_to(&cmd_name[line.len()..])))
         } else {
             None
         }
     }
-}
-
-struct Command {
-    name: &'static str,
-    description: &'static str,
-    action: fn(&Chat) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>,
 }
 
 async fn handle_command(chat: &Chat, command: &Command) -> Result<bool> {
@@ -117,12 +131,10 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         .completion_type(CompletionType::List)
         .build();
 
-    let mut rl = Editor::with_config(config)?;
-    rl.set_helper(Some(CommandCompleter));
-
-    let commands = vec![
+    let commands = Arc::new(vec![
         Command {
             name: "/log",
+            aliases: vec![],
             description: "Show detailed logs for the last assistant message",
             action: |chat| Box::pin(async move {
                 match chat.get_last_assistant_context().await {
@@ -134,6 +146,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         },
         Command {
             name: "/quit",
+            aliases: vec!["/q"],
             description: "Exit the chat session",
             action: |chat| Box::pin(async move {
                 println!("Bye!");
@@ -141,15 +154,8 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             }),
         },
         Command {
-            name: "/q",
-            description: "Alias for /quit command",
-            action: |chat| Box::pin(async move {
-                println!("Bye!");
-                Ok(true)
-            }),
-        },
-        Command {
             name: "/help",
+            aliases: vec![],
             description: "Show this help message",
             action: |chat| Box::pin(async move {
                 println!("\nAvailable commands:");
@@ -161,7 +167,10 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
                 Ok(false)
             }),
         },
-    ];
+    ]);
+
+    let mut rl = Editor::with_config(config)?;
+    rl.set_helper(Some(CommandCompleter { commands: commands.clone() }));
 
     loop {
         let readline = rl.readline("> ");
@@ -192,7 +201,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     }
 }
 
-async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str, commands: &[Command]) -> Result<bool> {
+async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str, commands: &Arc<Vec<Command>>) -> Result<bool> {
     let user_input = line.trim();
 
     // Skip empty input
@@ -203,7 +212,7 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str, commands: &[Comman
     // Handle commands
     if user_input.starts_with('/') {
         let chat_guard = chat.lock().await;
-        match commands.iter().find(|cmd| cmd.name == user_input) {
+        match commands.iter().find(|cmd| cmd.matches(user_input)) {
             Some(cmd) => return handle_command(&chat_guard, cmd).await,
             None => println!("Unknown command. Use /help for available commands"),
         }
