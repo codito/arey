@@ -18,24 +18,27 @@ static COMMANDS: [&str; 4] = ["/log", "/quit", "/q", "/help"];
 #[derive(Debug)]
 struct StyledCandidate {
     text: String,
+    display_string: String, // Add this field to store the styled string
 }
 
 impl StyledCandidate {
     fn new(text: String) -> Self {
-        Self { text }
+        // Create the styled version here and store it
+        let display_string = Style::new()
+            .white()
+            .apply_to(&text)
+            .to_string();
+            
+        Self { 
+            text,
+            display_string,
+        }
     }
 }
 
 impl Candidate for StyledCandidate {
     fn display(&self) -> &str {
-        // let st = format!("{}", GRAY_STYLE.apply_to(&self.text));
-        // st.as_str()
-        // &self.text
-        Style::new()
-            .white()
-            .apply_to(&self.text)
-            .to_string()
-            .as_str()
+        &self.display_string  // Return stored string reference
     }
 
     fn replacement(&self) -> &str {
