@@ -4,7 +4,7 @@ use crate::console::GenerationSpinner;
 use crate::console::{MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use console::Style;
 use futures::StreamExt;
 use rustyline::CompletionType;
@@ -58,7 +58,7 @@ enum Command {
 
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter {
-    command_names: Arc<Vec<String>>,
+    command_names: Vec<String>,
 }
 
 impl rustyline::completion::Completer for CommandCompleter {
@@ -118,21 +118,18 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
         .completion_type(CompletionType::List)
         .build();
 
-    let command_names = Arc::new(vec![
-        "/log".to_string(),
-        "/exit".to_string(),
-        "/q".to_string(),
-        "/quit".to_string(),
-        "/help".to_string(),
-    ]);
+    let command_names = CliCommand::command()
+        .get_subcommands()
+        .flat_map(|c| c.get_name_and_visible_aliases())
+        .map(|s| format!("/{s}"))
+        .collect::<Vec<_>>();
 
     let mut rl = Editor::with_config(config)?;
-    rl.set_helper(Some(CommandCompleter {
-        command_names: command_names.clone(),
-    }));
+    rl.set_helper(Some(CommandCompleter { command_names }));
 
+    let prompt = (style_text("> ", MessageType::Prompt)).to_string();
     loop {
-        let readline = rl.readline("> ");
+        let readline = rl.readline(&prompt);
         match readline {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
@@ -262,7 +259,7 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
                                     io::stdout().flush()?;
                                 }
                                 Err(e) => {
-                                    eprintln!("Error: {}", e);
+                                    eprintln!("Error: {e}");
                                     was_cancelled_internal = true;
                                     break;
                                 }

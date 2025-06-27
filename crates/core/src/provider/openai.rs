@@ -194,7 +194,7 @@ impl CompletionModel for OpenAIBaseModel {
 
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
-                                        finish_reason: choice.finish_reason.as_ref().map(|x| format!("{:?}", x)),
+                                        finish_reason: choice.finish_reason.as_ref().map(|x| format!("{x:?}")),
                                         raw_chunk: Some(raw_json.clone()),
                                     }));
                                 }
@@ -213,7 +213,7 @@ impl CompletionModel for OpenAIBaseModel {
                                 }
                             }
                             Err(err) => {
-                                println!("{:?}", err);
+                                println!("{err:?}");
                                 yield Err(anyhow!("OpenAI stream error: {}", err));
                             }
                         }
@@ -366,7 +366,7 @@ mod tests {
         while let Some(chunk_result) = stream.next().await {
             match chunk_result.unwrap() {
                 Completion::Response(response) => {
-                    println!("{:?}", response);
+                    println!("{response:?}");
                     responses.push(response);
                 }
                 Completion::Metrics(m) => metrics = m,

@@ -4,7 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
-    // Prompt,
+    Prompt,
     // User,
     // AI,
     Footer,
@@ -13,10 +13,10 @@ pub enum MessageType {
 
 pub fn style_text(text: &str, style: MessageType) -> StyledObject<&str> {
     let style_obj = match style {
-        // MessageType::Prompt => Style::new().blue().bold(),
+        MessageType::Prompt => Style::new().blue().bold(),
         // MessageType::User => Style::new().blue(),
         // MessageType::AI => Style::new().white().bright(),
-        MessageType::Footer => Style::new().dim(),
+        MessageType::Footer => Style::new().white().dim(),
         MessageType::Error => Style::new().red().bold(),
     };
     style_obj.apply_to(text)
@@ -81,7 +81,7 @@ pub fn format_footer_metrics(
     if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
         let tokens_per_sec =
             metrics.completion_tokens as f32 * 1000.0 / metrics.completion_latency_ms;
-        details.push(format!("{:.2} tokens/s", tokens_per_sec));
+        details.push(format!("{tokens_per_sec:.2} tokens/s"));
     }
 
     // Token counts
@@ -92,12 +92,15 @@ pub fn format_footer_metrics(
         details.push(format!("{} prompt tokens", metrics.prompt_tokens));
     }
 
-    if details.is_empty() {
+    let footer = if details.is_empty() {
         footer_complete
     } else {
         format!("{} {}", footer_complete, details.join(". "))
-    }
+    };
+
+    style_text(&footer, MessageType::Footer).to_string()
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

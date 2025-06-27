@@ -102,7 +102,7 @@ impl RawConfig {
                     StringOrObject::String(s) => models_with_names
                         .get(s)
                         .cloned()
-                        .ok_or_else(|| AreyConfigError::Config(format!("Model '{}' not found", s))),
+                        .ok_or_else(|| AreyConfigError::Config(format!("Model '{s}' not found"))),
                     StringOrObject::Object(m) => Ok(m.clone()),
                 }
             };
@@ -112,7 +112,7 @@ impl RawConfig {
                 Some(StringOrObject::String(s)) => self.profiles
                     .get(s)
                     .cloned()
-                    .ok_or_else(|| AreyConfigError::Config(format!("Profile '{}' not found", s))),
+                    .ok_or_else(|| AreyConfigError::Config(format!("Profile '{s}' not found"))),
                 Some(StringOrObject::Object(p)) => Ok(p.clone()),
                 None => Ok(ProfileConfig::default()),
             }
@@ -391,7 +391,7 @@ task:
 
         let (exists, file_path) = create_or_get_config_file(Some(config_file.clone())).unwrap();
 
-        println!("{:?} {:?}", config_dir, config_file);
+        println!("{config_dir:?} {config_file:?}");
         assert!(!exists);
         assert_eq!(file_path, config_file);
         assert!(file_path.exists());
@@ -418,7 +418,7 @@ task:
         let config_file = create_temp_config("invalid yaml content: - [");
         let err = get_config(Some(config_file)).unwrap_err();
         assert!(matches!(err, AreyConfigError::YAMLError(_)));
-        assert!(format!("{}", err).contains("YAML parsing error"));
+        assert!(format!("{err}").contains("YAML parsing error"));
     }
 
     #[test]
