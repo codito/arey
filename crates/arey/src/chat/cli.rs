@@ -4,23 +4,16 @@ use crate::console::GenerationSpinner;
 use crate::console::{format_footer_metrics, style_text, MessageType};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
+use console::Style;
 use futures::StreamExt;
+use rustyline::completion::Candidate;
 use rustyline::CompletionType;
 use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlighter, Validator};
-use rustyline::completion::Candidate; // Added
-use std::borrow::Cow; // Added
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use console::Style; // Added
 
 static COMMANDS: [&str; 4] = ["/log", "/quit", "/q", "/help"];
-
-// ANSI escape sequences for dim text
-// const DIM_START: &str = "\x1b[2m"; // Removed
-// const DIM_RESET: &str = "\x1b[0m"; // Removed
-
-const GRAY_STYLE: Style = Style::new().dim(); // Added
 
 #[derive(Debug)]
 struct StyledCandidate {
@@ -35,20 +28,18 @@ impl StyledCandidate {
 
 impl Candidate for StyledCandidate {
     fn display(&self) -> &str {
-        &self.text
+        // let st = format!("{}", GRAY_STYLE.apply_to(&self.text));
+        // st.as_str()
+        // &self.text
+        Style::new()
+            .white()
+            .apply_to(&self.text)
+            .to_string()
+            .as_str()
     }
 
     fn replacement(&self) -> &str {
         &self.text
-    }
-
-    // Custom display with styling
-    fn display_with_cursor(&self, in_pos: usize) -> Cow<str> {
-        Cow::Owned(format!(
-            "{}{}",
-            GRAY_STYLE.apply_to(&self.text[..in_pos]),
-            &self.text[in_pos..]
-        ))
     }
 }
 
@@ -82,7 +73,7 @@ impl rustyline::completion::Completer for CommandCompleter {
 impl rustyline::hint::Hinter for CommandCompleter {
     type Hint = String;
 
-    fn hint(&self, line: &str, pos: usize, _ctx: &Context) -> Option<Self::Hint> { // Changed Self::Hint
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context) -> Option<Self::Hint> {
         if line.is_empty() || pos < line.len() {
             return None;
         }
@@ -91,10 +82,7 @@ impl rustyline::hint::Hinter for CommandCompleter {
             COMMANDS
                 .into_iter()
                 .find(|cmd| cmd.starts_with(line))
-                .map(|cmd| format!(
-                    "{}",
-                    GRAY_STYLE.apply_to(&cmd[line.len()..])
-                )) // Changed
+                .map(|cmd| format!("{}", Style::new().white().apply_to(&cmd[line.len()..])))
         } else {
             None
         }
@@ -108,9 +96,8 @@ async fn handle_command(
     command_list: &Vec<(&str, &str)>,
 ) -> Result<bool> {
     let raw_input = user_input.trim(); // Added
-    if let Some(cmd) = command_list
-        .iter()
-        .find(|(cmd, _)| raw_input == *cmd) // Changed
+    if let Some(cmd) = command_list.iter().find(|(cmd, _)| raw_input == *cmd)
+    // Changed
     {
         // Remove dim styling when command is fully typed
         let raw_cmd = cmd.0;
@@ -119,7 +106,8 @@ async fn handle_command(
         //     == user_input
         //         .trim_end_matches(DIM_RESET)
         //         .trim_end_matches(DIM_START)
-        { // This block is now always executed if a command is found
+        {
+            // This block is now always executed if a command is found
             match raw_cmd {
                 "/log" => match chat.get_last_assistant_context().await {
                     Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
