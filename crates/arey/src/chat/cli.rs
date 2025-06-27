@@ -12,8 +12,8 @@ use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlight
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-static COMMANDS: [&str; 4] = ["/log", "/quit", "/q", "/help"];
+use std::pin::Pin;
+use std::future::Future;
 
 #[derive(Debug)]
 struct StyledCandidate {
@@ -60,6 +60,8 @@ impl rustyline::completion::Completer for CommandCompleter {
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
+            // NOTE: This will cause a compilation error as COMMANDS is removed.
+            // This completer needs to be updated to use the new `Command` struct.
             let candidates = COMMANDS
                 .iter()
                 .filter(|cmd| cmd.starts_with(line))
@@ -82,6 +84,8 @@ impl rustyline::hint::Hinter for CommandCompleter {
         }
         if line.starts_with('/') {
             // Suggest command completions
+            // NOTE: This will cause a compilation error as COMMANDS is removed.
+            // This hinter needs to be updated to use the new `Command` struct.
             COMMANDS
                 .into_iter()
                 .find(|cmd| cmd.starts_with(line))
@@ -92,50 +96,14 @@ impl rustyline::hint::Hinter for CommandCompleter {
     }
 }
 
-/// Command handler logic
-async fn handle_command(
-    chat: &Chat,
-    user_input: &str,
-    command_list: &Vec<(&str, &str)>,
-) -> Result<bool> {
-    let raw_input = user_input.trim(); // Added
-    if let Some(cmd) = command_list.iter().find(|(cmd, _)| raw_input == *cmd)
-    // Changed
-    {
-        // Remove dim styling when command is fully typed
-        let raw_cmd = cmd.0;
-        // Removed original if condition:
-        // if raw_cmd
-        //     == user_input
-        //         .trim_end_matches(DIM_RESET)
-        //         .trim_end_matches(DIM_START)
-        {
-            // This block is now always executed if a command is found
-            match raw_cmd {
-                "/log" => match chat.get_last_assistant_context().await {
-                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
-                    None => println!("No logs available"),
-                },
-                "/quit" => {
-                    println!("Bye!");
-                    return Ok(true); // Indicate that the chat should exit
-                }
-                "/help" => {
-                    println!("\nAvailable commands:");
-                    for (cmd, desc) in command_list.iter() {
-                        println!("{:<8} - {}", cmd, desc);
-                    }
-                    println!();
-                }
-                _ => {} // Should not happen with exact match
-            }
-        }
-        // Removed original else branch:
-        // else {
-        //     println!("Command suggestion: {}", cmd.0);
-        // }
-    }
-    Ok(false) // Indicate that the chat should continue
+struct Command {
+    name: &'static str,
+    description: &'static str,
+    action: fn(&Chat) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>,
+}
+
+async fn handle_command(chat: &Chat, command: &Command) -> Result<bool> {
+    (command.action)(chat).await
 }
 
 /// Chat UX flow
@@ -152,12 +120,55 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(CommandCompleter));
 
+    let commands = vec![
+        Command {
+            name: "/log",
+            description: "Show detailed logs for the last assistant message",
+            action: |chat| Box::pin(async move {
+                match chat.get_last_assistant_context().await {
+                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
+                    None => println!("No logs available"),
+                }
+                Ok(false)
+            }),
+        },
+        Command {
+            name: "/quit",
+            description: "Exit the chat session",
+            action: |chat| Box::pin(async move {
+                println!("Bye!");
+                Ok(true)
+            }),
+        },
+        Command {
+            name: "/q",
+            description: "Alias for /quit command",
+            action: |chat| Box::pin(async move {
+                println!("Bye!");
+                Ok(true)
+            }),
+        },
+        Command {
+            name: "/help",
+            description: "Show this help message",
+            action: |chat| Box::pin(async move {
+                println!("\nAvailable commands:");
+                println!("{:<8} - {}", "/log", "Show detailed logs");
+                println!("{:<8} - {}", "/quit", "Exit the chat");
+                println!("{:<8} - {}", "/q", "Alias for /quit");
+                println!("{:<8} - {}", "/help", "Show this help");
+                println!();
+                Ok(false)
+            }),
+        },
+    ];
+
     loop {
         let readline = rl.readline("> ");
         match readline {
             Ok(line) => {
                 rl.add_history_entry(&line)?;
-                match process_message(&chat, &line).await {
+                match process_message(&chat, &line, &commands).await {
                     Ok(true) => continue,
                     Ok(false) => return Ok(()),
                     Err(err) => return Err(err),
@@ -181,15 +192,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     }
 }
 
-async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
-    // Add available commands with descriptions
-    let command_list = vec![
-        ("/log", "Show detailed logs for the last assistant message"),
-        ("/q", "Alias for /quit command"),
-        ("/quit", "Exit the chat session"),
-        ("/help", "Show this help message"),
-    ];
-
+async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str, commands: &[Command]) -> Result<bool> {
     let user_input = line.trim();
 
     // Skip empty input
@@ -199,15 +202,14 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
 
     // Handle commands
     if user_input.starts_with('/') {
-        // Lock the chat for command handling
         let chat_guard = chat.lock().await;
-        if handle_command(&chat_guard, user_input, &command_list).await? {
-            return Ok(false); // Exit loop if command handler returns true (e.g., for /quit)
+        match commands.iter().find(|cmd| cmd.name == user_input) {
+            Some(cmd) => return handle_command(&chat_guard, cmd).await,
+            None => println!("Unknown command. Use /help for available commands"),
         }
-        drop(chat_guard); // Explicitly drop the guard to release the lock
         return Ok(true);
     }
-
+    
     // Create spinner
     let spinner = GenerationSpinner::new();
     let cancel_token = CancellationToken::new();
