@@ -13,6 +13,10 @@ use tokio::sync::Mutex;
 
 static COMMANDS: [&str; 4] = ["/log", "/quit", "/q", "/help"];
 
+// ANSI escape sequences for dim text
+const DIM_START: &str = "\x1b[2m";
+const DIM_RESET: &str = "\x1b[0m";
+
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter;
 
@@ -30,7 +34,7 @@ impl rustyline::completion::Completer for CommandCompleter {
             let candidates = COMMANDS
                 .iter()
                 .filter(|cmd| cmd.starts_with(line))
-                .map(|s| s.to_string())
+                .map(|s| format!("{}{}{}", DIM_START, s, DIM_RESET))  // Wrap in dim
                 .collect();
 
             Ok((0, candidates))
@@ -52,7 +56,7 @@ impl rustyline::hint::Hinter for CommandCompleter {
             COMMANDS
                 .into_iter()
                 .find(|cmd| cmd.starts_with(line))
-                .map(|cmd| cmd[line.len()..].to_string())
+                .map(|cmd| format!("{}{}{}", DIM_START, &cmd[line.len()..], DIM_RESET))
         } else {
             None
         }
@@ -69,8 +73,10 @@ async fn handle_command(
         .iter()
         .find(|(cmd, _)| user_input.starts_with(*cmd) || cmd.starts_with(user_input))
     {
-        if cmd.0 == user_input {
-            match user_input {
+        // Remove dim styling when command is fully typed
+        let raw_cmd = cmd.0;
+        if raw_cmd == user_input.trim_end_matches(DIM_RESET).trim_end_matches(DIM_START) {
+            match raw_cmd {
                 "/log" => match chat.get_last_assistant_context().await {
                     Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
                     None => println!("No logs available"),
