@@ -7,34 +7,69 @@ use arey_core::completion::{CancellationToken, CompletionMetrics};
 use futures::StreamExt;
 use rustyline::CompletionType;
 use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlighter, Validator};
+use rustyline::completion::Candidate; // Added
+use std::borrow::Cow; // Added
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use console::Style; // Added
 
 static COMMANDS: [&str; 4] = ["/log", "/quit", "/q", "/help"];
 
 // ANSI escape sequences for dim text
-const DIM_START: &str = "\x1b[2m";
-const DIM_RESET: &str = "\x1b[0m";
+// const DIM_START: &str = "\x1b[2m"; // Removed
+// const DIM_RESET: &str = "\x1b[0m"; // Removed
+
+const GRAY_STYLE: Style = Style::new().dim(); // Added
+
+#[derive(Debug)]
+struct StyledCandidate {
+    text: String,
+}
+
+impl StyledCandidate {
+    fn new(text: String) -> Self {
+        Self { text }
+    }
+}
+
+impl Candidate for StyledCandidate {
+    fn display(&self) -> &str {
+        &self.text
+    }
+
+    fn replacement(&self) -> &str {
+        &self.text
+    }
+
+    // Custom display with styling
+    fn display_with_cursor(&self, in_pos: usize) -> Cow<str> {
+        Cow::Owned(format!(
+            "{}{}",
+            GRAY_STYLE.apply_to(&self.text[..in_pos]),
+            &self.text[in_pos..]
+        ))
+    }
+}
 
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter;
 
 impl rustyline::completion::Completer for CommandCompleter {
-    type Candidate = String;
+    type Candidate = StyledCandidate; // Changed
 
     fn complete(
         &self,
         line: &str,
         pos: usize,
         _ctx: &Context,
-    ) -> Result<(usize, Vec<String>), ReadlineError> {
+    ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
             let candidates = COMMANDS
                 .iter()
                 .filter(|cmd| cmd.starts_with(line))
-                .map(|s| format!("{}{}{}", DIM_START, s, DIM_RESET)) // Wrap in dim
+                .map(|s| StyledCandidate::new(s.to_string())) // Changed
                 .collect();
 
             Ok((0, candidates))
@@ -47,7 +82,7 @@ impl rustyline::completion::Completer for CommandCompleter {
 impl rustyline::hint::Hinter for CommandCompleter {
     type Hint = String;
 
-    fn hint(&self, line: &str, pos: usize, _ctx: &Context) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context) -> Option<Self::Hint> { // Changed Self::Hint
         if line.is_empty() || pos < line.len() {
             return None;
         }
@@ -56,7 +91,10 @@ impl rustyline::hint::Hinter for CommandCompleter {
             COMMANDS
                 .into_iter()
                 .find(|cmd| cmd.starts_with(line))
-                .map(|cmd| format!("{}{}{}", DIM_START, &cmd[line.len()..], DIM_RESET))
+                .map(|cmd| format!(
+                    "{}",
+                    GRAY_STYLE.apply_to(&cmd[line.len()..])
+                )) // Changed
         } else {
             None
         }
@@ -69,17 +107,19 @@ async fn handle_command(
     user_input: &str,
     command_list: &Vec<(&str, &str)>,
 ) -> Result<bool> {
+    let raw_input = user_input.trim(); // Added
     if let Some(cmd) = command_list
         .iter()
-        .find(|(cmd, _)| user_input.starts_with(*cmd) || cmd.starts_with(user_input))
+        .find(|(cmd, _)| raw_input == *cmd) // Changed
     {
         // Remove dim styling when command is fully typed
         let raw_cmd = cmd.0;
-        if raw_cmd
-            == user_input
-                .trim_end_matches(DIM_RESET)
-                .trim_end_matches(DIM_START)
-        {
+        // Removed original if condition:
+        // if raw_cmd
+        //     == user_input
+        //         .trim_end_matches(DIM_RESET)
+        //         .trim_end_matches(DIM_START)
+        { // This block is now always executed if a command is found
             match raw_cmd {
                 "/log" => match chat.get_last_assistant_context().await {
                     Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
@@ -98,9 +138,11 @@ async fn handle_command(
                 }
                 _ => {} // Should not happen with exact match
             }
-        } else {
-            println!("Command suggestion: {}", cmd.0);
         }
+        // Removed original else branch:
+        // else {
+        //     println!("Command suggestion: {}", cmd.0);
+        // }
     }
     Ok(false) // Indicate that the chat should continue
 }
