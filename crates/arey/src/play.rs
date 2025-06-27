@@ -410,7 +410,7 @@ task:
 
     fn create_temp_config() -> Result<Config> {
         let mut config_file = NamedTempFile::new()?;
-        write!(config_file, "{}", DUMMY_CONFIG_CONTENT)?;
+        write!(config_file, "{DUMMY_CONFIG_CONTENT}")?;
 
         get_config(Some(config_file.path().to_path_buf()))
             .map_err(|e| anyhow!("Failed to create temp config file. Error {}", e))

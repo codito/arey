@@ -74,14 +74,14 @@ impl Chat {
 
     pub async fn stream_response(
         &mut self,
-        message: String,
+        message: &str,
         cancel_token: CancellationToken, // Added cancellation token
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
         let _timestamp = Utc::now();
 
         // Create user message and add to history
         let user_message = Message {
-            text: message.clone(),
+            text: message.to_string(),
             sender: SenderType::User,
             _timestamp,
             context: None,
@@ -136,12 +136,17 @@ impl Chat {
                             if let Some(raw) = &response.raw_chunk {
                                 raw_logs.push_str(&format!("{raw}\n"));
                             }
+
                             // Accumulate response in chat history
                             assistant_response.push_str(&response.text);
                             last_finish_reason = response.finish_reason.clone();
                             yield Ok(response);
                         }
                         Completion::Metrics(usage) => {
+                            if let Some(raw) = &usage.raw_chunk {
+                                raw_logs.push_str(&format!("{raw}\n"));
+                            }
+
                             metrics = usage;
                             // Do not break to ensure that stream end can be passed to the clients.
                         }

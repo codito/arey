@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
                     .models
                     .get(model_name.as_str())
                     .cloned()
-                    .context(format!("Model '{}' not found in config.", model_name))?
+                    .context(format!("Model '{model_name}' not found in config."))?
             } else {
                 config.task.model.clone()
             };
@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
                     .models
                     .get(model_name.as_str())
                     .cloned()
-                    .context(format!("Model '{}' not found in config.", model_name))?
+                    .context(format!("Model '{model_name}' not found in config."))?
             } else {
                 config.chat.model.clone()
             };

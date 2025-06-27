@@ -229,6 +229,7 @@ impl CompletionModel for LlamaBaseModel {
                     prompt_eval_latency_ms,
                     completion_tokens: token_count,
                     completion_latency_ms,
+                    raw_chunk: None,
                 })));
 
                 Ok(())
