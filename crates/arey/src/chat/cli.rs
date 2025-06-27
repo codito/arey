@@ -7,37 +7,33 @@ use arey_core::completion::{CancellationToken, CompletionMetrics};
 use console::Style;
 use futures::StreamExt;
 use rustyline::completion::Candidate;
+use rustyline::CompletionType;
 use rustyline::{error::ReadlineError, Config, Context, Editor, Helper, Highlighter, Validator};
+use std::future::Future;
 use std::io::{self, Write};
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::pin::Pin;
-use std::future::Future;
 
 #[derive(Debug)]
-struct StyledCandidate {
+struct CompletionCandidate {
     text: String,
-    display_string: String, // Add this field to store the styled string
+    display_string: String,
 }
 
-impl StyledCandidate {
+impl CompletionCandidate {
     fn new(text: String) -> Self {
-        // Create the styled version here and store it
-        let display_string = Style::new()
-            .white()
-            .apply_to(&text)
-            .to_string();
-            
-        Self { 
+        let display_string = Style::new().white().apply_to(&text).to_string();
+        Self {
             text,
             display_string,
         }
     }
 }
 
-impl Candidate for StyledCandidate {
+impl Candidate for CompletionCandidate {
     fn display(&self) -> &str {
-        &self.display_string  // Return stored string reference
+        &self.display_string
     }
 
     fn replacement(&self) -> &str {
@@ -47,7 +43,7 @@ impl Candidate for StyledCandidate {
 
 struct Command {
     name: &'static str,
-    aliases: Vec<&'static str>, // Add aliases list
+    aliases: Vec<&'static str>,
     description: &'static str,
     action: fn(&Chat) -> Pin<Box<dyn Future<Output = Result<bool>> + Send>>,
 }
@@ -60,11 +56,11 @@ impl Command {
 
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter {
-    commands: Arc<Vec<Command>>, // Store commands here
+    commands: Arc<Vec<Command>>,
 }
 
 impl rustyline::completion::Completer for CommandCompleter {
-    type Candidate = StyledCandidate;
+    type Candidate = CompletionCandidate;
 
     fn complete(
         &self,
@@ -74,7 +70,8 @@ impl rustyline::completion::Completer for CommandCompleter {
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
-            let candidates = self.commands
+            let candidates = self
+                .commands
                 .iter()
                 .flat_map(|cmd| {
                     let mut names = vec![cmd.name];
@@ -82,7 +79,7 @@ impl rustyline::completion::Completer for CommandCompleter {
                     names
                 })
                 .filter(|&cmd_name| cmd_name.starts_with(line))
-                .map(|s| StyledCandidate::new(s.to_string()))
+                .map(|s| CompletionCandidate::new(s.to_string()))
                 .collect();
 
             Ok((0, candidates))
@@ -109,7 +106,9 @@ impl rustyline::hint::Hinter for CommandCompleter {
                     names
                 })
                 .find(|&cmd_name| cmd_name.starts_with(line))
-                .map(|cmd_name| format!("{}", Style::new().white().apply_to(&cmd_name[line.len()..])))
+                .map(|cmd_name| {
+                    format!("{}", Style::new().white().apply_to(&cmd_name[line.len()..]))
+                })
         } else {
             None
         }
@@ -122,7 +121,7 @@ async fn handle_command(chat: &Chat, command: &Command) -> Result<bool> {
 
 /// Chat UX flow
 pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
-    println!("Welcome to arey chat! Type '/help' for commands, 'q' to exit.");
+    println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
 
     // Configure rustyline
     let config = Config::builder()
@@ -136,41 +135,49 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
             name: "/log",
             aliases: vec![],
             description: "Show detailed logs for the last assistant message",
-            action: |chat| Box::pin(async move {
-                match chat.get_last_assistant_context().await {
-                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
-                    None => println!("No logs available"),
-                }
-                Ok(false)
-            }),
+            action: |&'a chat| {
+                Box::pin(async move {
+                    match chat.get_last_assistant_context().await {
+                        Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
+                        None => println!("No logs available"),
+                    }
+                    Ok(false)
+                })
+            },
         },
         Command {
             name: "/quit",
             aliases: vec!["/q"],
             description: "Exit the chat session",
-            action: |chat| Box::pin(async move {
-                println!("Bye!");
-                Ok(true)
-            }),
+            action: |chat| {
+                Box::pin(async move {
+                    println!("Bye!");
+                    Ok(true)
+                })
+            },
         },
         Command {
             name: "/help",
             aliases: vec![],
             description: "Show this help message",
-            action: |chat| Box::pin(async move {
-                println!("\nAvailable commands:");
-                println!("{:<8} - {}", "/log", "Show detailed logs");
-                println!("{:<8} - {}", "/quit", "Exit the chat");
-                println!("{:<8} - {}", "/q", "Alias for /quit");
-                println!("{:<8} - {}", "/help", "Show this help");
-                println!();
-                Ok(false)
-            }),
+            action: |chat| {
+                Box::pin(async move {
+                    println!("\nAvailable commands:");
+                    println!("{:<8} - {}", "/log", "Show detailed logs");
+                    println!("{:<8} - {}", "/quit", "Exit the chat");
+                    println!("{:<8} - {}", "/q", "Alias for /quit");
+                    println!("{:<8} - {}", "/help", "Show this help");
+                    println!();
+                    Ok(false)
+                })
+            },
         },
     ]);
 
     let mut rl = Editor::with_config(config)?;
-    rl.set_helper(Some(CommandCompleter { commands: commands.clone() }));
+    rl.set_helper(Some(CommandCompleter {
+        commands: commands.clone(),
+    }));
 
     loop {
         let readline = rl.readline("> ");
@@ -201,7 +208,11 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
     }
 }
 
-async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str, commands: &Arc<Vec<Command>>) -> Result<bool> {
+async fn process_message(
+    chat: &Arc<Mutex<Chat>>,
+    line: &str,
+    commands: &Arc<Vec<Command>>,
+) -> Result<bool> {
     let user_input = line.trim();
 
     // Skip empty input
@@ -218,7 +229,7 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str, commands: &Arc<Vec
         }
         return Ok(true);
     }
-    
+
     // Create spinner
     let spinner = GenerationSpinner::new();
     let cancel_token = CancellationToken::new();
