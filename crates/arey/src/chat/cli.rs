@@ -1,7 +1,8 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
-use crate::console::GenerationSpinner;
-use crate::console::{MessageType, format_footer_metrics, style_text};
+use crate::console::{
+    GenerationSpinner, MessageType, TerminalRenderer, format_footer_metrics, style_text,
+};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -10,7 +11,6 @@ use futures::StreamExt;
 use rustyline::CompletionType;
 use rustyline::completion::Candidate;
 use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
-use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -108,7 +108,10 @@ impl rustyline::hint::Hinter for CommandCompleter {
 }
 
 /// Chat UX flow
-pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
+pub async fn start_chat(
+    chat: Arc<Mutex<Chat>>,
+    renderer: &mut TerminalRenderer<'_>,
+) -> anyhow::Result<()> {
     println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
 
     // Configure rustyline
@@ -142,7 +145,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
                 let continue_repl = match user_input.starts_with('/') {
                     true => process_command(&chat, user_input).await?,
-                    false => process_message(&chat, user_input).await?,
+                    false => process_message(&chat, renderer, user_input).await?,
                 };
 
                 if continue_repl {
@@ -205,7 +208,11 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
 }
 
 /// Returns false if the REPL should break.
-async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
+async fn process_message(
+    chat: &Arc<Mutex<Chat>>,
+    renderer: &mut TerminalRenderer<'_>,
+    line: &str,
+) -> Result<bool> {
     // Create spinner
     let spinner = GenerationSpinner::new();
     let cancel_token = CancellationToken::new();
@@ -254,9 +261,7 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
 
                             match response {
                                 Ok(chunk) => {
-                                    // Print token to console
-                                    print!("{}", chunk.text);
-                                    io::stdout().flush()?;
+                                    renderer.render_markdown(&chunk.text)?;
                                 }
                                 Err(e) => {
                                     eprintln!("Error: {e}");
@@ -278,6 +283,10 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
         was_cancelled_internal || cancel_token.is_cancelled()
     };
 
+    // After the stream finishes, clear the markdown renderer's internal buffer
+    // and reset its state for the next message. This does not clear the screen.
+    renderer.clear();
+
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {
         true => (CompletionMetrics::default(), None),
@@ -291,6 +300,10 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
     };
 
     let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
+
+    // Ensure the footer starts on a new line after the markdown output.
+    // The `render` function leaves the cursor at the end of the last line it drew.
+    // `println!()` will handle adding a newline before printing.
     println!();
     println!();
     println!("{}", style_text(&footer, MessageType::Footer));

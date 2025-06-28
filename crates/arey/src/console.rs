@@ -1,6 +1,13 @@
 use arey_core::completion::CompletionMetrics;
-use console::{Style, StyledObject};
+use console::{Style, StyledObject, Term};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::io::Write;
+use two_face::re_exports::syntect::{
+    easy::HighlightLines,
+    highlighting::{Style as SyntectStyle, Theme},
+    parsing::SyntaxSet,
+    util::{LinesWithEndings, as_24_bit_terminal_escaped},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
@@ -20,30 +27,6 @@ pub fn style_text(text: &str, style: MessageType) -> StyledObject<&str> {
         MessageType::Error => Style::new().red().bold(),
     };
     style_obj.apply_to(text)
-}
-
-#[derive(Debug)]
-pub struct GenerationSpinner {
-    spinner: ProgressBar,
-}
-
-impl GenerationSpinner {
-    pub fn new() -> Self {
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::with_template("{spinner:.blue} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-        );
-        spinner.set_message("Generating...");
-        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
-        Self { spinner }
-    }
-
-    pub fn clear(&self) {
-        self.spinner.finish_and_clear();
-    }
 }
 
 pub fn format_footer_metrics(
@@ -99,6 +82,84 @@ pub fn format_footer_metrics(
     };
 
     style_text(&footer, MessageType::Footer).to_string()
+}
+
+pub fn get_render_theme(theme_name: &str) -> Theme {
+    let theme_set = two_face::theme::extra();
+    let theme_key = match theme_name {
+        "dark" => two_face::theme::EmbeddedThemeName::Base16OceanDark,
+        _ => two_face::theme::EmbeddedThemeName::Base16OceanLight,
+    };
+    theme_set.get(theme_key).clone()
+}
+
+pub struct TerminalRenderer<'a> {
+    term: &'a mut Term,
+    syntax_set: SyntaxSet,
+    theme: &'a Theme,
+    highlighter: HighlightLines<'a>,
+}
+
+impl<'a> TerminalRenderer<'a> {
+    pub fn new(term: &'a mut Term, theme: &'a Theme) -> Self {
+        let syntax_set = two_face::syntax::extra_newlines();
+        let syntax = syntax_set.find_syntax_by_extension("md").unwrap();
+        let highlighter = HighlightLines::new(syntax, theme);
+
+        Self {
+            term,
+            syntax_set,
+            theme,
+            highlighter,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        // Reset highlighter state for a new rendering session
+        let syntax = self.syntax_set.find_syntax_by_extension("md").unwrap();
+        self.highlighter = HighlightLines::new(syntax, self.theme);
+    }
+
+    pub fn render_markdown(&mut self, text: &str) -> Result<(), anyhow::Error> {
+        // Text can be one of two states:
+        // - continuation of previous line
+        // - complete a previous line, start a newline
+        let lines: Vec<&str> = LinesWithEndings::from(text).collect();
+        for line in lines {
+            let ranges = self
+                .highlighter
+                .highlight_line(line, &self.syntax_set)
+                .unwrap_or_else(|_| vec![(SyntectStyle::default(), line)]);
+
+            let highlighted = as_24_bit_terminal_escaped(&ranges[..], true);
+            self.term.write_all(highlighted.as_bytes())?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct GenerationSpinner {
+    spinner: ProgressBar,
+}
+
+impl GenerationSpinner {
+    pub fn new() -> Self {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::with_template("{spinner:.blue} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        spinner.set_message("Generating...");
+        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        Self { spinner }
+    }
+
+    pub fn clear(&self) {
+        self.spinner.finish_and_clear();
+    }
 }
 
 #[cfg(test)]

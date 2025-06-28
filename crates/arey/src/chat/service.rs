@@ -54,18 +54,16 @@ impl Chat {
         let mut model = arey_core::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
 
-        // TODO: empty system prompt
         model
             .load("")
             .await
             .context("Failed to load model with system prompt")?;
 
-        let metrics = model.metrics();
         Ok(Self {
             messages: Arc::new(Mutex::new(Vec::new())),
             _context: ChatContext {
-                _metrics: Some(metrics),
-                _logs: String::new(), // TODO: stderr capture
+                _metrics: Some(model.metrics()),
+                _logs: String::new(),
             },
             _model_config: model_config,
             model,
