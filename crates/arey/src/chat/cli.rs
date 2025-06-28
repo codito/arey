@@ -1,16 +1,15 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
-use crate::console::GenerationSpinner;
-use crate::console::{MessageType, format_footer_metrics, style_text};
+use crate::console::{GenerationSpinner, get_render_theme};
+use crate::console::{MarkdownRenderer, MessageType, format_footer_metrics, style_text};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use clap::{CommandFactory, Parser, Subcommand};
-use console::Style;
+use console::{Style, Term};
 use futures::StreamExt;
 use rustyline::CompletionType;
 use rustyline::completion::Candidate;
 use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
-use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -209,6 +208,9 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
     // Create spinner
     let spinner = GenerationSpinner::new();
     let cancel_token = CancellationToken::new();
+    let mut term = Term::stdout();
+    let theme = get_render_theme();
+    let mut markdown_renderer = MarkdownRenderer::new(&mut term, &theme);
 
     // Clone for async block
     let chat_clone = chat.clone();
@@ -254,9 +256,10 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
 
                             match response {
                                 Ok(chunk) => {
-                                    // Print token to console
-                                    print!("{}", chunk.text);
-                                    io::stdout().flush()?;
+                                    // Renderer now handles cursor positioning and clearing.
+                                    // The markdown_renderer's buffer accumulates the entire response,
+                                    // so we do NOT call markdown_renderer.clear() here.
+                                    markdown_renderer.render(&chunk.text)?; // Propagate error
                                 }
                                 Err(e) => {
                                     eprintln!("Error: {e}");
@@ -278,6 +281,10 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
         was_cancelled_internal || cancel_token.is_cancelled()
     };
 
+    // After the stream finishes, clear the markdown renderer's internal buffer
+    // and reset its state for the next message. This does not clear the screen.
+    markdown_renderer.clear();
+
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {
         true => (CompletionMetrics::default(), None),
@@ -291,6 +298,10 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
     };
 
     let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
+
+    // Ensure the footer starts on a new line after the markdown output.
+    // The `render` function leaves the cursor at the end of the last line it drew.
+    // `println!()` will handle adding a newline before printing.
     println!();
     println!();
     println!("{}", style_text(&footer, MessageType::Footer));
