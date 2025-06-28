@@ -50,6 +50,9 @@ profiles:
     top_k: 30
     top_p: 0.18
 
+# Colorscheme for syntax highlighting. Allowed values: light (default) or dark.
+theme: light
+
 chat:
   model: openhermes25-mistral-7b
   profile: precise

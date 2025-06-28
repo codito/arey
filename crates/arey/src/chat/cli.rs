@@ -1,11 +1,12 @@
 // Handles user interaction for chat
 use crate::chat::Chat;
-use crate::console::{GenerationSpinner, get_render_theme};
-use crate::console::{MarkdownRenderer, MessageType, format_footer_metrics, style_text};
+use crate::console::{
+    GenerationSpinner, MessageType, TerminalRenderer, format_footer_metrics, style_text,
+};
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
 use clap::{CommandFactory, Parser, Subcommand};
-use console::{Style, Term};
+use console::Style;
 use futures::StreamExt;
 use rustyline::CompletionType;
 use rustyline::completion::Candidate;
@@ -107,7 +108,10 @@ impl rustyline::hint::Hinter for CommandCompleter {
 }
 
 /// Chat UX flow
-pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
+pub async fn start_chat(
+    chat: Arc<Mutex<Chat>>,
+    renderer: &mut TerminalRenderer<'_>,
+) -> anyhow::Result<()> {
     println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
 
     // Configure rustyline
@@ -141,7 +145,7 @@ pub async fn start_chat(chat: Arc<Mutex<Chat>>) -> anyhow::Result<()> {
 
                 let continue_repl = match user_input.starts_with('/') {
                     true => process_command(&chat, user_input).await?,
-                    false => process_message(&chat, user_input).await?,
+                    false => process_message(&chat, renderer, user_input).await?,
                 };
 
                 if continue_repl {
@@ -204,13 +208,14 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
 }
 
 /// Returns false if the REPL should break.
-async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
+async fn process_message(
+    chat: &Arc<Mutex<Chat>>,
+    renderer: &mut TerminalRenderer<'_>,
+    line: &str,
+) -> Result<bool> {
     // Create spinner
     let spinner = GenerationSpinner::new();
     let cancel_token = CancellationToken::new();
-    let mut term = Term::stdout();
-    let theme = get_render_theme();
-    let mut markdown_renderer = MarkdownRenderer::new(&mut term, &theme);
 
     // Clone for async block
     let chat_clone = chat.clone();
@@ -256,10 +261,7 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
 
                             match response {
                                 Ok(chunk) => {
-                                    // Renderer now handles cursor positioning and clearing.
-                                    // The markdown_renderer's buffer accumulates the entire response,
-                                    // so we do NOT call markdown_renderer.clear() here.
-                                    markdown_renderer.render(&chunk.text)?; // Propagate error
+                                    renderer.render_markdown(&chunk.text)?;
                                 }
                                 Err(e) => {
                                     eprintln!("Error: {e}");
@@ -283,7 +285,7 @@ async fn process_message(chat: &Arc<Mutex<Chat>>, line: &str) -> Result<bool> {
 
     // After the stream finishes, clear the markdown renderer's internal buffer
     // and reset its state for the next message. This does not clear the screen.
-    markdown_renderer.clear();
+    renderer.clear();
 
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {

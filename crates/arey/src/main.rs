@@ -4,6 +4,8 @@ mod console;
 mod play;
 
 use crate::chat::{Chat, start_chat};
+use crate::console::{TerminalRenderer, get_render_theme};
+use ::console::Term;
 use anyhow::Context;
 use arey_core::config::get_config;
 use clap::{Parser, Subcommand, command};
@@ -82,8 +84,12 @@ async fn main() -> anyhow::Result<()> {
                 config.chat.model.clone()
             };
 
+            let mut term = Term::stdout();
+            let theme = get_render_theme(&config.theme);
+            let mut renderer = TerminalRenderer::new(&mut term, &theme);
             let chat_instance = Arc::new(Mutex::new(Chat::new(chat_model_config).await?));
-            start_chat(chat_instance).await?;
+
+            start_chat(chat_instance, &mut renderer).await?;
         }
         Commands::Play { file, no_watch } => {
             let file_path = play::PlayFile::create_missing(file.as_deref().map(Path::new))

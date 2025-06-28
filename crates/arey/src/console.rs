@@ -4,7 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::io::Write;
 use two_face::re_exports::syntect::{
     easy::HighlightLines,
-    highlighting::{Style as SyntectStyle, Theme, ThemeSet},
+    highlighting::{Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
     util::{LinesWithEndings, as_24_bit_terminal_escaped},
 };
@@ -84,61 +84,43 @@ pub fn format_footer_metrics(
     style_text(&footer, MessageType::Footer).to_string()
 }
 
-pub fn get_render_theme() -> Theme {
+pub fn get_render_theme(theme_name: &str) -> Theme {
     let theme_set = two_face::theme::extra();
-    theme_set
-        .get(two_face::theme::EmbeddedThemeName::Base16OceanLight)
-        .clone()
+    let theme_key = match theme_name {
+        "dark" => two_face::theme::EmbeddedThemeName::Base16OceanDark,
+        _ => two_face::theme::EmbeddedThemeName::Base16OceanLight,
+    };
+    theme_set.get(theme_key).clone()
 }
 
-pub struct MarkdownRenderer<'a> {
+pub struct TerminalRenderer<'a> {
     term: &'a mut Term,
     syntax_set: SyntaxSet,
     theme: &'a Theme,
     highlighter: HighlightLines<'a>,
-
-    // Store the current incomplete line buffer
-    line_buffer: String,
-    // Stores previously rendered complete lines (already highlighted and escaped)
-    prev_rendered_lines: Vec<String>,
-    // Cursor position where rendering started
-    start_pos: Option<(usize, usize)>,
-    // Number of lines previously drawn by this renderer
-    prev_line_count: usize,
 }
 
-impl<'a> MarkdownRenderer<'a> {
+impl<'a> TerminalRenderer<'a> {
     pub fn new(term: &'a mut Term, theme: &'a Theme) -> Self {
         let syntax_set = two_face::syntax::extra_newlines();
         let syntax = syntax_set.find_syntax_by_extension("md").unwrap();
-        let highlighter = HighlightLines::<'a>::new(syntax, theme);
+        let highlighter = HighlightLines::new(syntax, theme);
 
         Self {
             term,
             syntax_set,
             theme,
             highlighter,
-            line_buffer: String::new(),
-            prev_rendered_lines: Vec::new(),
-            start_pos: None,
-            prev_line_count: 0,
         }
     }
 
     pub fn clear(&mut self) {
-        // This clears the internal buffer and resets position tracking for a new render.
-        // It does NOT clear the screen area. Screen clearing is handled within `render`.
-        self.line_buffer.clear();
-        self.prev_rendered_lines.clear();
-        self.start_pos = None;
-        self.prev_line_count = 0;
-
         // Reset highlighter state for a new rendering session
         let syntax = self.syntax_set.find_syntax_by_extension("md").unwrap();
         self.highlighter = HighlightLines::new(syntax, self.theme);
     }
 
-    pub fn render(&mut self, text: &str) -> Result<(), anyhow::Error> {
+    pub fn render_markdown(&mut self, text: &str) -> Result<(), anyhow::Error> {
         // Text can be one of two states:
         // - continuation of previous line
         // - complete a previous line, start a newline

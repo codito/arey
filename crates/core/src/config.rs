@@ -55,6 +55,12 @@ pub struct Config {
     pub profiles: HashMap<String, ProfileConfig>,
     pub chat: ModeConfig,
     pub task: ModeConfig,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "light".to_string()
 }
 
 #[derive(Deserialize)]
@@ -70,6 +76,7 @@ struct RawConfig {
     profiles: HashMap<String, ProfileConfig>,
     chat: RawModeConfig,
     task: RawModeConfig,
+    theme: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +141,7 @@ impl RawConfig {
                 model: task_model,
                 profile: task_profile,
             },
+            theme: self.theme.clone().unwrap_or_else(default_theme),
         })
     }
 }
@@ -242,6 +250,7 @@ chat:
 task:
   model: dummy-13b
   profile: concise
+theme: dark
 "#;
 
     #[test]
@@ -287,6 +296,7 @@ task:
                 model: StringOrObject::String("dummy-13b".to_string()),
                 profile: Some(StringOrObject::String("concise".to_string())),
             },
+            theme: Some("dark".to_string()),
         };
 
         let config = raw_config.to_config().unwrap();
@@ -297,6 +307,7 @@ task:
         assert_eq!(config.chat.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "dummy-13b");
         assert_eq!(config.task.profile.temperature, 0.5);
+        assert_eq!(config.theme, "dark");
     }
 
     #[test]
@@ -315,6 +326,7 @@ task:
                 model: StringOrObject::String("dummy-7b".to_string()),
                 profile: None,
             },
+            theme: None,
         };
 
         let err = raw_config.to_config().unwrap_err();
@@ -339,6 +351,7 @@ task:
                 model: StringOrObject::String("dummy-7b".to_string()),
                 profile: None,
             },
+            theme: None,
         };
 
         let err = raw_config.to_config().unwrap_err();
@@ -363,6 +376,7 @@ task:
                 model: StringOrObject::Object(dummy_model_config("inline-task-model")),
                 profile: None, // Should use default profile
             },
+            theme: Some("light".to_string()),
         };
 
         let config = raw_config.to_config().unwrap();
@@ -371,6 +385,7 @@ task:
         assert_eq!(config.chat.profile.temperature, 0.8);
         assert_eq!(config.task.model.name, "inline-task-model");
         assert_eq!(config.task.profile.temperature, 0.7); // Default temperature
+        assert_eq!(config.theme, "light");
     }
 
     #[test]
@@ -408,6 +423,7 @@ task:
         assert_eq!(config.chat.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "dummy-13b");
         assert_eq!(config.task.profile.temperature, 0.8);
+        assert_eq!(config.theme, "dark");
 
         let dummy7b = config.models.get("dummy-7b").unwrap();
         assert_eq!(dummy7b.settings.len(), 2);
