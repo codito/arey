@@ -2,7 +2,9 @@ use crate::completion::CompletionModel;
 use crate::model::ModelProvider;
 use crate::provider::{llama, openai};
 use anyhow::Result;
+use tracing::instrument;
 
+#[instrument(skip(model_config))]
 pub fn get_completion_llm(
     model_config: crate::model::ModelConfig,
 ) -> Result<Box<dyn CompletionModel + Send + Sync>> {

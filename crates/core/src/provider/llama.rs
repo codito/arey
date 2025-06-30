@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 pub struct LlamaBaseModel {
     backend: Arc<LlamaBackend>,
@@ -31,11 +32,12 @@ pub struct LlamaBaseModel {
 }
 
 impl LlamaBaseModel {
+    #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
         // if verbose {
         //     tracing_subscriber::fmt().init();
         // }
-        send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(true));
 
         let path = model_config
             .settings
@@ -104,6 +106,7 @@ impl CompletionModel for LlamaBaseModel {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
