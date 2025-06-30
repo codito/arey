@@ -246,3 +246,59 @@ impl CompletionModel for LlamaBaseModel {
         Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelConfig;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_llama_model_new_missing_path() {
+        let model_config = ModelConfig {
+            name: "test-llama".to_string(),
+            provider: crate::model::ModelProvider::Gguf,
+            settings: HashMap::new(),
+        };
+        let model = LlamaBaseModel::new(model_config);
+        assert!(model.is_err());
+        assert_eq!(
+            model.err().unwrap().to_string(),
+            "'path' setting is required for llama model"
+        );
+    }
+
+    #[test]
+    fn test_llama_model_new_path_not_found() {
+        let mut settings = HashMap::new();
+        settings.insert(
+            "path".to_string(),
+            "/path/to/non/existent/model.gguf".into(),
+        );
+        let model_config = ModelConfig {
+            name: "test-llama".to_string(),
+            provider: crate::model::ModelProvider::Gguf,
+            settings,
+        };
+        let model = LlamaBaseModel::new(model_config);
+        assert!(model.is_err());
+        assert!(
+            model
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Model loading failed")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a valid GGUF model file for a full integration test"]
+    fn test_llama_model_complete() {
+        // This test requires a real model and is complex to set up.
+        // It would involve:
+        // 1. Pointing to a valid GGUF model file.
+        // 2. Creating a LlamaBaseModel.
+        // 3. Calling complete with sample messages.
+        // 4. Asserting on the streamed response.
+    }
+}
