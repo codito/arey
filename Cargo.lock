@@ -115,6 +115,7 @@ dependencies = [
  "markdown",
  "notify",
  "rustyline",
+ "serde_json",
  "serde_yaml",
  "shlex",
  "tempfile",
@@ -122,6 +123,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "two-face",
+ "wiremock",
 ]
 
 [[package]]

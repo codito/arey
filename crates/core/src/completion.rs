@@ -118,4 +118,21 @@ mod tests {
         let cloned_token = token.clone();
         assert!(cloned_token.is_cancelled()); // Cloned token reflects original state
     }
+
+    #[test]
+    fn test_cancellation_token_default() {
+        let token: CancellationToken = Default::default();
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn test_sender_type() {
+        assert_eq!(SenderType::System.as_str(), "system");
+        assert_eq!(SenderType::User.as_str(), "user");
+        assert_eq!(SenderType::Assistant.as_str(), "assistant");
+        assert_eq!(SenderType::Tool.as_str(), "tool");
+
+        let s: String = SenderType::User.into();
+        assert_eq!(s, "user");
+    }
 }
