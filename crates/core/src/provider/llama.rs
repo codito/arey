@@ -3,6 +3,7 @@ use crate::completion::{
     CompletionResponse,
 };
 use crate::model::{ModelConfig, ModelMetrics};
+use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -99,6 +100,7 @@ impl CompletionModel for LlamaBaseModel {
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
+        _tools: Option<&[Arc<dyn Tool>]>,
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion, anyhow::Error>> {
@@ -202,6 +204,7 @@ impl CompletionModel for LlamaBaseModel {
                     // Send token through channel
                     let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
                         text: last_chunk,
+                        tool_calls: None,
                         finish_reason: None,
                         raw_chunk: None,
                     })));
@@ -215,6 +218,7 @@ impl CompletionModel for LlamaBaseModel {
                 };
                 let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
                     text: "".to_string(),
+                    tool_calls: None,
                     finish_reason: Some(finish_reason.to_string()),
                     raw_chunk: None,
                 })));

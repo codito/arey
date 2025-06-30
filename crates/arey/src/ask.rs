@@ -53,7 +53,9 @@ impl Task {
             .model
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
-        let stream = model.complete(&[message], &settings, cancel_token).await;
+        let stream = model
+            .complete(&[message], None, &settings, cancel_token)
+            .await;
 
         Ok(stream)
     }
