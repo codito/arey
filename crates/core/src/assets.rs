@@ -31,9 +31,14 @@ pub fn get_default_config() -> String {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    // Mutex to serialize tests that modify the environment
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_get_config_dir_with_xdg_set() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let tmp_dir = tempfile::tempdir().unwrap();
         let xdg_config_path = tmp_dir.path();
         unsafe {
@@ -50,6 +55,7 @@ mod tests {
 
     #[test]
     fn test_get_config_dir_without_xdg_set() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
             env::remove_var("XDG_CONFIG_HOME");
         }
