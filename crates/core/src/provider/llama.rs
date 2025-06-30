@@ -46,6 +46,13 @@ impl LlamaBaseModel {
         let expand_path = shellexpand::tilde(path).into_owned();
         let model_path = PathBuf::from(expand_path);
 
+        if !model_path.exists() {
+            return Err(anyhow!(
+                "Model loading failed: file not found at path: {}",
+                model_path.display()
+            ));
+        }
+
         let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
 
         let mut model_params = LlamaModelParams::default();

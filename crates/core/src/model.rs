@@ -69,8 +69,7 @@ mod tests {
         let yaml = r#"
             name: test_model
             provider: openai
-            settings:
-                api_key: test_key
+            api_key: test_key
         "#;
         let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.name, "test_model");
