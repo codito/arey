@@ -3,6 +3,7 @@ use crate::completion::{
     CompletionResponse, SenderType,
 };
 use crate::model::{ModelConfig, ModelMetrics};
+use crate::tools::{ToolCall, ToolResult};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
 use async_openai::{
@@ -15,6 +16,7 @@ use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
+use tracing::instrument;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenAISettings {
@@ -29,6 +31,7 @@ pub struct OpenAIBaseModel {
 }
 
 impl OpenAIBaseModel {
+    #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
         let settings: OpenAISettings = serde_yaml::from_value(
             serde_yaml::to_value(&model_config.settings)
@@ -84,6 +87,19 @@ impl OpenAIBaseModel {
                     .build()
                     .unwrap(),
             ),
+            SenderType::Tool => {
+                let tool_output: ToolResult = serde_json::from_str(msg.text.as_str()).unwrap();
+                let content = serde_json::to_string(&tool_output.output).unwrap();
+                println!("{tool_output:?}");
+                println!("{content}");
+                ChatCompletionRequestMessage::Tool(
+                    async_openai::types::ChatCompletionRequestToolMessageArgs::default()
+                        .tool_call_id(tool_output.call.id)
+                        .content(content)
+                        .build()
+                        .unwrap(),
+                )
+            }
         }
     }
 }
@@ -104,9 +120,11 @@ impl CompletionModel for OpenAIBaseModel {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
+        tools: Option<&[std::sync::Arc<dyn crate::tools::Tool>]>,
         settings: &HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion>> {
@@ -130,14 +148,33 @@ impl CompletionModel for OpenAIBaseModel {
         let stream_options = ChatCompletionStreamOptions {
             include_usage: true,
         };
-        let request = CreateChatCompletionRequestArgs::default()
+        let mut request_builder = CreateChatCompletionRequestArgs::default();
+        request_builder
             .model(self.config.name.clone())
             .messages(openai_messages)
             .max_tokens(max_tokens)
             .temperature(temperature)
             .stream(true)
-            .stream_options(stream_options)
-            .build();
+            .stream_options(stream_options);
+
+        if let Some(tools) = tools {
+            let openai_tools: Vec<_> = tools
+                .iter()
+                .map(|tool| async_openai::types::ChatCompletionTool {
+                    r#type: async_openai::types::ChatCompletionToolType::Function,
+                    function: async_openai::types::FunctionObject {
+                        name: tool.name(),
+                        description: Some(tool.description()),
+                        parameters: Some(tool.parameters()),
+                        strict: None,
+                    },
+                })
+                .collect();
+            if !openai_tools.is_empty() {
+                request_builder.tools(openai_tools);
+            }
+        }
+        let request = request_builder.build();
 
         let request = match request {
             Ok(req) => req,
@@ -159,6 +196,14 @@ impl CompletionModel for OpenAIBaseModel {
             let mut prev_time = prev_time;
             let mut prompt_eval_latency = 0.0;
             let mut completion_latency = 0.0;
+            #[derive(Default, Clone)]
+            struct InProgressToolCall {
+                id: String,
+                name: String,
+                arguments: String,
+            }
+            let mut tool_calls_in_progress: HashMap<u32, InProgressToolCall> = HashMap::new();
+
 
             // Send the request and get back a streaming response
             match self.client.chat().create_stream(request).await {
@@ -190,10 +235,51 @@ impl CompletionModel for OpenAIBaseModel {
                                         first_chunk = false;
                                     }
 
+                                    if let Some(delta_tool_calls) = &choice.delta.tool_calls {
+                                        for tool_call_chunk in delta_tool_calls {
+                                            let in_progress_call = tool_calls_in_progress
+                                                .entry(tool_call_chunk.index)
+                                                .or_default();
+                                            if let Some(id) = &tool_call_chunk.id {
+                                                in_progress_call.id.clone_from(id);
+                                            }
+                                            if let Some(function) = &tool_call_chunk.function {
+                                                if let Some(name) = &function.name {
+                                                    in_progress_call.name.clone_from(name);
+                                                }
+                                                if let Some(args) = &function.arguments {
+                                                    in_progress_call.arguments.push_str(args);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    let mut final_tool_calls = None;
+                                    if choice.finish_reason
+                                        == Some(async_openai::types::FinishReason::ToolCalls)
+                                    {
+                                        let completed_calls: Vec<ToolCall> =
+                                            tool_calls_in_progress
+                                                .values()
+                                                .map(|call| ToolCall {
+                                                    id: call.id.clone(),
+                                                    name: call.name.clone(),
+                                                    arguments: serde_json::from_str(
+                                                        &call.arguments,
+                                                    )
+                                                    .unwrap_or(serde_json::Value::Null),
+                                                })
+                                                .collect();
+                                        if !completed_calls.is_empty() {
+                                            final_tool_calls = Some(completed_calls);
+                                        }
+                                    }
+
                                     completion_latency += elapsed;
 
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
+                                        tool_calls: final_tool_calls,
                                         finish_reason: choice.finish_reason.as_ref().map(|x| format!("{x:?}")),
                                         raw_chunk: Some(raw_json.clone()),
                                     }));
@@ -238,7 +324,10 @@ mod tests {
     use super::*;
     use crate::completion::SenderType;
     use crate::model::ModelProvider;
+    use crate::tools::{Tool, ToolError};
+    use async_trait::async_trait;
     use serde_json::json;
+    use std::sync::Arc;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path},
@@ -304,6 +393,70 @@ mod tests {
         mock_body
     }
 
+    fn mock_tool_call_stream_body() -> String {
+        let events = vec![
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": ""
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "{\"location\": \"Paris\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {},
+                    "index": 0,
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+        ];
+
+        let mut mock_body = events
+            .into_iter()
+            .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
+            .collect::<String>();
+        mock_body.push_str("data: [DONE]\n\n");
+        mock_body
+    }
+
     // Create a test model configuration with mock server URL
     fn create_mock_model_config(server_url: &str) -> Result<ModelConfig> {
         let settings: HashMap<String, serde_yaml::Value> = HashMap::from([
@@ -318,6 +471,36 @@ mod tests {
         };
 
         Ok(config)
+    }
+
+    struct MockTool;
+
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> String {
+            "get_weather".to_string()
+        }
+        fn description(&self) -> String {
+            "Gets the weather".to_string()
+        }
+        fn parameters(&self) -> serde_json::Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The location to get the weather for"
+                    }
+                },
+                "required": ["location"]
+            })
+        }
+        async fn execute(
+            &self,
+            _arguments: &serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            Ok(json!({"temperature": "22C"}))
+        }
     }
 
     #[tokio::test]
@@ -357,7 +540,7 @@ mod tests {
 
         let cancel_token = CancellationToken::new(); // Create a token for the test
         let mut stream = model
-            .complete(&messages, &HashMap::new(), cancel_token)
+            .complete(&messages, None, &HashMap::new(), cancel_token)
             .await;
 
         // Collect and assert on responses
@@ -384,5 +567,60 @@ mod tests {
         assert_eq!(metrics.completion_tokens, 30);
         assert!(metrics.completion_latency_ms != 0.0);
         assert!(metrics.prompt_eval_latency_ms != 0.0)
+    }
+
+    #[tokio::test]
+    async fn test_openai_complete_tool_call() {
+        let server = MockServer::start().await;
+        let server_url = server.uri();
+        let config = create_mock_model_config(&server_url).unwrap();
+
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_raw(mock_tool_call_stream_body(), "text/event-stream")
+            .insert_header("Connection", "close");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
+
+        let mut model = OpenAIBaseModel::new(config).unwrap();
+
+        let messages = vec![ChatMessage {
+            text: "What's the weather in Paris?".to_string(),
+            sender: SenderType::User,
+        }];
+        let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
+
+        let cancel_token = CancellationToken::new(); // Create a token for the test
+        let mut stream = model
+            .complete(&messages, Some(&tools), &HashMap::new(), cancel_token)
+            .await;
+
+        // Collect and assert on responses
+        let mut responses = Vec::new();
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result.unwrap() {
+                Completion::Response(response) => {
+                    println!("{response:?}");
+                    responses.push(response);
+                }
+                Completion::Metrics(_) => {}
+            }
+        }
+
+        // We expect 3 responses: one for assistant role, one for argument part, one for finish reason.
+        // The tool call should be in the last one.
+        assert_eq!(responses.len(), 3);
+
+        let last_response = responses.last().unwrap();
+        assert_eq!(last_response.finish_reason, Some("ToolCalls".to_string()));
+        let tool_calls = last_response.tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        let tool_call = &tool_calls[0];
+        assert_eq!(tool_call.id, "call_123");
+        assert_eq!(tool_call.name, "get_weather");
+        assert_eq!(tool_call.arguments, json!({"location": "Paris"}));
     }
 }

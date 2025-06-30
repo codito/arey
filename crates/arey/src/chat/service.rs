@@ -109,7 +109,7 @@ impl Chat {
 
         let mut stream = self
             .model
-            .complete(&model_messages, &HashMap::new(), cancel_token.clone())
+            .complete(&model_messages, None, &HashMap::new(), cancel_token.clone())
             .await;
         let shared_messages = self.messages.clone();
         let mut last_finish_reason: Option<String> = None;

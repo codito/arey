@@ -3,6 +3,7 @@ use crate::completion::{
     CompletionResponse,
 };
 use crate::model::{ModelConfig, ModelMetrics};
+use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 pub struct LlamaBaseModel {
     backend: Arc<LlamaBackend>,
@@ -30,11 +32,12 @@ pub struct LlamaBaseModel {
 }
 
 impl LlamaBaseModel {
+    #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
         // if verbose {
         //     tracing_subscriber::fmt().init();
         // }
-        send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(true));
 
         let path = model_config
             .settings
@@ -44,6 +47,13 @@ impl LlamaBaseModel {
             .unwrap();
         let expand_path = shellexpand::tilde(path).into_owned();
         let model_path = PathBuf::from(expand_path);
+
+        if !model_path.exists() {
+            return Err(anyhow!(
+                "Model loading failed: file not found at path: {}",
+                model_path.display()
+            ));
+        }
 
         let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
 
@@ -96,9 +106,11 @@ impl CompletionModel for LlamaBaseModel {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
+        _tools: Option<&[Arc<dyn Tool>]>,
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion, anyhow::Error>> {
@@ -202,6 +214,7 @@ impl CompletionModel for LlamaBaseModel {
                     // Send token through channel
                     let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
                         text: last_chunk,
+                        tool_calls: None,
                         finish_reason: None,
                         raw_chunk: None,
                     })));
@@ -215,6 +228,7 @@ impl CompletionModel for LlamaBaseModel {
                 };
                 let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
                     text: "".to_string(),
+                    tool_calls: None,
                     finish_reason: Some(finish_reason.to_string()),
                     raw_chunk: None,
                 })));
@@ -240,5 +254,61 @@ impl CompletionModel for LlamaBaseModel {
 
         // Use the Receiver as a Stream
         Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelConfig;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_llama_model_new_missing_path() {
+        let model_config = ModelConfig {
+            name: "test-llama".to_string(),
+            provider: crate::model::ModelProvider::Gguf,
+            settings: HashMap::new(),
+        };
+        let model = LlamaBaseModel::new(model_config);
+        assert!(model.is_err());
+        assert_eq!(
+            model.err().unwrap().to_string(),
+            "'path' setting is required for llama model"
+        );
+    }
+
+    #[test]
+    fn test_llama_model_new_path_not_found() {
+        let mut settings = HashMap::new();
+        settings.insert(
+            "path".to_string(),
+            "/path/to/non/existent/model.gguf".into(),
+        );
+        let model_config = ModelConfig {
+            name: "test-llama".to_string(),
+            provider: crate::model::ModelProvider::Gguf,
+            settings,
+        };
+        let model = LlamaBaseModel::new(model_config);
+        assert!(model.is_err());
+        assert!(
+            model
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Model loading failed")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a valid GGUF model file for a full integration test"]
+    fn test_llama_model_complete() {
+        // This test requires a real model and is complex to set up.
+        // It would involve:
+        // 1. Pointing to a valid GGUF model file.
+        // 2. Creating a LlamaBaseModel.
+        // 3. Calling complete with sample messages.
+        // 4. Asserting on the streamed response.
     }
 }

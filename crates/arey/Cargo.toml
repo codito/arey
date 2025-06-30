@@ -28,6 +28,8 @@ two-face = "0.4.3"
 
 [dev-dependencies]
 tempfile.workspace = true
+serde_json.workspace = true
+wiremock.workspace = true
 
 [features]
 cuda = ["arey-core/cuda"]

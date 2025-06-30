@@ -198,7 +198,7 @@ impl PlayFile {
 
         let mut model_guard = model_lock.lock().await;
         let mut stream = model_guard
-            .complete(&messages, &settings, cancel_token)
+            .complete(&messages, None, &settings, cancel_token)
             .await;
 
         let mut text = String::new();

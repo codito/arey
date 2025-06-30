@@ -1,4 +1,5 @@
 use crate::model::ModelMetrics;
+use crate::tools::{Tool, ToolCall};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -40,6 +41,7 @@ pub enum SenderType {
     System,
     Assistant,
     User,
+    Tool,
 }
 
 impl From<SenderType> for String {
@@ -54,6 +56,7 @@ impl SenderType {
             SenderType::System => "system",
             SenderType::User => "user",
             SenderType::Assistant => "assistant",
+            SenderType::Tool => "tool",
         }
     }
 }
@@ -81,6 +84,7 @@ pub struct CompletionMetrics {
 #[derive(Debug)]
 pub struct CompletionResponse {
     pub text: String,
+    pub tool_calls: Option<Vec<ToolCall>>,
     pub finish_reason: Option<String>,
     pub raw_chunk: Option<String>,
 }
@@ -93,6 +97,7 @@ pub trait CompletionModel: Send + Sync {
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
+        tools: Option<&[Arc<dyn Tool>]>,
         settings: &HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion>>;
@@ -112,5 +117,22 @@ mod tests {
 
         let cloned_token = token.clone();
         assert!(cloned_token.is_cancelled()); // Cloned token reflects original state
+    }
+
+    #[test]
+    fn test_cancellation_token_default() {
+        let token: CancellationToken = Default::default();
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn test_sender_type() {
+        assert_eq!(SenderType::System.as_str(), "system");
+        assert_eq!(SenderType::User.as_str(), "user");
+        assert_eq!(SenderType::Assistant.as_str(), "assistant");
+        assert_eq!(SenderType::Tool.as_str(), "tool");
+
+        let s: String = SenderType::User.into();
+        assert_eq!(s, "user");
     }
 }

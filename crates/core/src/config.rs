@@ -7,6 +7,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::instrument;
 
 use crate::{
     assets::{get_config_dir, get_default_config},
@@ -63,14 +64,14 @@ fn default_theme() -> String {
     "light".to_string()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(untagged)]
 enum StringOrObject<T> {
     String(String),
     Object(T),
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct RawConfig {
     models: HashMap<String, ModelConfig>,
     profiles: HashMap<String, ProfileConfig>,
@@ -79,7 +80,7 @@ struct RawConfig {
     theme: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct RawModeConfig {
     model: StringOrObject<ModelConfig>,
     #[serde(default)]
@@ -87,6 +88,7 @@ struct RawModeConfig {
 }
 
 impl RawConfig {
+    #[instrument]
     fn to_config(&self) -> Result<Config, AreyConfigError> {
         let mut models_with_names = HashMap::new();
         for (k, v) in &self.models {
@@ -146,6 +148,7 @@ impl RawConfig {
     }
 }
 
+#[instrument(skip(config_path))]
 pub fn create_or_get_config_file(
     config_path: Option<PathBuf>,
 ) -> Result<(bool, PathBuf), AreyConfigError> {
@@ -173,6 +176,7 @@ pub fn create_or_get_config_file(
     }
 }
 
+#[instrument(skip(config_path))]
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;
     let content = fs::read_to_string(&config_file)?;

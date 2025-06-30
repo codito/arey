@@ -53,7 +53,9 @@ impl Task {
             .model
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
-        let stream = model.complete(&[message], &settings, cancel_token).await;
+        let stream = model
+            .complete(&[message], None, &settings, cancel_token)
+            .await;
 
         Ok(stream)
     }
@@ -93,4 +95,130 @@ pub async fn run_ask(instruction: &str, model_config: ModelConfig) -> Result<()>
     println!("{}", style_text(&footer, MessageType::Footer));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arey_core::model::ModelProvider;
+    use futures::stream::StreamExt;
+    use serde_json::json;
+    use serde_yaml::Value;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    fn create_mock_model_config(server_url: &str) -> ModelConfig {
+        let settings: HashMap<String, Value> = HashMap::from([
+            ("base_url".to_string(), server_url.into()),
+            ("api_key".to_string(), "MOCK_OPENAI_API_KEY".into()),
+        ]);
+
+        ModelConfig {
+            name: "test-model".to_string(),
+            provider: ModelProvider::Openai,
+            settings,
+        }
+    }
+
+    fn mock_event_stream_body() -> String {
+        let events = [
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": "Hello"},
+                    "index": 0,
+                    "finish_reason": null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": " world!"},
+                    "index": 0,
+                    "finish_reason": "stop"
+                }]
+            }),
+        ];
+        let mut body: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+        body.push_str("data: [DONE]\n\n");
+        body
+    }
+
+    #[tokio::test]
+    async fn test_task_new() {
+        let model_config = create_mock_model_config("");
+        let task = Task::new("test".to_string(), model_config.clone());
+        assert_eq!(task.instruction, "test");
+        assert_eq!(task.model_config.name, model_config.name);
+        assert!(task.model.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_task_logic() -> Result<()> {
+        let server = MockServer::start().await;
+        let response = ResponseTemplate::new(200)
+            .set_body_bytes(mock_event_stream_body().as_bytes())
+            .insert_header("Content-Type", "text/event-stream");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+
+        let model_config = create_mock_model_config(&server.uri());
+        let mut task = Task::new("test instruction".to_string(), model_config);
+
+        let metrics = task.load_model().await?;
+        assert!(metrics.init_latency_ms >= 0.0);
+        assert!(task.model.is_some());
+
+        let mut stream = task.run().await?;
+
+        let mut response_text = String::new();
+        let mut final_finish_reason: Option<String> = None;
+
+        while let Some(result) = stream.next().await {
+            match result? {
+                Completion::Response(r) => {
+                    response_text.push_str(&r.text);
+                    if r.finish_reason.is_some() {
+                        final_finish_reason = r.finish_reason;
+                    }
+                }
+                Completion::Metrics(_) => {}
+            }
+        }
+
+        assert_eq!(response_text, "Hello world!");
+        assert_eq!(final_finish_reason, Some("Stop".to_string()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_ask_success() -> Result<()> {
+        let server = MockServer::start().await;
+        let response = ResponseTemplate::new(200)
+            .set_body_bytes(mock_event_stream_body().as_bytes())
+            .insert_header("Content-Type", "text/event-stream");
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+
+        let model_config = create_mock_model_config(&server.uri());
+        run_ask("test instruction", model_config).await?;
+
+        Ok(())
+    }
 }
