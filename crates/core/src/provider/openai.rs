@@ -3,7 +3,7 @@ use crate::completion::{
     CompletionResponse, SenderType,
 };
 use crate::model::{ModelConfig, ModelMetrics};
-use crate::tools::ToolCall;
+use crate::tools::{ToolCall, ToolResult};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
 use async_openai::{
@@ -88,7 +88,17 @@ impl OpenAIBaseModel {
                     .unwrap(),
             ),
             SenderType::Tool => {
-                unimplemented!("Tool messages are not yet supported for OpenAI provider")
+                let tool_output: ToolResult = serde_json::from_str(msg.text.as_str()).unwrap();
+                let content = serde_json::to_string(&tool_output.output).unwrap();
+                println!("{tool_output:?}");
+                println!("{content}");
+                ChatCompletionRequestMessage::Tool(
+                    async_openai::types::ChatCompletionRequestToolMessageArgs::default()
+                        .tool_call_id(tool_output.call.id)
+                        .content(content)
+                        .build()
+                        .unwrap(),
+                )
             }
         }
     }
