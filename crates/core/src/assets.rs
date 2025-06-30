@@ -26,3 +26,45 @@ pub fn get_config_dir() -> PathBuf {
 pub fn get_default_config() -> String {
     include_str!("../data/config.yml").to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn test_get_config_dir_with_xdg_set() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let xdg_config_path = tmp_dir.path();
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", xdg_config_path);
+        }
+
+        let config_dir = get_config_dir();
+        assert_eq!(config_dir, xdg_config_path.join("arey"));
+
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
+
+    #[test]
+    fn test_get_config_dir_without_xdg_set() {
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+        let config_dir = get_config_dir();
+        let expected = dirs::config_dir()
+            .map(|p| p.join("arey"))
+            .unwrap_or_else(|| PathBuf::from("~/.config/arey"));
+        assert_eq!(config_dir, expected);
+    }
+
+    #[test]
+    fn test_get_default_config() {
+        let config = get_default_config();
+        assert!(!config.is_empty());
+        assert!(config.contains("models:"));
+        assert!(config.contains("profiles:"));
+    }
+}
