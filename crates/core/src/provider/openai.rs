@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
+use tracing::instrument;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenAISettings {
@@ -30,6 +31,7 @@ pub struct OpenAIBaseModel {
 }
 
 impl OpenAIBaseModel {
+    #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
         let settings: OpenAISettings = serde_yaml::from_value(
             serde_yaml::to_value(&model_config.settings)
@@ -108,6 +110,7 @@ impl CompletionModel for OpenAIBaseModel {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
