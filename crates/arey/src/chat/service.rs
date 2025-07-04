@@ -179,6 +179,11 @@ impl Chat {
         Ok(Box::pin(wrapped_stream))
     }
 
+    pub async fn clear_messages(&self) {
+        let mut messages = self.messages.lock().await;
+        messages.clear();
+    }
+
     pub async fn get_last_assistant_context(&self) -> Option<MessageContext> {
         let messages_lock = self.messages.lock().await;
         messages_lock

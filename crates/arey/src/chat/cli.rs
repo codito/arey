@@ -49,6 +49,8 @@ struct CliCommand {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Clear chat history
+    Clear,
     /// Show detailed logs for the last assistant message
     Log,
     /// Exit the chat session
@@ -185,6 +187,11 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
 
     let continue_repl = match CliCommand::try_parse_from(args) {
         Ok(CliCommand { command }) => match command {
+            Command::Clear => {
+                chat.lock().await.clear_messages().await;
+                println!("Chat history cleared");
+                true
+            }
             Command::Log => {
                 let chat_guard = chat.lock().await;
                 match chat_guard.get_last_assistant_context().await {
