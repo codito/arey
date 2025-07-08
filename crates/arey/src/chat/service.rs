@@ -4,11 +4,20 @@ use arey_core::completion::{
     CompletionResponse, SenderType,
 };
 use arey_core::model::{ModelConfig, ModelMetrics};
+use arey_core::tools::Tool;
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+// TODO: This should load tools from config
+fn get_tool_by_name(name: &str) -> Result<Arc<dyn Tool>> {
+    match name {
+        "search" => Err(anyhow::anyhow!("'search' tool is not implemented yet")),
+        _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
+    }
+}
 
 /// Context associated with a single chat message
 #[derive(Clone)]
@@ -47,6 +56,7 @@ pub struct Chat {
     pub _context: ChatContext,
     _model_config: ModelConfig,
     model: Box<dyn CompletionModel + Send + Sync>,
+    tools: Vec<Arc<dyn Tool>>,
 }
 
 impl Chat {
@@ -67,7 +77,18 @@ impl Chat {
             },
             _model_config: model_config,
             model,
+            tools: Vec::new(),
         })
+    }
+
+    pub async fn set_tools(&mut self, tool_names: &[String]) -> Result<()> {
+        let mut tools = Vec::new();
+        for name in tool_names {
+            let tool = get_tool_by_name(name)?;
+            tools.push(tool);
+        }
+        self.tools = tools;
+        Ok(())
     }
 
     pub async fn stream_response(
@@ -107,9 +128,20 @@ impl Chat {
             .map(|msg| msg.to_chat_message())
             .collect();
 
+        let tool_slice = if self.tools.is_empty() {
+            None
+        } else {
+            Some(self.tools.as_slice())
+        };
+
         let mut stream = self
             .model
-            .complete(&model_messages, None, &HashMap::new(), cancel_token.clone())
+            .complete(
+                &model_messages,
+                tool_slice,
+                &HashMap::new(),
+                cancel_token.clone(),
+            )
             .await;
         let shared_messages = self.messages.clone();
         let mut last_finish_reason: Option<String> = None;

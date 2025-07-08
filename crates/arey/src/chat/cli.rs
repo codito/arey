@@ -53,6 +53,12 @@ enum Command {
     Clear,
     /// Show detailed logs for the last assistant message
     Log,
+    /// Set tools for the chat session. E.g. /tool search
+    #[command(alias = "t")]
+    Tool {
+        /// Names of the tools to use
+        names: Vec<String>,
+    },
     /// Exit the chat session
     #[command(alias = "q", alias = "quit")]
     Exit,
@@ -197,6 +203,22 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
                 match chat_guard.get_last_assistant_context().await {
                     Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
                     None => println!("No logs available"),
+                }
+                true
+            }
+            Command::Tool { names } => {
+                let mut chat_guard = chat.lock().await;
+                match chat_guard.set_tools(&names).await {
+                    Ok(()) => {
+                        if names.is_empty() {
+                            println!("Tools cleared.");
+                        } else {
+                            println!("Tools set: {}", names.join(", "));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error setting tools: {e}");
+                    }
                 }
                 true
             }
