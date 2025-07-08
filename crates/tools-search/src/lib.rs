@@ -86,7 +86,7 @@ impl Tool for SearchTool {
             .provider
             .search(query)
             .await
-            .with_context(|| format!("Search failed for query: {}", query))
+            .with_context(|| format!("Search failed for query: {query}"))
             .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
         serde_json::to_value(results).map_err(|e| ToolError::ExecutionError(e.to_string()))
@@ -96,7 +96,6 @@ impl Tool for SearchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_yaml;
 
     #[test]
     fn test_search_tool_from_config_searxng() {

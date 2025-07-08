@@ -164,6 +164,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "arey-tools-search"
+version = "0.0.7"
+dependencies = [
+ "anyhow",
+ "arey-core",
+ "async-trait",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "assert-json-diff"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

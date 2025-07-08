@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/arey"]
+members = ["crates/core", "crates/arey", "crates/tools-search"]
 resolver = "2"
 
 [workspace.package]
@@ -42,6 +42,7 @@ tokio-stream = "0.1.17"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tempfile = "3.8.0"
+url = "2.5.0"
 wiremock = "0.6.3"
 
 # [workspace.dev-dependencies]
