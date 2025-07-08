@@ -18,7 +18,7 @@ pub struct SearchResult {
 
 /// A trait for search engine providers.
 #[async_trait]
-pub trait SearchProvider: Send + Sync {
+pub trait SearchProvider: Send + Sync + std::fmt::Debug {
     /// Performs a search with the given query.
     async fn search(&self, query: &str) -> Result<Vec<SearchResult>>;
 }
@@ -32,6 +32,7 @@ pub struct SearchToolConfig {
 }
 
 /// A tool for searching the web.
+#[derive(Debug)]
 pub struct SearchTool {
     provider: Arc<dyn SearchProvider>,
 }

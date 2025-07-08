@@ -25,6 +25,7 @@ struct SearxngConfig {
 }
 
 /// A search provider that uses a SearxNG instance.
+#[derive(Debug)]
 pub struct SearxngProvider {
     base_url: Url,
     client: Client,
