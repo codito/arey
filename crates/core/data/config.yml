@@ -59,3 +59,12 @@ chat:
 task:
   model: openhermes25-mistral-7b
   profile: precise
+
+# Tool specific configuration
+#
+# Each tool can have its own configuration section below. The tool will
+# be responsible for parsing its own configuration.
+tools:
+  search:
+    provider: searxng
+    base_url: "https://searx.be"
