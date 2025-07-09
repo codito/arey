@@ -106,7 +106,9 @@ version = "0.0.7"
 dependencies = [
  "anyhow",
  "arey-core",
+ "arey-tools-search",
  "async-stream",
+ "async-trait",
  "chrono",
  "clap",
  "console",
@@ -122,6 +124,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
  "two-face",
  "wiremock",
 ]

@@ -8,14 +8,41 @@ use arey_core::tools::Tool;
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
+use std::fmt::Display;
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing_subscriber::{Layer, Registry, filter::LevelFilter, layer::SubscriberExt};
 
-// TODO: This should load tools from config
-fn get_tool_by_name(name: &str) -> Result<Arc<dyn Tool>> {
-    match name {
-        "search" => Err(anyhow::anyhow!("'search' tool is not implemented yet")),
-        _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
+#[derive(Clone)]
+struct BufWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl BufWriter {
+    fn new() -> Self {
+        Self(Arc::new(std::sync::Mutex::new(Vec::new())))
+    }
+}
+
+impl Display for BufWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let data = String::from_utf8_lossy(&self.0.lock().unwrap()).to_string();
+        f.write_str(data.as_ref())
+    }
+}
+
+impl Write for BufWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
     }
 }
 
@@ -24,7 +51,8 @@ fn get_tool_by_name(name: &str) -> Result<Arc<dyn Tool>> {
 pub struct MessageContext {
     pub finish_reason: Option<String>,
     pub metrics: CompletionMetrics,
-    pub logs: String,
+    pub raw_api_logs: String,
+    pub trace_logs: String,
 }
 
 /// Chat message with context
@@ -54,13 +82,17 @@ pub struct ChatContext {
 pub struct Chat {
     pub messages: Arc<Mutex<Vec<Message>>>,
     pub _context: ChatContext,
+    available_tools: HashMap<String, Arc<dyn Tool>>,
     _model_config: ModelConfig,
     model: Box<dyn CompletionModel + Send + Sync>,
     tools: Vec<Arc<dyn Tool>>,
 }
 
 impl Chat {
-    pub async fn new(model_config: ModelConfig) -> Result<Self> {
+    pub async fn new(
+        model_config: ModelConfig,
+        available_tools: HashMap<String, Arc<dyn Tool>>,
+    ) -> Result<Self> {
         let mut model = arey_core::get_completion_llm(model_config.clone())
             .context("Failed to initialize chat model")?;
 
@@ -75,17 +107,25 @@ impl Chat {
                 _metrics: Some(model.metrics()),
                 _logs: String::new(),
             },
+            available_tools,
             _model_config: model_config,
             model,
             tools: Vec::new(),
         })
     }
 
+    pub fn get_available_tool_names(&self) -> Vec<String> {
+        self.available_tools.keys().cloned().collect()
+    }
+
     pub async fn set_tools(&mut self, tool_names: &[String]) -> Result<()> {
         let mut tools = Vec::new();
         for name in tool_names {
-            let tool = get_tool_by_name(name)?;
-            tools.push(tool);
+            let tool = self
+                .available_tools
+                .get(name.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Tool not found or not available: {}", name))?;
+            tools.push(tool.clone());
         }
         self.tools = tools;
         Ok(())
@@ -147,11 +187,20 @@ impl Chat {
         let mut last_finish_reason: Option<String> = None;
 
         let wrapped_stream = async_stream::stream! {
+            let log_writer = BufWriter::new();
+            let log_capture_layer = tracing_subscriber::fmt::layer()
+                .with_writer(log_writer.clone())
+                .with_ansi(false)
+                .with_filter(LevelFilter::TRACE);
+            let subscriber = Registry::default().with(log_capture_layer);
+            let dispatch = tracing::Dispatch::new(subscriber);
+
             let mut has_error = false;
             let mut assistant_response = String::new();
             let mut raw_logs = String::new();
             let mut metrics = CompletionMetrics::default();
-            while let Some(result) = stream.next().await {
+
+            while let Some(result) = tracing::dispatcher::with_default(&dispatch, || stream.next()).await {
                 // Check for cancellation *before* processing the chunk
                 if cancel_token.is_cancelled() {
                     has_error = true; // Treat cancellation as an error for cleanup purposes
@@ -200,7 +249,8 @@ impl Chat {
                 let msg_context = MessageContext {
                     finish_reason: last_finish_reason,
                     metrics,
-                    logs: raw_logs, // STORE ACCUMULATED LOGS
+                    raw_api_logs: raw_logs,
+                    trace_logs: log_writer.to_string(),
                 };
 
                 msg.text = assistant_response;
@@ -223,5 +273,131 @@ impl Chat {
             .rev()
             .find(|m| m.sender == SenderType::Assistant)
             .and_then(|m| m.context.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arey_core::model::ModelProvider;
+    use arey_core::tools::ToolError;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    // Mock Tool for testing
+    #[derive(Debug)]
+    struct MockTool {
+        name: String,
+    }
+
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> String {
+            self.name.clone()
+        }
+        fn description(&self) -> String {
+            format!("A mock tool named {}", self.name)
+        }
+        fn parameters(&self) -> serde_json::Value {
+            json!({"type": "object"})
+        }
+        async fn execute(
+            &self,
+            _arguments: &serde_json::Value,
+        ) -> Result<serde_json::Value, ToolError> {
+            Ok(json!({"result": "success"}))
+        }
+    }
+
+    // Mock CompletionModel for testing
+    struct MockCompletionModel;
+
+    #[async_trait]
+    impl CompletionModel for MockCompletionModel {
+        fn metrics(&self) -> ModelMetrics {
+            ModelMetrics::default()
+        }
+        async fn load(&mut self, _text: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn complete(
+            &mut self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Arc<dyn Tool>]>,
+            _settings: &HashMap<String, String>,
+            _cancel_token: CancellationToken,
+        ) -> BoxStream<'_, Result<Completion>> {
+            unimplemented!()
+        }
+    }
+
+    fn create_test_chat(available_tools: HashMap<String, Arc<dyn Tool>>) -> Chat {
+        Chat {
+            messages: Arc::new(Mutex::new(Vec::new())),
+            _context: ChatContext {
+                _metrics: None,
+                _logs: String::new(),
+            },
+            available_tools,
+            _model_config: ModelConfig {
+                name: "mock-model".to_string(),
+                provider: ModelProvider::Gguf,
+                settings: HashMap::new(),
+            },
+            model: Box::new(MockCompletionModel),
+            tools: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_get_available_tool_names() {
+        let mut available_tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
+        available_tools.insert(
+            "tool1".to_string(),
+            Arc::new(MockTool {
+                name: "tool1".to_string(),
+            }),
+        );
+        available_tools.insert(
+            "tool2".to_string(),
+            Arc::new(MockTool {
+                name: "tool2".to_string(),
+            }),
+        );
+
+        let chat = create_test_chat(available_tools);
+        let mut tool_names = chat.get_available_tool_names();
+        tool_names.sort();
+        assert_eq!(tool_names, vec!["tool1", "tool2"]);
+    }
+
+    #[tokio::test]
+    async fn test_set_tools_success() {
+        let mut available_tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
+        let tool1 = Arc::new(MockTool {
+            name: "tool1".to_string(),
+        });
+        available_tools.insert("tool1".to_string(), tool1.clone());
+
+        let mut chat = create_test_chat(available_tools);
+        let result = chat.set_tools(&["tool1".to_string()]).await;
+
+        assert!(result.is_ok());
+        assert_eq!(chat.tools.len(), 1);
+        assert_eq!(chat.tools[0].name(), "tool1");
+    }
+
+    #[tokio::test]
+    async fn test_set_tools_not_available() {
+        let available_tools = HashMap::new();
+        let mut chat = create_test_chat(available_tools);
+        let result = chat.set_tools(&["unknown_tool".to_string()]).await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Tool not found or not available: unknown_tool"
+        );
+        assert!(chat.tools.is_empty());
     }
 }

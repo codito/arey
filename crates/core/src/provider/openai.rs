@@ -33,10 +33,15 @@ pub struct OpenAIBaseModel {
 impl OpenAIBaseModel {
     #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
-        let settings: OpenAISettings = serde_yaml::from_value(
-            serde_yaml::to_value(&model_config.settings)
-                .map_err(|_e| anyhow!("Invalid settings structure"))?,
-        )?;
+        let settings: OpenAISettings =
+            serde_yaml::from_value(serde_yaml::to_value(&model_config.settings).map_err(|e| {
+                tracing::trace!("Failed to convert settings to value: {}", e);
+                anyhow!("Invalid settings structure")
+            })?)
+            .map_err(|e| {
+                tracing::trace!("Failed to deserialize OpenAI settings: {}", e);
+                anyhow!(e)
+            })?;
 
         // If api_key starts with "env:", read from environment variable
         let api_key = if settings.api_key.starts_with("env:") {
@@ -88,10 +93,20 @@ impl OpenAIBaseModel {
                     .unwrap(),
             ),
             SenderType::Tool => {
-                let tool_output: ToolResult = serde_json::from_str(msg.text.as_str()).unwrap();
-                let content = serde_json::to_string(&tool_output.output).unwrap();
-                println!("{tool_output:?}");
-                println!("{content}");
+                let tool_output: ToolResult = serde_json::from_str(msg.text.as_str())
+                    .unwrap_or_else(|e| {
+                        tracing::trace!(
+                            "Failed to deserialize ToolResult from message text: {}",
+                            e
+                        );
+                        panic!("Failed to deserialize ToolResult from message text: {e}");
+                    });
+                let content = serde_json::to_string(&tool_output.output).unwrap_or_else(|e| {
+                    tracing::trace!("Failed to serialize tool output content: {e}");
+                    panic!("Failed to serialize tool output content: {e}");
+                });
+                // println!("{tool_output:?}");
+                // println!("{content}");
                 ChatCompletionRequestMessage::Tool(
                     async_openai::types::ChatCompletionRequestToolMessageArgs::default()
                         .tool_call_id(tool_output.call.id)
@@ -267,7 +282,14 @@ impl CompletionModel for OpenAIBaseModel {
                                                     arguments: serde_json::from_str(
                                                         &call.arguments,
                                                     )
-                                                    .unwrap_or(serde_json::Value::Null),
+                                                    .unwrap_or_else(|e|{
+                                                        tracing::trace!(
+                                                            "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
+                                                            e,
+                                                            call.arguments
+                                                        );
+                                                        serde_json::Value::Null
+                                                    }),
                                                 })
                                                 .collect();
                                         if !completed_calls.is_empty() {

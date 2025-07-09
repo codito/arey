@@ -67,6 +67,7 @@ enum Command {
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter {
     command_names: Vec<String>,
+    tool_names: Vec<String>,
 }
 
 impl rustyline::completion::Completer for CommandCompleter {
@@ -78,6 +79,25 @@ impl rustyline::completion::Completer for CommandCompleter {
         pos: usize,
         _ctx: &Context,
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
+        let line_to_pos = &line[..pos];
+
+        // Autocomplete for /tool command arguments
+        if line_to_pos.starts_with("/tool ") || line_to_pos.starts_with("/t ") {
+            if let Some(space_pos) = line_to_pos.rfind(' ') {
+                let tool_prefix_start = space_pos + 1;
+                if tool_prefix_start <= line_to_pos.len() {
+                    let tool_prefix = &line_to_pos[tool_prefix_start..];
+                    let candidates = self
+                        .tool_names
+                        .iter()
+                        .filter(|name| name.starts_with(tool_prefix))
+                        .map(|name| CompletionCandidate::new(name.clone()))
+                        .collect();
+                    return Ok((tool_prefix_start, candidates));
+                }
+            }
+        }
+
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
             let candidates = self
@@ -135,8 +155,16 @@ pub async fn start_chat(
         .map(|s| format!("/{s}"))
         .collect::<Vec<_>>();
 
+    let tool_names = {
+        let chat_guard = chat.lock().await;
+        chat_guard.get_available_tool_names()
+    };
+
     let mut rl = Editor::with_config(config)?;
-    rl.set_helper(Some(CommandCompleter { command_names }));
+    rl.set_helper(Some(CommandCompleter {
+        command_names,
+        tool_names,
+    }));
 
     let prompt = (style_text("> ", MessageType::Prompt)).to_string();
     loop {
@@ -201,7 +229,16 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
             Command::Log => {
                 let chat_guard = chat.lock().await;
                 match chat_guard.get_last_assistant_context().await {
-                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
+                    Some(ctx) => {
+                        println!(
+                            "\n=== TRACE LOGS ===\n{}\n==================",
+                            ctx.trace_logs
+                        );
+                        println!(
+                            "\n=== RAW API LOGS ===\n{}\n====================",
+                            ctx.raw_api_logs
+                        );
+                    }
                     None => println!("No logs available"),
                 }
                 true
@@ -339,4 +376,75 @@ async fn process_message(
     println!();
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyline::completion::Completer;
+    use rustyline::history::DefaultHistory;
+
+    #[test]
+    fn test_command_completer_commands() {
+        let completer = CommandCompleter {
+            command_names: vec!["/help".to_string(), "/history".to_string()],
+            tool_names: vec![],
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+
+        let (_start, candidates) = completer.complete("/h", 2, &ctx).unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].replacement(), "/help");
+        assert_eq!(candidates[1].replacement(), "/history");
+
+        let (start, candidates) = completer.complete("/hist", 5, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "/history");
+    }
+
+    #[test]
+    fn test_command_completer_tools() {
+        let completer = CommandCompleter {
+            command_names: vec!["/tool".to_string()],
+            tool_names: vec!["search".to_string(), "calculator".to_string()],
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+
+        // Complete first tool
+        let line = "/tool s";
+        let (start, candidates) = completer.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(start, 6); // after "/tool "
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "search");
+
+        // Complete with empty prefix
+        let line = "/tool ";
+        let (start, candidates) = completer.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(start, 6);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].replacement(), "search");
+        assert_eq!(candidates[1].replacement(), "calculator");
+
+        // Complete second tool
+        let line = "/tool search calc";
+        let (start, candidates) = completer.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(start, 13); // after "/tool search "
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "calculator");
+    }
+
+    #[test]
+    fn test_command_completer_no_match() {
+        let completer = CommandCompleter {
+            command_names: vec!["/help".to_string()],
+            tool_names: vec!["search".to_string()],
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+        let (_start, candidates) = completer.complete("foo", 3, &ctx).unwrap();
+        assert_eq!(candidates.len(), 0);
+    }
 }

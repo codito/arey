@@ -6,9 +6,10 @@ mod play;
 use crate::chat::{Chat, start_chat};
 use crate::console::{TerminalRenderer, get_render_theme};
 use ::console::Term;
-use anyhow::Context;
-use arey_core::config::get_config;
+use anyhow::{Context, anyhow};
+use arey_core::{config::get_config, tools::Tool};
 use clap::{Parser, Subcommand, command};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -59,6 +60,19 @@ async fn main() -> anyhow::Result<()> {
     // Load configuration
     let config = get_config(None).context("Failed to load configuration")?;
 
+    // Initialize all available tools
+    let mut available_tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
+    for (name, tool_config) in &config.tools {
+        let tool: Arc<dyn Tool> = match name.as_str() {
+            "search" => Arc::new(
+                arey_tools_search::SearchTool::from_config(tool_config)
+                    .with_context(|| format!("Failed to initialize tool: {name}"))?,
+            ),
+            _ => return Err(anyhow!("Unknown tool in config: {}", name)),
+        };
+        available_tools.insert(name.clone(), tool);
+    }
+
     match &cli.command {
         Commands::Ask { instruction, model } => {
             let instruction = instruction.join(" ");
@@ -87,7 +101,9 @@ async fn main() -> anyhow::Result<()> {
             let mut term = Term::stdout();
             let theme = get_render_theme(&config.theme);
             let mut renderer = TerminalRenderer::new(&mut term, &theme);
-            let chat_instance = Arc::new(Mutex::new(Chat::new(chat_model_config).await?));
+            let chat_instance = Arc::new(Mutex::new(
+                Chat::new(chat_model_config, available_tools).await?,
+            ));
 
             start_chat(chat_instance, &mut renderer).await?;
         }

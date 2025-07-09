@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 arey-core = { path = "../core", version = "*" }
+arey-tools-search = { path = "../tools-search" }
 anyhow.workspace = true
 async-stream.workspace = true
 chrono.workspace = true
@@ -25,8 +26,11 @@ tokio.workspace = true
 rustyline = { version = "16.0.0", features = ["derive"] }
 shlex = "1.3.0"
 two-face = "0.4.3"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "registry"] }
 
 [dev-dependencies]
+async-trait.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 wiremock.workspace = true
