@@ -8,43 +8,8 @@ use arey_core::tools::Tool;
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing_subscriber::{Layer, Registry, filter::LevelFilter, layer::SubscriberExt};
-
-#[derive(Clone)]
-struct BufWriter(Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl BufWriter {
-    fn new() -> Self {
-        Self(Arc::new(std::sync::Mutex::new(Vec::new())))
-    }
-}
-
-impl Display for BufWriter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let data = String::from_utf8_lossy(&self.0.lock().unwrap()).to_string();
-        f.write_str(data.as_ref())
-    }
-}
-
-impl Write for BufWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.lock().unwrap().flush()
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
-    type Writer = Self;
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
 
 /// Context associated with a single chat message
 #[derive(Clone)]
@@ -52,7 +17,6 @@ pub struct MessageContext {
     pub finish_reason: Option<String>,
     pub metrics: CompletionMetrics,
     pub raw_api_logs: String,
-    pub trace_logs: String,
 }
 
 /// Chat message with context
@@ -149,16 +113,6 @@ impl Chat {
         let mut messages_lock = self.messages.lock().await;
         messages_lock.push(user_message);
 
-        // Add assistant message placeholder
-        let assistant_index = messages_lock.len();
-        messages_lock.push(Message {
-            text: String::new(),
-            sender: SenderType::Assistant,
-            _timestamp: Utc::now(),
-            context: None,
-        });
-        drop(messages_lock);
-
         // Convert all messages to model format
         let model_messages: Vec<ChatMessage> = self
             .messages
@@ -186,21 +140,23 @@ impl Chat {
         let shared_messages = self.messages.clone();
         let mut last_finish_reason: Option<String> = None;
 
-        let wrapped_stream = async_stream::stream! {
-            let log_writer = BufWriter::new();
-            let log_capture_layer = tracing_subscriber::fmt::layer()
-                .with_writer(log_writer.clone())
-                .with_ansi(false)
-                .with_filter(LevelFilter::TRACE);
-            let subscriber = Registry::default().with(log_capture_layer);
-            let dispatch = tracing::Dispatch::new(subscriber);
+        // Add assistant message placeholder
+        let assistant_index = messages_lock.len();
+        messages_lock.push(Message {
+            text: String::new(),
+            sender: SenderType::Assistant,
+            _timestamp: Utc::now(),
+            context: None,
+        });
+        drop(messages_lock);
 
+        let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
             let mut assistant_response = String::new();
             let mut raw_logs = String::new();
             let mut metrics = CompletionMetrics::default();
 
-            while let Some(result) = tracing::dispatcher::with_default(&dispatch, || stream.next()).await {
+            while let Some(result) = stream.next().await {
                 // Check for cancellation *before* processing the chunk
                 if cancel_token.is_cancelled() {
                     has_error = true; // Treat cancellation as an error for cleanup purposes
@@ -250,7 +206,6 @@ impl Chat {
                     finish_reason: last_finish_reason,
                     metrics,
                     raw_api_logs: raw_logs,
-                    trace_logs: log_writer.to_string(),
                 };
 
                 msg.text = assistant_response;

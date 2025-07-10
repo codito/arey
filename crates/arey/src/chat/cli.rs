@@ -231,10 +231,6 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
                 match chat_guard.get_last_assistant_context().await {
                     Some(ctx) => {
                         println!(
-                            "\n=== TRACE LOGS ===\n{}\n==================",
-                            ctx.trace_logs
-                        );
-                        println!(
                             "\n=== RAW API LOGS ===\n{}\n====================",
                             ctx.raw_api_logs
                         );
