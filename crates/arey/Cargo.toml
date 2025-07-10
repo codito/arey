@@ -19,6 +19,7 @@ futures.workspace = true
 indicatif.workspace = true
 markdown.workspace = true
 notify.workspace = true
+serde_json.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true
 tokio-stream.workspace = true

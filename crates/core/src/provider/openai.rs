@@ -199,6 +199,7 @@ impl CompletionModel for OpenAIBaseModel {
                 }));
             }
         };
+        tracing::debug!("OpenAI request: {:?}", request);
 
         // Start the timer
         let start_time = Instant::now();

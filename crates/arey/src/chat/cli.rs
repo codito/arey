@@ -5,6 +5,7 @@ use crate::console::{
 };
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics};
+use arey_core::tools::ToolResult;
 use clap::{CommandFactory, Parser, Subcommand};
 use console::Style;
 use futures::StreamExt;
@@ -348,6 +349,77 @@ async fn process_message(
     // After the stream finishes, clear the markdown renderer's internal buffer
     // and reset its state for the next message. This does not clear the screen.
     renderer.clear();
+
+    let mut tool_results_submitted = false;
+
+    // Process tool calls if any
+    if !was_cancelled {
+        if let Some(context) = chat.clone().lock().await.get_last_assistant_context().await {
+            for call in context.tool_calls {
+                println!(
+                    "{}",
+                    style_text(
+                        &format!("\n🛠️ Calling tool: {}({})", call.name, call.arguments),
+                        MessageType::Footer
+                    )
+                );
+
+                let tool = match chat.lock().await.available_tools.get(&call.name) {
+                    Some(t) => t.clone(),
+                    None => {
+                        eprintln!(
+                            "{}",
+                            style_text(
+                                &format!("Tool '{}' not available", call.name),
+                                MessageType::Error
+                            )
+                        );
+                        continue;
+                    }
+                };
+
+                let output = match tool.execute(&call.arguments).await {
+                    Ok(out) => out,
+                    Err(e) => {
+                        eprintln!(
+                            "{}",
+                            style_text(&format!("Tool execution failed: {e}"), MessageType::Error)
+                        );
+                        continue;
+                    }
+                };
+
+                println!(
+                    "{}",
+                    style_text(&format!("✅ Tool result: {output}"), MessageType::Footer)
+                );
+
+                if let Err(e) = chat.lock().await.submit_tool_result(ToolResult {
+                    call: call.clone(),
+                    output,
+                }) {
+                    eprintln!(
+                        "{}",
+                        style_text(
+                            &format!("Failed to submit tool result: {e}"),
+                            MessageType::Error
+                        )
+                    );
+                }
+
+                tool_results_submitted = true;
+            }
+        }
+    }
+
+    // If tool results were submitted, recurse to process them
+    if tool_results_submitted {
+        println!(
+            "{}",
+            style_text("\n🔁 Processing tool results...", MessageType::Footer)
+        );
+        return Box::pin(process_message(chat, renderer, "")).await;
+    }
 
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {

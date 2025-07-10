@@ -7,7 +7,7 @@ use crate::chat::{Chat, start_chat};
 use crate::console::{TerminalRenderer, get_render_theme};
 use ::console::Term;
 use anyhow::{Context, anyhow};
-use arey_core::{config::get_config, tools::Tool};
+use arey_core::{config::get_config, get_data_dir, tools::Tool};
 use clap::{Parser, Subcommand, command};
 use std::collections::HashMap;
 use std::path::Path;
@@ -53,9 +53,45 @@ enum Commands {
     },
 }
 
+fn setup_logging() -> anyhow::Result<()> {
+    let data_dir = get_data_dir().context("Failed to get data directory")?;
+    let log_path = data_dir.join("arey.log");
+
+    if log_path.exists() {
+        let metadata = std::fs::metadata(&log_path)?;
+        if metadata.len() > 100 * 1024 {
+            // 100KB
+            let backup_path = data_dir.join("arey.log.old");
+            if backup_path.exists() {
+                std::fs::remove_file(&backup_path)?;
+            }
+            std::fs::rename(&log_path, backup_path)?;
+        }
+    }
+
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(log_file)
+        .init();
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    // let cli = Cli::parse();
+    let cli = Cli {
+        command: Commands::Chat { model: None },
+        verbose: true,
+    };
+
+    if cli.verbose {
+        setup_logging().context("Failed to set up logging")?;
+    }
 
     // Load configuration
     let config = get_config(None).context("Failed to load configuration")?;

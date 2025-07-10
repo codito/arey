@@ -4,7 +4,7 @@ use arey_core::completion::{
     CompletionResponse, SenderType,
 };
 use arey_core::model::{ModelConfig, ModelMetrics};
-use arey_core::tools::Tool;
+use arey_core::tools::{Tool, ToolCall, ToolResult};
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
@@ -17,6 +17,7 @@ pub struct MessageContext {
     pub finish_reason: Option<String>,
     pub metrics: CompletionMetrics,
     pub raw_api_logs: String,
+    pub tool_calls: Vec<ToolCall>,
 }
 
 /// Chat message with context
@@ -46,7 +47,7 @@ pub struct ChatContext {
 pub struct Chat {
     pub messages: Arc<Mutex<Vec<Message>>>,
     pub _context: ChatContext,
-    available_tools: HashMap<String, Arc<dyn Tool>>,
+    pub available_tools: HashMap<String, Arc<dyn Tool>>,
     _model_config: ModelConfig,
     model: Box<dyn CompletionModel + Send + Sync>,
     tools: Vec<Arc<dyn Tool>>,
@@ -110,8 +111,10 @@ impl Chat {
             context: None,
         };
 
-        let mut messages_lock = self.messages.lock().await;
-        messages_lock.push(user_message);
+        {
+            let mut messages_lock = self.messages.lock().await;
+            messages_lock.push(user_message);
+        }
 
         // Convert all messages to model format
         let model_messages: Vec<ChatMessage> = self
@@ -141,18 +144,22 @@ impl Chat {
         let mut last_finish_reason: Option<String> = None;
 
         // Add assistant message placeholder
-        let assistant_index = messages_lock.len();
-        messages_lock.push(Message {
-            text: String::new(),
-            sender: SenderType::Assistant,
-            _timestamp: Utc::now(),
-            context: None,
-        });
-        drop(messages_lock);
+        let assistant_index = {
+            let mut messages_lock = self.messages.lock().await;
+            messages_lock.push(Message {
+                text: String::new(),
+                sender: SenderType::Assistant,
+                _timestamp: Utc::now(),
+                context: None,
+            });
+
+            messages_lock.len() - 1
+        };
 
         let wrapped_stream = async_stream::stream! {
             let mut has_error = false;
             let mut assistant_response = String::new();
+            let mut tool_calls = Vec::new();
             let mut raw_logs = String::new();
             let mut metrics = CompletionMetrics::default();
 
@@ -174,6 +181,9 @@ impl Chat {
 
                             // Accumulate response in chat history
                             assistant_response.push_str(&response.text);
+                            if let Some(calls) = &response.tool_calls {
+                                tool_calls.extend(calls.clone());
+                            }
                             last_finish_reason = response.finish_reason.clone();
                             yield Ok(response);
                         }
@@ -206,6 +216,7 @@ impl Chat {
                     finish_reason: last_finish_reason,
                     metrics,
                     raw_api_logs: raw_logs,
+                    tool_calls,
                 };
 
                 msg.text = assistant_response;
@@ -219,6 +230,17 @@ impl Chat {
     pub async fn clear_messages(&self) {
         let mut messages = self.messages.lock().await;
         messages.clear();
+    }
+
+    pub fn submit_tool_result(&self, result: ToolResult) -> anyhow::Result<()> {
+        let mut messages = self.messages.blocking_lock();
+        messages.push(Message {
+            text: serde_json::to_string(&result)?,
+            sender: SenderType::Tool,
+            _timestamp: Utc::now(),
+            context: None,
+        });
+        Ok(())
     }
 
     pub async fn get_last_assistant_context(&self) -> Option<MessageContext> {
