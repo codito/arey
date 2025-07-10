@@ -23,6 +23,16 @@ pub fn get_config_dir() -> PathBuf {
     }
 }
 
+pub fn get_data_dir() -> std::io::Result<PathBuf> {
+    let path = if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
+        PathBuf::from(xdg_data_home).join("arey")
+    } else {
+        _DEFAULT_DATA_DIR.clone()
+    };
+    std::fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
 pub fn get_default_config() -> String {
     include_str!("../data/config.yml").to_string()
 }
