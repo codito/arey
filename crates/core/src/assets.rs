@@ -83,4 +83,34 @@ mod tests {
         assert!(config.contains("models:"));
         assert!(config.contains("profiles:"));
     }
+
+    #[test]
+    fn test_get_data_dir_with_xdg_set() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let xdg_data_path = tmp_dir.path();
+        unsafe {
+            env::set_var("XDG_DATA_HOME", xdg_data_path);
+        }
+
+        let data_dir = get_data_dir().unwrap();
+        assert_eq!(data_dir, xdg_data_path.join("arey"));
+
+        unsafe {
+            env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    fn test_get_data_dir_without_xdg_set() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            env::remove_var("XDG_DATA_HOME");
+        }
+        let data_dir = get_data_dir().unwrap();
+        let expected = dirs::data_local_dir()
+            .map(|p| p.join("arey"))
+            .unwrap_or_else(|| PathBuf::from("~/.local/share/arey"));
+        assert_eq!(data_dir, expected);
+    }
 }
