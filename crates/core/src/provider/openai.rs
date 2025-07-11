@@ -186,7 +186,7 @@ impl CompletionModel for OpenAIBaseModel {
                 })
                 .collect();
             if !openai_tools.is_empty() {
-                request_builder.tools(openai_tools);
+                request_builder.tools(openai_tools).tool_choice("auto");
             }
         }
         let request = request_builder.build();
@@ -222,7 +222,12 @@ impl CompletionModel for OpenAIBaseModel {
 
 
             // Send the request and get back a streaming response
-            match self.client.chat().create_stream(request).await {
+            match self
+                .client
+                .chat()
+                .create_stream(request)
+                .await
+            {
                 Ok(response) => {
                     let mut stream = response;
 
@@ -271,9 +276,7 @@ impl CompletionModel for OpenAIBaseModel {
                                     }
 
                                     let mut final_tool_calls = None;
-                                    if choice.finish_reason
-                                        == Some(async_openai::types::FinishReason::ToolCalls)
-                                    {
+                                    if choice.finish_reason == Some(async_openai::types::FinishReason::ToolCalls) {
                                         let completed_calls: Vec<ToolCall> =
                                             tool_calls_in_progress
                                                 .values()
