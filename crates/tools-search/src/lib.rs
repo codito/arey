@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use tracing::debug;
 
 pub mod providers;
 use providers::searxng::SearxngProvider;
@@ -40,6 +41,7 @@ pub struct SearchTool {
 impl SearchTool {
     /// Creates a new SearchTool from a configuration value.
     pub fn from_config(config_value: &serde_yaml::Value) -> Result<Self> {
+        debug!("Initializing search tool from config: {:?}", config_value);
         let config: SearchToolConfig = serde_yaml::from_value(config_value.clone())
             .context("Failed to parse search tool config")?;
         let provider: Arc<dyn SearchProvider> = match config.provider.as_str() {
@@ -82,6 +84,7 @@ impl Tool for SearchTool {
             .as_str()
             .ok_or_else(|| ToolError::ExecutionError("Missing 'query' parameter".to_string()))?;
 
+        debug!(query, "Executing search");
         let results = self
             .provider
             .search(query)
@@ -89,6 +92,7 @@ impl Tool for SearchTool {
             .with_context(|| format!("Search failed for query: {query}"))
             .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
+        debug!(?results, "Search results received");
         serde_json::to_value(results).map_err(|e| ToolError::ExecutionError(e.to_string()))
     }
 }

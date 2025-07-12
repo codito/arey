@@ -98,22 +98,19 @@ impl Chat {
 
     pub async fn stream_response(
         &mut self,
-        message: &str,
+        user_messages: Vec<Message>,
+        tool_messages: Vec<Message>,
         cancel_token: CancellationToken, // Added cancellation token
     ) -> Result<BoxStream<'_, Result<CompletionResponse>>> {
-        let _timestamp = Utc::now();
-
         // Create user message and add to history
-        let user_message = Message {
-            text: message.to_string(),
-            sender: SenderType::User,
-            _timestamp,
-            context: None,
-        };
-
         {
             let mut messages_lock = self.messages.lock().await;
-            messages_lock.push(user_message);
+            for m in user_messages {
+                messages_lock.push(m);
+            }
+            for m in tool_messages {
+                messages_lock.push(m);
+            }
         }
 
         // Convert all messages to model format

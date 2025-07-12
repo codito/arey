@@ -1,11 +1,12 @@
 // Handles user interaction for chat
-use crate::chat::Chat;
+use crate::chat::{Chat, Message};
 use crate::console::{
     GenerationSpinner, MessageType, TerminalRenderer, format_footer_metrics, style_text,
 };
 use anyhow::Result;
-use arey_core::completion::{CancellationToken, CompletionMetrics};
-use arey_core::tools::ToolResult;
+use arey_core::completion::{CancellationToken, CompletionMetrics, SenderType};
+use arey_core::tools::{ToolCall, ToolResult};
+use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand};
 use console::Style;
 use futures::StreamExt;
@@ -182,7 +183,15 @@ pub async fn start_chat(
 
                 let continue_repl = match user_input.starts_with('/') {
                     true => process_command(&chat, user_input).await?,
-                    false => process_message(&chat, renderer, user_input).await?,
+                    false => {
+                        let user_messages = vec![Message {
+                            text: line.to_string(),
+                            sender: SenderType::User,
+                            _timestamp: Utc::now(),
+                            context: None,
+                        }];
+                        process_message(&chat, renderer, user_messages, vec![]).await?
+                    }
                 };
 
                 if continue_repl {
@@ -274,7 +283,8 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
 async fn process_message(
     chat: &Arc<Mutex<Chat>>,
     renderer: &mut TerminalRenderer<'_>,
-    line: &str,
+    user_messages: Vec<Message>,
+    tool_messages: Vec<Message>,
 ) -> Result<bool> {
     // Create spinner
     let spinner = GenerationSpinner::new();
@@ -283,17 +293,20 @@ async fn process_message(
     // Clone for async block
     let chat_clone = chat.clone();
 
+    // Child tool messages are created if LLM requires a set of tools to be invoked for responding
+    // to a user message.
     let was_cancelled = {
         // Get stream response
         let mut chat_guard = chat_clone.lock().await;
         let mut stream = {
             chat_guard
-                .stream_response(line, cancel_token.clone())
+                .stream_response(user_messages, tool_messages, cancel_token.clone())
                 .await?
         };
 
         let mut first_token_received = false;
         let mut was_cancelled_internal = false;
+        let mut tool_calls: Vec<ToolCall> = vec![];
 
         // Start listening for Ctrl-C
         let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
@@ -324,7 +337,14 @@ async fn process_message(
 
                             match response {
                                 Ok(chunk) => {
-                                    renderer.render_markdown(&chunk.text)?;
+                                    if !&chunk.text.is_empty() {
+                                        renderer.render_markdown(&chunk.text)?;
+                                    }
+
+                                    // Tool messages can come in chunks, we collate all
+                                    for t in &chunk.tool_calls.unwrap_or_default() {
+                                        tool_calls.push(t.clone());
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("Error: {e}");
@@ -340,6 +360,19 @@ async fn process_message(
             }
         }
 
+        // Process tool calls and send them to the LLM with recursion
+        if !tool_calls.is_empty() {
+            let tool_messages = process_tools(&chat_clone, &tool_calls).await?;
+            spinner.clear();
+            return Box::pin(process_message(
+                &chat_clone,
+                renderer,
+                vec![],
+                tool_messages,
+            ))
+            .await;
+        }
+
         // Ensure spinner is cleared after stream processing
         spinner.clear();
 
@@ -349,77 +382,6 @@ async fn process_message(
     // After the stream finishes, clear the markdown renderer's internal buffer
     // and reset its state for the next message. This does not clear the screen.
     renderer.clear();
-
-    let mut tool_results_submitted = false;
-
-    // Process tool calls if any
-    if !was_cancelled {
-        if let Some(context) = chat.clone().lock().await.get_last_assistant_context().await {
-            for call in context.tool_calls {
-                println!(
-                    "{}",
-                    style_text(
-                        &format!("\n🛠️ Calling tool: {}({})", call.name, call.arguments),
-                        MessageType::Footer
-                    )
-                );
-
-                let tool = match chat.lock().await.available_tools.get(&call.name) {
-                    Some(t) => t.clone(),
-                    None => {
-                        eprintln!(
-                            "{}",
-                            style_text(
-                                &format!("Tool '{}' not available", call.name),
-                                MessageType::Error
-                            )
-                        );
-                        continue;
-                    }
-                };
-
-                let output = match tool.execute(&call.arguments).await {
-                    Ok(out) => out,
-                    Err(e) => {
-                        eprintln!(
-                            "{}",
-                            style_text(&format!("Tool execution failed: {e}"), MessageType::Error)
-                        );
-                        continue;
-                    }
-                };
-
-                println!(
-                    "{}",
-                    style_text(&format!("✅ Tool result: {output}"), MessageType::Footer)
-                );
-
-                if let Err(e) = chat.lock().await.submit_tool_result(ToolResult {
-                    call: call.clone(),
-                    output,
-                }) {
-                    eprintln!(
-                        "{}",
-                        style_text(
-                            &format!("Failed to submit tool result: {e}"),
-                            MessageType::Error
-                        )
-                    );
-                }
-
-                tool_results_submitted = true;
-            }
-        }
-    }
-
-    // If tool results were submitted, recurse to process them
-    if tool_results_submitted {
-        println!(
-            "{}",
-            style_text("\n🔁 Processing tool results...", MessageType::Footer)
-        );
-        return Box::pin(process_message(chat, renderer, "")).await;
-    }
 
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {
@@ -444,6 +406,68 @@ async fn process_message(
     println!();
 
     Ok(true)
+}
+
+/// Returns set of tool results as messages
+async fn process_tools(
+    chat: &Arc<Mutex<Chat>>,
+    tool_calls: &Vec<ToolCall>,
+) -> Result<Vec<Message>> {
+    let mut tool_messages: Vec<Message> = vec![];
+
+    let chat_guard = chat.lock().await;
+    for call in tool_calls {
+        println!(
+            "{}",
+            style_text(
+                &format!("\n🛠️ Calling tool: {}({})", call.name, call.arguments),
+                MessageType::Footer
+            )
+        );
+
+        let tool = match chat_guard.available_tools.get(&call.name) {
+            Some(t) => t.clone(),
+            None => {
+                eprintln!(
+                    "{}",
+                    style_text(
+                        &format!("Tool '{}' not available", call.name),
+                        MessageType::Error
+                    )
+                );
+                continue;
+            }
+        };
+
+        let output = match tool.execute(&call.arguments).await {
+            Ok(out) => out,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    style_text(&format!("Tool execution failed: {e}"), MessageType::Error)
+                );
+                continue;
+            }
+        };
+
+        println!(
+            "{}",
+            style_text(&format!("✅ Tool result: {output}"), MessageType::Footer)
+        );
+
+        let result = ToolResult {
+            call: call.clone(),
+            output,
+        };
+        tool_messages.push(Message {
+            text: serde_json::to_string(&result)?,
+            sender: SenderType::Tool,
+            _timestamp: Utc::now(),
+            context: None,
+        });
+    }
+
+    Ok(tool_messages)
 }
 
 #[cfg(test)]

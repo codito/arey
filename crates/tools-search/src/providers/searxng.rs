@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
+use tracing::debug;
 use url::Url;
 
 use crate::{SearchProvider, SearchResult};
@@ -34,6 +35,7 @@ pub struct SearxngProvider {
 impl SearxngProvider {
     /// Creates a new SearxngProvider from a configuration value.
     pub fn from_config(config_value: &serde_yaml::Value) -> Result<Self> {
+        debug!("Creating SearxngProvider from config: {:?}", config_value);
         let config: SearxngConfig = serde_yaml::from_value(config_value.clone())
             .context("Failed to parse searxng provider config")?;
         Ok(Self {
@@ -53,6 +55,7 @@ impl SearchProvider for SearxngProvider {
             .append_pair("q", query)
             .append_pair("format", "json");
 
+        debug!(url = %url, "Sending request to SearxNG");
         let response = self
             .client
             .get(url)
@@ -77,6 +80,8 @@ impl SearchProvider for SearxngProvider {
             .json()
             .await
             .context("Failed to parse JSON response from SearxNG API")?;
+
+        debug!(response = ?searxng_response, "Received response from SearxNG");
 
         let results: Vec<SearchResult> = searxng_response
             .results

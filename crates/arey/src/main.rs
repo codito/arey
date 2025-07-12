@@ -75,7 +75,7 @@ fn setup_logging() -> anyhow::Result<()> {
         .open(log_path)?;
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_env_filter("arey=debug,rustyline=info")
         .with_writer(log_file)
         .init();
     Ok(())

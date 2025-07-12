@@ -1,3 +1,4 @@
+use super::openai_types::{ChatCompletionStreamResponse, FinishReason};
 use crate::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
     CompletionResponse, SenderType,
@@ -16,7 +17,7 @@ use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::instrument;
+use tracing::{debug, instrument, trace};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenAISettings {
@@ -35,11 +36,11 @@ impl OpenAIBaseModel {
     pub fn new(model_config: ModelConfig) -> Result<Self> {
         let settings: OpenAISettings =
             serde_yaml::from_value(serde_yaml::to_value(&model_config.settings).map_err(|e| {
-                tracing::trace!("Failed to convert settings to value: {}", e);
+                trace!("Failed to convert settings to value: {}", e);
                 anyhow!("Invalid settings structure")
             })?)
             .map_err(|e| {
-                tracing::trace!("Failed to deserialize OpenAI settings: {}", e);
+                trace!("Failed to deserialize OpenAI settings: {}", e);
                 anyhow!(e)
             })?;
 
@@ -95,14 +96,11 @@ impl OpenAIBaseModel {
             SenderType::Tool => {
                 let tool_output: ToolResult = serde_json::from_str(msg.text.as_str())
                     .unwrap_or_else(|e| {
-                        tracing::trace!(
-                            "Failed to deserialize ToolResult from message text: {}",
-                            e
-                        );
+                        trace!("Failed to deserialize ToolResult from message text: {}", e);
                         panic!("Failed to deserialize ToolResult from message text: {e}");
                     });
                 let content = serde_json::to_string(&tool_output.output).unwrap_or_else(|e| {
-                    tracing::trace!("Failed to serialize tool output content: {e}");
+                    trace!("Failed to serialize tool output content: {e}");
                     panic!("Failed to serialize tool output content: {e}");
                 });
                 // println!("{tool_output:?}");
@@ -199,7 +197,16 @@ impl CompletionModel for OpenAIBaseModel {
                 }));
             }
         };
-        tracing::debug!("OpenAI request: {:?}", request);
+        debug!("OpenAI request: {:?}", request);
+
+        let request_value = match serde_json::to_value(&request) {
+            Ok(v) => v,
+            Err(e) => {
+                return Box::pin(futures::stream::once(async move {
+                    Err(anyhow!("Failed to serialize request: {}", e))
+                }));
+            }
+        };
 
         // Start the timer
         let start_time = Instant::now();
@@ -225,7 +232,7 @@ impl CompletionModel for OpenAIBaseModel {
             match self
                 .client
                 .chat()
-                .create_stream(request)
+                .create_stream_byot(request_value)
                 .await
             {
                 Ok(response) => {
@@ -244,8 +251,20 @@ impl CompletionModel for OpenAIBaseModel {
                         prev_time = now;
 
                         match next {
-                            Ok(chunk) => {
-                                let raw_json = serde_json::to_string(&chunk).unwrap_or_else(|_| String::from(""));
+                            Ok(value) => {
+                                let raw_json = serde_json::to_string(&value).unwrap_or_default();
+                                debug!("OpenAI response: {raw_json}");
+                                let chunk: ChatCompletionStreamResponse =
+                                    match serde_json::from_value(value) {
+                                        Ok(chunk) => chunk,
+                                        Err(e) => {
+                                            debug!(
+                                                "Failed to deserialize OpenAI stream chunk: {}.",
+                                                e,
+                                            );
+                                            continue;
+                                        }
+                                    };
 
                                 // Check if we have a content block in the first choice
                                 if let Some(choice) = chunk.choices.first() {
@@ -276,7 +295,7 @@ impl CompletionModel for OpenAIBaseModel {
                                     }
 
                                     let mut final_tool_calls = None;
-                                    if choice.finish_reason == Some(async_openai::types::FinishReason::ToolCalls) {
+                                    if choice.finish_reason == Some(FinishReason::ToolCalls) {
                                         let completed_calls: Vec<ToolCall> =
                                             tool_calls_in_progress
                                                 .values()
@@ -287,7 +306,7 @@ impl CompletionModel for OpenAIBaseModel {
                                                         &call.arguments,
                                                     )
                                                     .unwrap_or_else(|e|{
-                                                        tracing::trace!(
+                                                        trace!(
                                                             "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
                                                             e,
                                                             call.arguments
@@ -306,7 +325,7 @@ impl CompletionModel for OpenAIBaseModel {
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
                                         tool_calls: final_tool_calls,
-                                        finish_reason: choice.finish_reason.as_ref().map(|x| format!("{x:?}")),
+                                        finish_reason: choice.finish_reason.map(|x| format!("{x:?}")),
                                         raw_chunk: Some(raw_json.clone()),
                                     }));
                                 }

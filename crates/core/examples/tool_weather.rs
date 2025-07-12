@@ -54,16 +54,31 @@ impl Tool for WeatherTool {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Read API key from environment
-    let api_key = env::var("GROQ_API_KEY").expect("GROQ_API_KEY environment variable not set");
+    // let api_key = env::var("GROQ_API_KEY").expect("GROQ_API_KEY environment variable not set");
 
-    // Configure Groq model
+    // Configure model
+    // let config = ModelConfig {
+    //     name: "qwen-qwq-32b".to_string(),
+    //     provider: arey_core::model::ModelProvider::Openai,
+    //     settings: HashMap::from([
+    //         (
+    //             "base_url".to_string(),
+    //             YamlValue::String("https://api.groq.com/openai/v1".to_string()),
+    //         ),
+    //         ("api_key".to_string(), YamlValue::String(api_key)),
+    //     ]),
+    // };
+
+    let api_key = env::var("GEMINI_API_KEY").expect("GROQ_API_KEY environment variable not set");
     let config = ModelConfig {
-        name: "qwen-qwq-32b".to_string(),
+        name: "gemini-2.5-flash".to_string(),
         provider: arey_core::model::ModelProvider::Openai,
         settings: HashMap::from([
             (
                 "base_url".to_string(),
-                YamlValue::String("https://api.groq.com/openai/v1".to_string()),
+                YamlValue::String(
+                    "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+                ),
             ),
             ("api_key".to_string(), YamlValue::String(api_key)),
         ]),
