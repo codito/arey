@@ -5,7 +5,7 @@ use crate::console::{
 };
 use anyhow::Result;
 use arey_core::completion::{CancellationToken, CompletionMetrics, SenderType};
-use arey_core::tools::{ToolCall, ToolResult};
+use arey_core::tools::{Tool, ToolCall, ToolResult};
 use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand};
 use console::Style;
@@ -13,8 +13,10 @@ use futures::StreamExt;
 use rustyline::CompletionType;
 use rustyline::completion::Candidate;
 use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::debug;
 
 #[derive(Debug)]
 struct CompletionCandidate {
@@ -244,6 +246,10 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
                             "\n=== RAW API LOGS ===\n{}\n====================",
                             ctx.raw_api_logs
                         );
+                        println!(
+                            "\n=== TOOL CALLS ===\n{:?}\n====================",
+                            ctx.tool_calls
+                        );
                     }
                     None => println!("No logs available"),
                 }
@@ -295,9 +301,11 @@ async fn process_message(
 
     // Child tool messages are created if LLM requires a set of tools to be invoked for responding
     // to a user message.
+    let mut child_tool_messages: Vec<Message> = vec![];
     let was_cancelled = {
         // Get stream response
         let mut chat_guard = chat_clone.lock().await;
+        let available_tools = chat_guard.available_tools.clone();
         let mut stream = {
             chat_guard
                 .stream_response(user_messages, tool_messages, cancel_token.clone())
@@ -306,7 +314,6 @@ async fn process_message(
 
         let mut first_token_received = false;
         let mut was_cancelled_internal = false;
-        let mut tool_calls: Vec<ToolCall> = vec![];
 
         // Start listening for Ctrl-C
         let mut ctrl_c_stream = Box::pin(tokio::signal::ctrl_c());
@@ -342,8 +349,8 @@ async fn process_message(
                                     }
 
                                     // Tool messages can come in chunks, we collate all
-                                    for t in &chunk.tool_calls.unwrap_or_default() {
-                                        tool_calls.push(t.clone());
+                                    if let Some(tools) = &chunk.tool_calls {
+                                        child_tool_messages = process_tools(&available_tools, tools).await?;
                                     }
                                 }
                                 Err(e) => {
@@ -360,28 +367,25 @@ async fn process_message(
             }
         }
 
-        // Process tool calls and send them to the LLM with recursion
-        if !tool_calls.is_empty() {
-            let tool_messages = process_tools(&chat_clone, &tool_calls).await?;
-            spinner.clear();
-            return Box::pin(process_message(
-                &chat_clone,
-                renderer,
-                vec![],
-                tool_messages,
-            ))
-            .await;
-        }
-
-        // Ensure spinner is cleared after stream processing
-        spinner.clear();
-
         was_cancelled_internal || cancel_token.is_cancelled()
     };
+
+    // Ensure spinner is cleared after stream processing
+    spinner.clear();
 
     // After the stream finishes, clear the markdown renderer's internal buffer
     // and reset its state for the next message. This does not clear the screen.
     renderer.clear();
+
+    if !child_tool_messages.is_empty() {
+        return Box::pin(process_message(
+            &chat_clone,
+            renderer,
+            vec![],
+            child_tool_messages,
+        ))
+        .await;
+    }
 
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {
@@ -397,7 +401,7 @@ async fn process_message(
 
     let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
 
-    // Ensure the footer starts on a new line after the markdown output.
+    // Ensure the footer starts on a newline after the markdown output.
     // The `render` function leaves the cursor at the end of the last line it drew.
     // `println!()` will handle adding a newline before printing.
     println!();
@@ -410,12 +414,11 @@ async fn process_message(
 
 /// Returns set of tool results as messages
 async fn process_tools(
-    chat: &Arc<Mutex<Chat>>,
+    available_tools: &HashMap<String, Arc<dyn Tool>>,
     tool_calls: &Vec<ToolCall>,
 ) -> Result<Vec<Message>> {
     let mut tool_messages: Vec<Message> = vec![];
 
-    let chat_guard = chat.lock().await;
     for call in tool_calls {
         println!(
             "{}",
@@ -425,7 +428,7 @@ async fn process_tools(
             )
         );
 
-        let tool = match chat_guard.available_tools.get(&call.name) {
+        let tool = match available_tools.get(&call.name) {
             Some(t) => t.clone(),
             None => {
                 eprintln!(
@@ -439,7 +442,14 @@ async fn process_tools(
             }
         };
 
-        let output = match tool.execute(&call.arguments).await {
+        let args = serde_json::from_str(&call.arguments).unwrap_or_else(|e| {
+            debug!(
+                "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
+                e, call.arguments
+            );
+            serde_json::Value::Null
+        });
+        let output = match tool.execute(&args).await {
             Ok(out) => out,
             Err(e) => {
                 eprintln!(
@@ -455,8 +465,17 @@ async fn process_tools(
             style_text(&format!("✅ Tool result: {output}"), MessageType::Footer)
         );
 
+        // Gemini doesn't provide a tool_id, we fill it if empty
+        let call_id = if call.id.is_empty() {
+            call.name.to_string()
+        } else {
+            call.id.to_string()
+        };
         let result = ToolResult {
-            call: call.clone(),
+            call: ToolCall {
+                id: call_id,
+                ..call.clone()
+            },
             output,
         };
         tool_messages.push(Message {

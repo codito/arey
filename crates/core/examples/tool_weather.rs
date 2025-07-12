@@ -92,6 +92,7 @@ async fn main() -> Result<()> {
     let mut messages = vec![ChatMessage {
         text: "What's the current weather in London?".to_string(),
         sender: SenderType::User,
+        tools: vec![],
     }];
     println!("> {}", messages.last().unwrap().text);
 
@@ -127,6 +128,7 @@ async fn main() -> Result<()> {
     messages.push(ChatMessage {
         text: assistant_content.clone(),
         sender: SenderType::Assistant,
+        tools: vec![],
     });
 
     if !tool_calls.is_empty() {
@@ -141,7 +143,8 @@ async fn main() -> Result<()> {
                 .iter()
                 .find(|t| t.name() == call.name)
                 .expect("Tool not found");
-            let output = tool.execute(&call.arguments).await?;
+            let args = &serde_json::from_str(&call.arguments).unwrap();
+            let output = tool.execute(args).await?;
             println!("Tool output: {output}");
 
             // The provider needs to know which tool call this result is for.
@@ -149,6 +152,7 @@ async fn main() -> Result<()> {
             tool_result_messages.push(ChatMessage {
                 sender: SenderType::Tool,
                 text: serde_json::to_string(&ToolResult { call, output }).unwrap(),
+                tools: vec![],
             });
         }
         messages.extend(tool_result_messages);

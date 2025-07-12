@@ -4,7 +4,7 @@ use arey_core::completion::{
     CompletionResponse, SenderType,
 };
 use arey_core::model::{ModelConfig, ModelMetrics};
-use arey_core::tools::{Tool, ToolCall, ToolResult};
+use arey_core::tools::{Tool, ToolCall};
 use chrono::{DateTime, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
@@ -30,9 +30,16 @@ pub struct Message {
 
 impl Message {
     pub fn to_chat_message(&self) -> ChatMessage {
+        let mut tools: Vec<ToolCall> = vec![];
+
+        if let Some(ctx) = &self.context {
+            tools = ctx.tool_calls.clone()
+        }
+
         ChatMessage {
             text: self.text.clone(),
             sender: self.sender.clone(),
+            tools,
         }
     }
 }
@@ -227,17 +234,6 @@ impl Chat {
     pub async fn clear_messages(&self) {
         let mut messages = self.messages.lock().await;
         messages.clear();
-    }
-
-    pub fn submit_tool_result(&self, result: ToolResult) -> anyhow::Result<()> {
-        let mut messages = self.messages.blocking_lock();
-        messages.push(Message {
-            text: serde_json::to_string(&result)?,
-            sender: SenderType::Tool,
-            _timestamp: Utc::now(),
-            context: None,
-        });
-        Ok(())
     }
 
     pub async fn get_last_assistant_context(&self) -> Option<MessageContext> {

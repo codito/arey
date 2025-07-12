@@ -44,6 +44,7 @@ impl Task {
         let message = ChatMessage {
             sender: SenderType::User,
             text: self.instruction.clone(),
+            tools: Vec::new(),
         };
 
         let settings = HashMap::new(); // Use default settings for now

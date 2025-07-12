@@ -1,4 +1,4 @@
-use super::openai_types::{ChatCompletionStreamResponse, FinishReason};
+use super::openai_types::ChatCompletionStreamResponse;
 use crate::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
     CompletionResponse, SenderType,
@@ -11,6 +11,7 @@ use async_openai::{
     Client as OpenAIClient,
     types::{
         ChatCompletionRequestMessage, ChatCompletionStreamOptions, CreateChatCompletionRequestArgs,
+        FinishReason,
     },
 };
 use async_trait::async_trait;
@@ -81,12 +82,24 @@ impl OpenAIBaseModel {
                     .build()
                     .unwrap(),
             ),
-            SenderType::Assistant => ChatCompletionRequestMessage::Assistant(
-                async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                    .content(msg.text.as_str())
-                    .build()
-                    .unwrap(),
-            ),
+            SenderType::Assistant => {
+                let assistant_msg = if !msg.tools.is_empty() {
+                    let tools = msg
+                        .tools
+                        .iter()
+                        .map(|t| t.clone().into())
+                        .collect::<Vec<_>>();
+                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                        .tool_calls(tools)
+                        .build()
+                } else {
+                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                        .content(msg.text.as_str())
+                        .build()
+                };
+
+                ChatCompletionRequestMessage::Assistant(assistant_msg.unwrap())
+            }
             SenderType::User => ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
                     .content(msg.text.as_str())
@@ -171,18 +184,7 @@ impl CompletionModel for OpenAIBaseModel {
             .stream_options(stream_options);
 
         if let Some(tools) = tools {
-            let openai_tools: Vec<_> = tools
-                .iter()
-                .map(|tool| async_openai::types::ChatCompletionTool {
-                    r#type: async_openai::types::ChatCompletionToolType::Function,
-                    function: async_openai::types::FunctionObject {
-                        name: tool.name(),
-                        description: Some(tool.description()),
-                        parameters: Some(tool.parameters()),
-                        strict: None,
-                    },
-                })
-                .collect();
+            let openai_tools: Vec<_> = tools.iter().map(|t| t.to_openai_tool()).collect();
             if !openai_tools.is_empty() {
                 request_builder.tools(openai_tools).tool_choice("auto");
             }
@@ -219,14 +221,9 @@ impl CompletionModel for OpenAIBaseModel {
             let mut prev_time = prev_time;
             let mut prompt_eval_latency = 0.0;
             let mut completion_latency = 0.0;
-            #[derive(Default, Clone)]
-            struct InProgressToolCall {
-                id: String,
-                name: String,
-                arguments: String,
-            }
-            let mut tool_calls_in_progress: HashMap<u32, InProgressToolCall> = HashMap::new();
 
+            // Partially streamed tool calls
+            let mut tool_calls_partial: HashMap<u32, ToolCall> = HashMap::new();
 
             // Send the request and get back a streaming response
             match self
@@ -277,44 +274,28 @@ impl CompletionModel for OpenAIBaseModel {
 
                                     if let Some(delta_tool_calls) = &choice.delta.tool_calls {
                                         for tool_call_chunk in delta_tool_calls {
-                                            let in_progress_call = tool_calls_in_progress
+                                            let partial_call = tool_calls_partial
                                                 .entry(tool_call_chunk.index)
                                                 .or_default();
                                             if let Some(id) = &tool_call_chunk.id {
-                                                in_progress_call.id.clone_from(id);
+                                                partial_call.id.clone_from(id);
                                             }
                                             if let Some(function) = &tool_call_chunk.function {
                                                 if let Some(name) = &function.name {
-                                                    in_progress_call.name.clone_from(name);
+                                                    partial_call.name.clone_from(name);
                                                 }
                                                 if let Some(args) = &function.arguments {
-                                                    in_progress_call.arguments.push_str(args);
+                                                    partial_call.arguments.push_str(args);
                                                 }
                                             }
                                         }
                                     }
 
+                                    // Collate if we have streamed all tool calls
                                     let mut final_tool_calls = None;
                                     if choice.finish_reason == Some(FinishReason::ToolCalls) {
-                                        let completed_calls: Vec<ToolCall> =
-                                            tool_calls_in_progress
-                                                .values()
-                                                .map(|call| ToolCall {
-                                                    id: call.id.clone(),
-                                                    name: call.name.clone(),
-                                                    arguments: serde_json::from_str(
-                                                        &call.arguments,
-                                                    )
-                                                    .unwrap_or_else(|e|{
-                                                        trace!(
-                                                            "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
-                                                            e,
-                                                            call.arguments
-                                                        );
-                                                        serde_json::Value::Null
-                                                    }),
-                                                })
-                                                .collect();
+                                        let completed_calls: Vec<ToolCall> = tool_calls_partial
+                                            .values().cloned().collect();
                                         if !completed_calls.is_empty() {
                                             final_tool_calls = Some(completed_calls);
                                         }
@@ -581,6 +562,7 @@ mod tests {
         let messages = vec![ChatMessage {
             text: "Hello".to_string(),
             sender: SenderType::User,
+            tools: Vec::new(),
         }];
 
         let cancel_token = CancellationToken::new(); // Create a token for the test
@@ -635,6 +617,7 @@ mod tests {
         let messages = vec![ChatMessage {
             text: "What's the weather in Paris?".to_string(),
             sender: SenderType::User,
+            tools: Vec::new(),
         }];
         let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
 
