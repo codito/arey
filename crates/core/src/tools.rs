@@ -10,11 +10,12 @@ pub enum ToolError {
 }
 
 /// Represents a tool call requested by the model.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+/// A tool call may or may not resolve into a `Tool`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct ToolCall {
     pub id: String, // To uniquely identify the call
     pub name: String,
-    pub arguments: Value,
+    pub arguments: String,
 }
 
 /// The result of a tool execution, to be sent back to the model.

@@ -65,6 +65,7 @@ impl SenderType {
 pub struct ChatMessage {
     pub text: String,
     pub sender: SenderType,
+    pub tools: Vec<ToolCall>,
 }
 
 pub enum Completion {

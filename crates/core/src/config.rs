@@ -58,6 +58,8 @@ pub struct Config {
     pub task: ModeConfig,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub tools: HashMap<String, serde_yaml::Value>,
 }
 
 fn default_theme() -> String {
@@ -78,6 +80,8 @@ struct RawConfig {
     chat: RawModeConfig,
     task: RawModeConfig,
     theme: Option<String>,
+    #[serde(default)]
+    tools: HashMap<String, serde_yaml::Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -144,6 +148,7 @@ impl RawConfig {
                 profile: task_profile,
             },
             theme: self.theme.clone().unwrap_or_else(default_theme),
+            tools: self.tools.clone(),
         })
     }
 }
@@ -301,6 +306,7 @@ theme: dark
                 profile: Some(StringOrObject::String("concise".to_string())),
             },
             theme: Some("dark".to_string()),
+            tools: HashMap::new(),
         };
 
         let config = raw_config.to_config().unwrap();
@@ -331,6 +337,7 @@ theme: dark
                 profile: None,
             },
             theme: None,
+            tools: HashMap::new(),
         };
 
         let err = raw_config.to_config().unwrap_err();
@@ -356,6 +363,7 @@ theme: dark
                 profile: None,
             },
             theme: None,
+            tools: HashMap::new(),
         };
 
         let err = raw_config.to_config().unwrap_err();
@@ -381,6 +389,7 @@ theme: dark
                 profile: None, // Should use default profile
             },
             theme: Some("light".to_string()),
+            tools: HashMap::new(),
         };
 
         let config = raw_config.to_config().unwrap();

@@ -1,0 +1,25 @@
+[package]
+name = "arey-tools-search"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Search tool for arey"
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+arey-core = { path = "../core" }
+
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+url.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock.workspace = true
