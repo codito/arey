@@ -649,6 +649,9 @@ mod tests {
         let tool_call = &tool_calls[0];
         assert_eq!(tool_call.id, "call_123");
         assert_eq!(tool_call.name, "get_weather");
-        assert_eq!(tool_call.arguments, json!({"location": "Paris"}));
+        // Parse the JSON string before comparing
+        let parsed_args: serde_json::Value =
+            serde_json::from_str(&tool_call.arguments).expect("Failed to parse arguments as JSON");
+        assert_eq!(parsed_args, json!({"location": "Paris"}));
     }
 }
