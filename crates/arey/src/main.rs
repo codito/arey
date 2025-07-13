@@ -83,11 +83,11 @@ fn setup_logging() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // let cli = Cli::parse();
-    let cli = Cli {
-        command: Commands::Chat { model: None },
-        verbose: true,
-    };
+    let cli = Cli::parse();
+    // let cli = Cli {
+    //     command: Commands::Chat { model: None },
+    //     verbose: true,
+    // };
 
     if cli.verbose {
         setup_logging().context("Failed to set up logging")?;
