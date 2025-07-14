@@ -293,7 +293,7 @@ async fn process_message(
     tool_messages: Vec<Message>,
 ) -> Result<bool> {
     // Create spinner
-    let spinner = GenerationSpinner::new();
+    let spinner = GenerationSpinner::new("Generating...".to_string());
     let cancel_token = CancellationToken::new();
 
     // Clone for async block
@@ -420,14 +420,9 @@ async fn process_tools(
     let mut tool_messages: Vec<Message> = vec![];
 
     for call in tool_calls {
-        println!(
-            "{}",
-            style_text(
-                &format!("\n🛠️ Calling tool: {}({})", call.name, call.arguments),
-                MessageType::Footer
-            )
-        );
-
+        let tool_fmt = format!("Tool: {}({})", call.name, call.arguments);
+        let tool_msg = style_text(&tool_fmt, MessageType::Footer);
+        let spinner = GenerationSpinner::new(tool_msg.to_string());
         let tool = match available_tools.get(&call.name) {
             Some(t) => t.clone(),
             None => {
@@ -460,10 +455,8 @@ async fn process_tools(
             }
         };
 
-        println!(
-            "{}",
-            style_text(&format!("✅ Tool result: {output}"), MessageType::Footer)
-        );
+        spinner.clear();
+        eprintln!("\n✓ {tool_msg}");
 
         // Gemini doesn't provide a tool_id, we fill it if empty
         let call_id = if call.id.is_empty() {
@@ -486,6 +479,7 @@ async fn process_tools(
         });
     }
 
+    eprintln!();
     Ok(tool_messages)
 }
 
