@@ -456,7 +456,7 @@ async fn process_tools(
         };
 
         spinner.clear();
-        eprintln!("\n✓ {tool_msg}");
+        eprintln!("✓ {tool_msg}");
 
         // Gemini doesn't provide a tool_id, we fill it if empty
         let call_id = if call.id.is_empty() {
