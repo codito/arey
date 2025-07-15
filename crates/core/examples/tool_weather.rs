@@ -54,16 +54,31 @@ impl Tool for WeatherTool {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Read API key from environment
-    let api_key = env::var("GROQ_API_KEY").expect("GROQ_API_KEY environment variable not set");
+    // let api_key = env::var("GROQ_API_KEY").expect("GROQ_API_KEY environment variable not set");
 
-    // Configure Groq model
+    // Configure model
+    // let config = ModelConfig {
+    //     name: "qwen-qwq-32b".to_string(),
+    //     provider: arey_core::model::ModelProvider::Openai,
+    //     settings: HashMap::from([
+    //         (
+    //             "base_url".to_string(),
+    //             YamlValue::String("https://api.groq.com/openai/v1".to_string()),
+    //         ),
+    //         ("api_key".to_string(), YamlValue::String(api_key)),
+    //     ]),
+    // };
+
+    let api_key = env::var("GEMINI_API_KEY").expect("GROQ_API_KEY environment variable not set");
     let config = ModelConfig {
-        name: "qwen-qwq-32b".to_string(),
+        name: "gemini-2.5-flash".to_string(),
         provider: arey_core::model::ModelProvider::Openai,
         settings: HashMap::from([
             (
                 "base_url".to_string(),
-                YamlValue::String("https://api.groq.com/openai/v1".to_string()),
+                YamlValue::String(
+                    "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+                ),
             ),
             ("api_key".to_string(), YamlValue::String(api_key)),
         ]),
@@ -77,6 +92,7 @@ async fn main() -> Result<()> {
     let mut messages = vec![ChatMessage {
         text: "What's the current weather in London?".to_string(),
         sender: SenderType::User,
+        tools: vec![],
     }];
     println!("> {}", messages.last().unwrap().text);
 
@@ -112,6 +128,7 @@ async fn main() -> Result<()> {
     messages.push(ChatMessage {
         text: assistant_content.clone(),
         sender: SenderType::Assistant,
+        tools: vec![],
     });
 
     if !tool_calls.is_empty() {
@@ -126,7 +143,8 @@ async fn main() -> Result<()> {
                 .iter()
                 .find(|t| t.name() == call.name)
                 .expect("Tool not found");
-            let output = tool.execute(&call.arguments).await?;
+            let args = &serde_json::from_str(&call.arguments).unwrap();
+            let output = tool.execute(args).await?;
             println!("Tool output: {output}");
 
             // The provider needs to know which tool call this result is for.
@@ -134,6 +152,7 @@ async fn main() -> Result<()> {
             tool_result_messages.push(ChatMessage {
                 sender: SenderType::Tool,
                 text: serde_json::to_string(&ToolResult { call, output }).unwrap(),
+                tools: vec![],
             });
         }
         messages.extend(tool_result_messages);

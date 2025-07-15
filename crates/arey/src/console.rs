@@ -144,14 +144,14 @@ pub struct GenerationSpinner {
 }
 
 impl GenerationSpinner {
-    pub fn new() -> Self {
+    pub fn new(msg: String) -> Self {
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
             ProgressStyle::with_template("{spinner:.blue} {msg}")
                 .unwrap()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
-        spinner.set_message("Generating...");
+        spinner.set_message(msg);
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
         Self { spinner }

@@ -1,18 +1,22 @@
 // Handles user interaction for chat
-use crate::chat::Chat;
+use crate::chat::{Chat, Message};
 use crate::console::{
     GenerationSpinner, MessageType, TerminalRenderer, format_footer_metrics, style_text,
 };
 use anyhow::Result;
-use arey_core::completion::{CancellationToken, CompletionMetrics};
+use arey_core::completion::{CancellationToken, CompletionMetrics, SenderType};
+use arey_core::tools::{Tool, ToolCall, ToolResult};
+use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand};
 use console::Style;
 use futures::StreamExt;
 use rustyline::CompletionType;
 use rustyline::completion::Candidate;
 use rustyline::{Config, Context, Editor, Helper, Highlighter, Validator, error::ReadlineError};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::debug;
 
 #[derive(Debug)]
 struct CompletionCandidate {
@@ -53,6 +57,12 @@ enum Command {
     Clear,
     /// Show detailed logs for the last assistant message
     Log,
+    /// Set tools for the chat session. E.g. /tool search
+    #[command(alias = "t")]
+    Tool {
+        /// Names of the tools to use
+        names: Vec<String>,
+    },
     /// Exit the chat session
     #[command(alias = "q", alias = "quit")]
     Exit,
@@ -61,6 +71,7 @@ enum Command {
 #[derive(Helper, Validator, Highlighter)]
 struct CommandCompleter {
     command_names: Vec<String>,
+    tool_names: Vec<String>,
 }
 
 impl rustyline::completion::Completer for CommandCompleter {
@@ -72,6 +83,25 @@ impl rustyline::completion::Completer for CommandCompleter {
         pos: usize,
         _ctx: &Context,
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
+        let line_to_pos = &line[..pos];
+
+        // Autocomplete for /tool command arguments
+        if line_to_pos.starts_with("/tool ") || line_to_pos.starts_with("/t ") {
+            if let Some(space_pos) = line_to_pos.rfind(' ') {
+                let tool_prefix_start = space_pos + 1;
+                if tool_prefix_start <= line_to_pos.len() {
+                    let tool_prefix = &line_to_pos[tool_prefix_start..];
+                    let candidates = self
+                        .tool_names
+                        .iter()
+                        .filter(|name| name.starts_with(tool_prefix))
+                        .map(|name| CompletionCandidate::new(name.clone()))
+                        .collect();
+                    return Ok((tool_prefix_start, candidates));
+                }
+            }
+        }
+
         // Only suggest commands at start of line
         if pos == 0 || line.starts_with('/') {
             let candidates = self
@@ -129,8 +159,16 @@ pub async fn start_chat(
         .map(|s| format!("/{s}"))
         .collect::<Vec<_>>();
 
+    let tool_names = {
+        let chat_guard = chat.lock().await;
+        chat_guard.get_available_tool_names()
+    };
+
     let mut rl = Editor::with_config(config)?;
-    rl.set_helper(Some(CommandCompleter { command_names }));
+    rl.set_helper(Some(CommandCompleter {
+        command_names,
+        tool_names,
+    }));
 
     let prompt = (style_text("> ", MessageType::Prompt)).to_string();
     loop {
@@ -147,7 +185,15 @@ pub async fn start_chat(
 
                 let continue_repl = match user_input.starts_with('/') {
                     true => process_command(&chat, user_input).await?,
-                    false => process_message(&chat, renderer, user_input).await?,
+                    false => {
+                        let user_messages = vec![Message {
+                            text: line.to_string(),
+                            sender: SenderType::User,
+                            _timestamp: Utc::now(),
+                            context: None,
+                        }];
+                        process_message(&chat, renderer, user_messages, vec![]).await?
+                    }
                 };
 
                 if continue_repl {
@@ -195,8 +241,33 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
             Command::Log => {
                 let chat_guard = chat.lock().await;
                 match chat_guard.get_last_assistant_context().await {
-                    Some(ctx) => println!("\n=== LOGS ===\n{}\n=============", ctx.logs),
+                    Some(ctx) => {
+                        println!(
+                            "\n=== RAW API LOGS ===\n{}\n====================",
+                            ctx.raw_api_logs
+                        );
+                        println!(
+                            "\n=== TOOL CALLS ===\n{:?}\n====================",
+                            ctx.tool_calls
+                        );
+                    }
                     None => println!("No logs available"),
+                }
+                true
+            }
+            Command::Tool { names } => {
+                let mut chat_guard = chat.lock().await;
+                match chat_guard.set_tools(&names).await {
+                    Ok(()) => {
+                        if names.is_empty() {
+                            println!("Tools cleared.");
+                        } else {
+                            println!("Tools set: {}", names.join(", "));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error setting tools: {e}");
+                    }
                 }
                 true
             }
@@ -218,21 +289,26 @@ async fn process_command(chat: &Arc<Mutex<Chat>>, user_input: &str) -> Result<bo
 async fn process_message(
     chat: &Arc<Mutex<Chat>>,
     renderer: &mut TerminalRenderer<'_>,
-    line: &str,
+    user_messages: Vec<Message>,
+    tool_messages: Vec<Message>,
 ) -> Result<bool> {
     // Create spinner
-    let spinner = GenerationSpinner::new();
+    let spinner = GenerationSpinner::new("Generating...".to_string());
     let cancel_token = CancellationToken::new();
 
     // Clone for async block
     let chat_clone = chat.clone();
 
+    // Child tool messages are created if LLM requires a set of tools to be invoked for responding
+    // to a user message.
+    let mut child_tool_messages: Vec<Message> = vec![];
     let was_cancelled = {
         // Get stream response
         let mut chat_guard = chat_clone.lock().await;
+        let available_tools = chat_guard.available_tools.clone();
         let mut stream = {
             chat_guard
-                .stream_response(line, cancel_token.clone())
+                .stream_response(user_messages, tool_messages, cancel_token.clone())
                 .await?
         };
 
@@ -268,7 +344,14 @@ async fn process_message(
 
                             match response {
                                 Ok(chunk) => {
-                                    renderer.render_markdown(&chunk.text)?;
+                                    if !&chunk.text.is_empty() {
+                                        renderer.render_markdown(&chunk.text)?;
+                                    }
+
+                                    // Tool messages can come in chunks, we collate all
+                                    if let Some(tools) = &chunk.tool_calls {
+                                        child_tool_messages = process_tools(&available_tools, tools).await?;
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("Error: {e}");
@@ -284,15 +367,25 @@ async fn process_message(
             }
         }
 
-        // Ensure spinner is cleared after stream processing
-        spinner.clear();
-
         was_cancelled_internal || cancel_token.is_cancelled()
     };
+
+    // Ensure spinner is cleared after stream processing
+    spinner.clear();
 
     // After the stream finishes, clear the markdown renderer's internal buffer
     // and reset its state for the next message. This does not clear the screen.
     renderer.clear();
+
+    if !child_tool_messages.is_empty() {
+        return Box::pin(process_message(
+            &chat_clone,
+            renderer,
+            vec![],
+            child_tool_messages,
+        ))
+        .await;
+    }
 
     // Print footer with metrics
     let (metrics, finish_reason_option) = match was_cancelled {
@@ -308,7 +401,7 @@ async fn process_message(
 
     let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
 
-    // Ensure the footer starts on a new line after the markdown output.
+    // Ensure the footer starts on a newline after the markdown output.
     // The `render` function leaves the cursor at the end of the last line it drew.
     // `println!()` will handle adding a newline before printing.
     println!();
@@ -317,4 +410,146 @@ async fn process_message(
     println!();
 
     Ok(true)
+}
+
+/// Returns set of tool results as messages
+async fn process_tools(
+    available_tools: &HashMap<String, Arc<dyn Tool>>,
+    tool_calls: &Vec<ToolCall>,
+) -> Result<Vec<Message>> {
+    let mut tool_messages: Vec<Message> = vec![];
+
+    for call in tool_calls {
+        let tool_fmt = format!("Tool: {}({})", call.name, call.arguments);
+        let tool_msg = style_text(&tool_fmt, MessageType::Footer);
+        let spinner = GenerationSpinner::new(tool_msg.to_string());
+        let tool = match available_tools.get(&call.name) {
+            Some(t) => t.clone(),
+            None => {
+                eprintln!(
+                    "{}",
+                    style_text(
+                        &format!("Tool '{}' not available", call.name),
+                        MessageType::Error
+                    )
+                );
+                continue;
+            }
+        };
+
+        let args = serde_json::from_str(&call.arguments).unwrap_or_else(|e| {
+            debug!(
+                "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
+                e, call.arguments
+            );
+            serde_json::Value::Null
+        });
+        let output = match tool.execute(&args).await {
+            Ok(out) => out,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    style_text(&format!("Tool execution failed: {e}"), MessageType::Error)
+                );
+                continue;
+            }
+        };
+
+        spinner.clear();
+        eprintln!("✓ {tool_msg}");
+
+        // Gemini doesn't provide a tool_id, we fill it if empty
+        let call_id = if call.id.is_empty() {
+            call.name.to_string()
+        } else {
+            call.id.to_string()
+        };
+        let result = ToolResult {
+            call: ToolCall {
+                id: call_id,
+                ..call.clone()
+            },
+            output,
+        };
+        tool_messages.push(Message {
+            text: serde_json::to_string(&result)?,
+            sender: SenderType::Tool,
+            _timestamp: Utc::now(),
+            context: None,
+        });
+    }
+
+    eprintln!();
+    Ok(tool_messages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyline::completion::Completer;
+    use rustyline::history::DefaultHistory;
+
+    #[test]
+    fn test_command_completer_commands() {
+        let completer = CommandCompleter {
+            command_names: vec!["/help".to_string(), "/history".to_string()],
+            tool_names: vec![],
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+
+        let (_start, candidates) = completer.complete("/h", 2, &ctx).unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].replacement(), "/help");
+        assert_eq!(candidates[1].replacement(), "/history");
+
+        let (start, candidates) = completer.complete("/hist", 5, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "/history");
+    }
+
+    #[test]
+    fn test_command_completer_tools() {
+        let completer = CommandCompleter {
+            command_names: vec!["/tool".to_string()],
+            tool_names: vec!["search".to_string(), "calculator".to_string()],
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+
+        // Complete first tool
+        let line = "/tool s";
+        let (start, candidates) = completer.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(start, 6); // after "/tool "
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "search");
+
+        // Complete with empty prefix
+        let line = "/tool ";
+        let (start, candidates) = completer.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(start, 6);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].replacement(), "search");
+        assert_eq!(candidates[1].replacement(), "calculator");
+
+        // Complete second tool
+        let line = "/tool search calc";
+        let (start, candidates) = completer.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(start, 13); // after "/tool search "
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "calculator");
+    }
+
+    #[test]
+    fn test_command_completer_no_match() {
+        let completer = CommandCompleter {
+            command_names: vec!["/help".to_string()],
+            tool_names: vec!["search".to_string()],
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+        let (_start, candidates) = completer.complete("foo", 3, &ctx).unwrap();
+        assert_eq!(candidates.len(), 0);
+    }
 }

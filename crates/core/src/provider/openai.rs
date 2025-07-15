@@ -1,3 +1,4 @@
+use super::openai_types::ChatCompletionStreamResponse;
 use crate::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel,
     CompletionResponse, SenderType,
@@ -10,13 +11,14 @@ use async_openai::{
     Client as OpenAIClient,
     types::{
         ChatCompletionRequestMessage, ChatCompletionStreamOptions, CreateChatCompletionRequestArgs,
+        FinishReason,
     },
 };
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::instrument;
+use tracing::{debug, instrument, trace};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenAISettings {
@@ -33,10 +35,15 @@ pub struct OpenAIBaseModel {
 impl OpenAIBaseModel {
     #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
-        let settings: OpenAISettings = serde_yaml::from_value(
-            serde_yaml::to_value(&model_config.settings)
-                .map_err(|_e| anyhow!("Invalid settings structure"))?,
-        )?;
+        let settings: OpenAISettings =
+            serde_yaml::from_value(serde_yaml::to_value(&model_config.settings).map_err(|e| {
+                trace!("Failed to convert settings to value: {}", e);
+                anyhow!("Invalid settings structure")
+            })?)
+            .map_err(|e| {
+                trace!("Failed to deserialize OpenAI settings: {}", e);
+                anyhow!(e)
+            })?;
 
         // If api_key starts with "env:", read from environment variable
         let api_key = if settings.api_key.starts_with("env:") {
@@ -75,12 +82,24 @@ impl OpenAIBaseModel {
                     .build()
                     .unwrap(),
             ),
-            SenderType::Assistant => ChatCompletionRequestMessage::Assistant(
-                async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                    .content(msg.text.as_str())
-                    .build()
-                    .unwrap(),
-            ),
+            SenderType::Assistant => {
+                let assistant_msg = if !msg.tools.is_empty() {
+                    let tools = msg
+                        .tools
+                        .iter()
+                        .map(|t| t.clone().into())
+                        .collect::<Vec<_>>();
+                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                        .tool_calls(tools)
+                        .build()
+                } else {
+                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                        .content(msg.text.as_str())
+                        .build()
+                };
+
+                ChatCompletionRequestMessage::Assistant(assistant_msg.unwrap())
+            }
             SenderType::User => ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
                     .content(msg.text.as_str())
@@ -88,10 +107,17 @@ impl OpenAIBaseModel {
                     .unwrap(),
             ),
             SenderType::Tool => {
-                let tool_output: ToolResult = serde_json::from_str(msg.text.as_str()).unwrap();
-                let content = serde_json::to_string(&tool_output.output).unwrap();
-                println!("{tool_output:?}");
-                println!("{content}");
+                let tool_output: ToolResult = serde_json::from_str(msg.text.as_str())
+                    .unwrap_or_else(|e| {
+                        trace!("Failed to deserialize ToolResult from message text: {}", e);
+                        panic!("Failed to deserialize ToolResult from message text: {e}");
+                    });
+                let content = serde_json::to_string(&tool_output.output).unwrap_or_else(|e| {
+                    trace!("Failed to serialize tool output content: {e}");
+                    panic!("Failed to serialize tool output content: {e}");
+                });
+                // println!("{tool_output:?}");
+                // println!("{content}");
                 ChatCompletionRequestMessage::Tool(
                     async_openai::types::ChatCompletionRequestToolMessageArgs::default()
                         .tool_call_id(tool_output.call.id)
@@ -158,20 +184,9 @@ impl CompletionModel for OpenAIBaseModel {
             .stream_options(stream_options);
 
         if let Some(tools) = tools {
-            let openai_tools: Vec<_> = tools
-                .iter()
-                .map(|tool| async_openai::types::ChatCompletionTool {
-                    r#type: async_openai::types::ChatCompletionToolType::Function,
-                    function: async_openai::types::FunctionObject {
-                        name: tool.name(),
-                        description: Some(tool.description()),
-                        parameters: Some(tool.parameters()),
-                        strict: None,
-                    },
-                })
-                .collect();
+            let openai_tools: Vec<_> = tools.iter().map(|t| t.to_openai_tool()).collect();
             if !openai_tools.is_empty() {
-                request_builder.tools(openai_tools);
+                request_builder.tools(openai_tools).tool_choice("auto");
             }
         }
         let request = request_builder.build();
@@ -181,6 +196,16 @@ impl CompletionModel for OpenAIBaseModel {
             Err(err) => {
                 return Box::pin(futures::stream::once(async move {
                     Err(anyhow!("Invalid request: {:?}", err))
+                }));
+            }
+        };
+        debug!("OpenAI request: {:?}", request);
+
+        let request_value = match serde_json::to_value(&request) {
+            Ok(v) => v,
+            Err(e) => {
+                return Box::pin(futures::stream::once(async move {
+                    Err(anyhow!("Failed to serialize request: {}", e))
                 }));
             }
         };
@@ -196,17 +221,17 @@ impl CompletionModel for OpenAIBaseModel {
             let mut prev_time = prev_time;
             let mut prompt_eval_latency = 0.0;
             let mut completion_latency = 0.0;
-            #[derive(Default, Clone)]
-            struct InProgressToolCall {
-                id: String,
-                name: String,
-                arguments: String,
-            }
-            let mut tool_calls_in_progress: HashMap<u32, InProgressToolCall> = HashMap::new();
 
+            // Partially streamed tool calls
+            let mut tool_calls_partial: HashMap<u32, ToolCall> = HashMap::new();
 
             // Send the request and get back a streaming response
-            match self.client.chat().create_stream(request).await {
+            match self
+                .client
+                .chat()
+                .create_stream_byot(request_value)
+                .await
+            {
                 Ok(response) => {
                     let mut stream = response;
 
@@ -223,8 +248,20 @@ impl CompletionModel for OpenAIBaseModel {
                         prev_time = now;
 
                         match next {
-                            Ok(chunk) => {
-                                let raw_json = serde_json::to_string(&chunk).unwrap_or_else(|_| String::from(""));
+                            Ok(value) => {
+                                let raw_json = serde_json::to_string(&value).unwrap_or_default();
+                                debug!("OpenAI response: {raw_json}");
+                                let chunk: ChatCompletionStreamResponse =
+                                    match serde_json::from_value(value) {
+                                        Ok(chunk) => chunk,
+                                        Err(e) => {
+                                            debug!(
+                                                "Failed to deserialize OpenAI stream chunk: {}.",
+                                                e,
+                                            );
+                                            continue;
+                                        }
+                                    };
 
                                 // Check if we have a content block in the first choice
                                 if let Some(choice) = chunk.choices.first() {
@@ -237,39 +274,28 @@ impl CompletionModel for OpenAIBaseModel {
 
                                     if let Some(delta_tool_calls) = &choice.delta.tool_calls {
                                         for tool_call_chunk in delta_tool_calls {
-                                            let in_progress_call = tool_calls_in_progress
+                                            let partial_call = tool_calls_partial
                                                 .entry(tool_call_chunk.index)
                                                 .or_default();
                                             if let Some(id) = &tool_call_chunk.id {
-                                                in_progress_call.id.clone_from(id);
+                                                partial_call.id.clone_from(id);
                                             }
                                             if let Some(function) = &tool_call_chunk.function {
                                                 if let Some(name) = &function.name {
-                                                    in_progress_call.name.clone_from(name);
+                                                    partial_call.name.clone_from(name);
                                                 }
                                                 if let Some(args) = &function.arguments {
-                                                    in_progress_call.arguments.push_str(args);
+                                                    partial_call.arguments.push_str(args);
                                                 }
                                             }
                                         }
                                     }
 
+                                    // Collate if we have streamed all tool calls
                                     let mut final_tool_calls = None;
-                                    if choice.finish_reason
-                                        == Some(async_openai::types::FinishReason::ToolCalls)
-                                    {
-                                        let completed_calls: Vec<ToolCall> =
-                                            tool_calls_in_progress
-                                                .values()
-                                                .map(|call| ToolCall {
-                                                    id: call.id.clone(),
-                                                    name: call.name.clone(),
-                                                    arguments: serde_json::from_str(
-                                                        &call.arguments,
-                                                    )
-                                                    .unwrap_or(serde_json::Value::Null),
-                                                })
-                                                .collect();
+                                    if choice.finish_reason == Some(FinishReason::ToolCalls) {
+                                        let completed_calls: Vec<ToolCall> = tool_calls_partial
+                                            .values().cloned().collect();
                                         if !completed_calls.is_empty() {
                                             final_tool_calls = Some(completed_calls);
                                         }
@@ -280,7 +306,7 @@ impl CompletionModel for OpenAIBaseModel {
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
                                         tool_calls: final_tool_calls,
-                                        finish_reason: choice.finish_reason.as_ref().map(|x| format!("{x:?}")),
+                                        finish_reason: choice.finish_reason.map(|x| format!("{x:?}")),
                                         raw_chunk: Some(raw_json.clone()),
                                     }));
                                 }
@@ -536,6 +562,7 @@ mod tests {
         let messages = vec![ChatMessage {
             text: "Hello".to_string(),
             sender: SenderType::User,
+            tools: Vec::new(),
         }];
 
         let cancel_token = CancellationToken::new(); // Create a token for the test
@@ -590,6 +617,7 @@ mod tests {
         let messages = vec![ChatMessage {
             text: "What's the weather in Paris?".to_string(),
             sender: SenderType::User,
+            tools: Vec::new(),
         }];
         let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
 
@@ -621,6 +649,9 @@ mod tests {
         let tool_call = &tool_calls[0];
         assert_eq!(tool_call.id, "call_123");
         assert_eq!(tool_call.name, "get_weather");
-        assert_eq!(tool_call.arguments, json!({"location": "Paris"}));
+        // Parse the JSON string before comparing
+        let parsed_args: serde_json::Value =
+            serde_json::from_str(&tool_call.arguments).expect("Failed to parse arguments as JSON");
+        assert_eq!(parsed_args, json!({"location": "Paris"}));
     }
 }

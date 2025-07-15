@@ -180,6 +180,7 @@ impl PlayFile {
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: self.prompt.clone(),
+            tools: Vec::new(),
         }];
 
         let settings: HashMap<String, String> = self
