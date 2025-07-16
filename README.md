@@ -112,4 +112,4 @@ See <https://apps.codito.in/arey/contribute>.
 
 ## License
 
-MIT
+GPLv3 or later
