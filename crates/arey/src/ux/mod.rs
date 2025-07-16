@@ -2,6 +2,8 @@ mod presenter;
 mod progress;
 mod render;
 
+pub use presenter::{ChatMessageType, format_footer_metrics, style_chat_text};
+pub use progress::GenerationSpinner;
 pub use render::{TerminalRenderer, get_render_theme};
 
 use console::style;
