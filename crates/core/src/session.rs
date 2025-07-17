@@ -8,7 +8,6 @@ use futures::stream::BoxStream;
 use std::{collections::HashMap, sync::Arc};
 
 /// Represents an ongoing conversation session with an AI model
-#[derive(Debug)]
 pub struct Session {
     model: Box<dyn CompletionModel + Send + Sync>,
     messages: Vec<ChatMessage>,
@@ -63,9 +62,10 @@ impl Session {
             Some(self.tools.as_slice())
         };
 
-        self.model
+        Ok(self
+            .model
             .complete(&self.messages, tool_slice, &settings, cancel_token)
-            .await
+            .await)
     }
 
     /// Clear the conversation history
