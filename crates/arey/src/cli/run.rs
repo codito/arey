@@ -8,7 +8,7 @@ use std::io::Write;
 
 use crate::{
     cli::ux::{ChatMessageType, format_footer_metrics, style_chat_text},
-    run::Task,
+    svc::run::Task,
 };
 
 /// Run the ask command with given instruction and overrides

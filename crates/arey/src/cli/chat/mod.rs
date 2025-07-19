@@ -1,5 +1,5 @@
-use crate::chat::Chat;
 use crate::cli::ux::{TerminalRenderer, get_theme};
+use crate::svc::chat::Chat;
 use anyhow::{Context, Result};
 use arey_core::config::Config;
 use arey_core::tools::Tool;

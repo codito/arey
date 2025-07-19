@@ -40,7 +40,7 @@ pub struct PlayFile {
 }
 
 fn get_default_play_file() -> String {
-    include_str!("../data/play.md").to_string()
+    include_str!("../../data/play.md").to_string()
 }
 
 fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {

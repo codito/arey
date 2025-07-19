@@ -1,7 +1,7 @@
-use crate::chat::Chat;
 use crate::cli::ux::{
     ChatMessageType, GenerationSpinner, TerminalRenderer, format_footer_metrics, style_chat_text,
 };
+use crate::svc::chat::Chat;
 use anyhow::Result;
 use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType,
@@ -18,7 +18,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::debug;
 
-// From chat/cli.rs
+// -------------
+// REPL commands
+// -------------
 #[derive(Parser, Debug)]
 #[command(multicall = true)]
 struct CliCommand {
@@ -86,8 +88,9 @@ impl Command {
     }
 }
 
-// From chat/repl.rs
-
+// -------------
+// REPL completion
+// -------------
 #[derive(Helper, Validator, Highlighter)]
 struct Repl {
     pub command_names: Vec<String>,
@@ -165,7 +168,7 @@ impl Hinter for Repl {
             self.command_names
                 .iter()
                 .find(|&cmd_name| cmd_name.starts_with(line))
-                .cloned()
+                .map(|cmd_name| cmd_name[line.len()..].into())
         } else {
             None
         }
@@ -207,7 +210,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     let command_names = CliCommand::command()
         .get_subcommands()
         .flat_map(|c| c.get_name_and_visible_aliases())
-        .map(|s| s.to_string())
+        .map(|s| format!("/{s}"))
         .collect::<Vec<_>>();
     let tool_names = {
         let chat_guard = chat.clone();

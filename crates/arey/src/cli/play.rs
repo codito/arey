@@ -1,6 +1,6 @@
 use crate::{
     cli::ux::{ChatMessageType, format_footer_metrics, style_chat_text},
-    play::{PlayFile, PlayResult},
+    svc::play::{PlayFile, PlayResult},
 };
 use anyhow::{Context, Result};
 use arey_core::{
