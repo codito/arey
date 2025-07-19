@@ -34,96 +34,108 @@ We believe below tools are awesome and may be in the same bucket as this one.
 - <https://github.com/go-skynet/LocalAI>
 - <https://github.com/jmorganca/ollama>
 
-## Approach
+## Architecture
 
-### Mental model
+### Clean Architecture Approach
 
-We will build upon following concepts.
+We implement a layered architecture with clear separation of concerns:
 
-- **Models** are `ggml` binary files that can be generating text. We will use
-  them for inference and performing tasks.
-- **Prompt format** is the instruction set template for getting the model to do
-  anything. A model's prompt format depends on its training data.
-  - Example: Vicuna models follow `### Human:` and `### Assistant:` dialogue
-    format.
-  - Models and Prompt formats are coupled together.
-  - A prompt format can be reused across multiple models.
-- **Modes** of usage can be `chat` based where the interaction is modeled as
-  a dialogue between 3 participants - SYSTEM, AI and USER; either single or
-  multi turn. Or, the mode can be `instruct` where a model is prompted to carry
-  out certain task.
-  - Note that `chat` can be also used to carry out tasks.
-  - Also, we can provide additional `context` in instruction mode.
-  - Models can support one or both of these modes.
-  - TODO: more clarification on where and how to use modes.
-- **Tasks** are the primary interaction model for this app.
-  - E.g., `arey <task>` will perform the task.
-  - Task is the highest level of abstraction this library will provide.
-  - Task will own and manage a prompt. E.g., it will understand the prompt
-    parameters and will fill those at runtime.
-  - Task will be stateless. It will not have any knowledge of stores etc. It can
-    temporarily cache elements (TODO: memory?), but those will be ephemeral,
-    will clean up with the session.
-- **Prompt** is the actual instruction or context shared with a model to perform
-  a Task. Obviously, Tasks and Prompts are coupled together.
-  - A task can have multiple prompts.
-  - A task can use multiple other tasks. E.g., chaining together.
-  - A prompt has a template with well known parameters that can be replaced at
-    runtime. E.g., `history` represents all the discussion in current session.
-  - Every prompt will also publish its output or response format. A task will
-    use these specifications.
+1. **Core Crate**: Contains domain abstractions and foundational interfaces:
+   - `Agent`: Traits for agent definitions and execution
+   - `Workflow`: Step-by-step automation engines
+   - `Tool`: Standardized tool interface
+   - `Memory`: Short/long-term contextual storage
 
-**Scope of tasks**
+2. **Implementation Crates**: Concrete implementations in dedicated crates:
+   - `agent-research`: Domain-specific agent
+   - `memory-persistent`: Persistent storage
+   - `tool-search`: Web search implementation
 
-Simple and self-sufficient tasks will be part of this library. They must have
-a single objective. Think of the Unix philosophy. They can be composed with other
-tasks or other apps to built larger tasks.
+3. **CLI Crate (`arey`)**: Provides user experience with:
+   - Top-level commands: `run`, `play`, `chat`
+   - REPL engine with commands: `/log`, `/tool`, `@agent`, `!workflow`
+   - Managed sessions with state persistence
+   - Consistent UX components (styling, spinners)
 
-Tasks can use primitives like tokenize, parse, cleanup etc. This is a core
-aspect of a natural language based tool.
+### Key Concepts
 
-Tasks and Prompts can be defined by the consumer app. This library will provide
-abstractions to define and use those.
+- **Agents**: Specialized workers for focused tasks 
+  - Execute queries with access to tools/memory
+  - Can run in background during sessions
+  - Discovered via registry pattern
 
-**Constraints**
+- **Workflows**: Predefined sequences of steps:
+  1. Agent invocations
+  2. Tool usage
+  3. Conditional operations
+  4. Memory operations
 
-Every task will _only_ support streaming. A consumer app can decide whether to stream,
-or wait until all output is available.
+- **Tools**: Extend functionality through:
+  - Web search (`/search`)
+  - File operations (`/file`) 
+  - Custom integrations
 
-### Example runs
+- **Memory**: Context-aware storage:
+  - Short-term: Session memory
+  - Long-term: Vector stores 
+  - Automatic retrieval augmentation
 
-Let's enumerate few example scenarios to validate the mental model.
+- **REPL Engine**: Interactive chat environment with:
+  - Command history
+  - Context-aware autocomplete
+  - Rich output formatting
 
-**1. Summarize a text**
+### Execution Flows
 
-- Input: blob of text.
-- Output: a summary of the provided text.
-- Task can support various tweaks like summarize in bullets, or a paragraph.
-  Optionally, extract keywords etc.
-- E.g., `arey summarize --keywords <text blob>` or `cat essay.md | arey summarize`
-- Implementation
-  - Prompt can use zero shot or few shot mechanism.
-  - Prompt response can be JSON. We can dynamically provide instruction to
-    extract keyword. Or, keyword extraction can be a separate prompt.
+**Agent Invocation**
+```mermaid
+graph TD
+    User((User)) --> Run["run @agent: query"]
+    Run --> Registry[Agent Registry]
+    Registry --> Factory[Agent Factory]
+    Factory --> Executor[Agent Executor]
+    Executor --> Tools[Access Tools]
+    Tools --> Results[Return Results]
+```
 
-**2. Q & A on a document**
+**Workflow Execution**
+```mermaid
+graph LR
+    User((User)) --> Parse["!workflow_name arg"]
+    Parse --> Loader[Workflow Loader]
+    Loader --> Engine[Workflow Engine]
+    Engine --> Step1[Agent Step]
+    Engine --> Step2[Tool Step]
+    Step1 --> Agg[Aggregate Results]
+    Step2 --> Agg
+    Agg --> Output[Final Output]
+```
 
-- Inputs
-  - Blob of text
-  - Conversation history (optional)
-  - Question
-- Output
-  - Answer
-- Implementation
-  - Use template variables for history to make sense of words like `it` in the
-    question.
-  - Will use DATA provided in prompt for answering.
+### Example Runs
 
-**3. Q & A on a directory of files**
+**1. Agent-Based Research**
+```bash
+arey run @research "latest AI advancements"
+```
+1. Agent searches academic/public sources
+2. Summarizes key findings
+3. Provides search references
 
-- Inputs: directory of files, and a question
-- Output: answer
-- Implementation
-  - Implement as a separate app.
-  - Semantic search to find answers and then use summarize task to create an
-    answer.
+**2. Documentation Workflow**
+```bash
+arey run !generate_docs src/
+```
+1. Index source files
+2. Generate API documentation stubs
+3. Verify coverage
+4. Output markdown
+
+**3. Interactive Troubleshooting**
+```bash
+arey chat
+> @support "Connection timeout error"
+```
+1. Support agent suggests diagnostics
+2. Integrates log analysis tools
+3. Provides repair steps
+4. Maintains session state

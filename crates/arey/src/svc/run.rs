@@ -1,15 +1,14 @@
 use anyhow::{Context, Result};
-use futures::stream::{BoxStream, StreamExt};
+use futures::stream::BoxStream;
 use std::collections::HashMap;
-use std::io::Write;
 
-use crate::console::{MessageType, format_footer_metrics, style_text};
 use arey_core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
+    CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
 };
 use arey_core::get_completion_llm;
 use arey_core::model::{ModelConfig, ModelMetrics};
 
+/// Represents a single, non-interactive instruction to be executed by a model.
 pub struct Task {
     instruction: String,
     model_config: ModelConfig,
@@ -17,6 +16,7 @@ pub struct Task {
 }
 
 impl Task {
+    /// Creates a new `Task` with the given instruction and model configuration.
     pub fn new(instruction: String, model_config: ModelConfig) -> Self {
         Self {
             instruction,
@@ -25,6 +25,10 @@ impl Task {
         }
     }
 
+    /// Loads the language model for the task.
+    ///
+    /// This method initializes the model and loads the system prompt.
+    /// It should be called before `run`.
     pub async fn load_model(&mut self) -> Result<ModelMetrics> {
         let config = self.model_config.clone();
         let mut model = get_completion_llm(config).context("Failed to initialize model")?;
@@ -40,6 +44,11 @@ impl Task {
         Ok(metrics)
     }
 
+    /// Executes the task and returns a stream of completion results.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if `load_model` has not been called first.
     pub async fn run(&mut self) -> Result<BoxStream<'_, Result<Completion>>> {
         let message = ChatMessage {
             sender: SenderType::User,
@@ -60,42 +69,6 @@ impl Task {
 
         Ok(stream)
     }
-}
-
-/// Run the ask command with given instruction and overrides
-pub async fn run_ask(instruction: &str, model_config: ModelConfig) -> Result<()> {
-    let mut task = Task::new(instruction.to_string(), model_config);
-
-    println!("Loading model...");
-    let model_metrics = task.load_model().await?;
-    println!("Model loaded in {:.2}ms", model_metrics.init_latency_ms);
-
-    println!("Generating response...");
-    let mut stream = task.run().await?;
-
-    // Collect the response and metrics
-    let mut metrics = CompletionMetrics::default();
-    let mut finish_reason = None;
-
-    while let Some(result) = stream.next().await {
-        match result? {
-            Completion::Response(r) => {
-                if let Some(reason) = r.finish_reason {
-                    finish_reason = Some(reason);
-                }
-                print!("{}", r.text);
-                std::io::stdout().flush()?;
-            }
-            Completion::Metrics(m) => metrics = m,
-        }
-    }
-
-    let footer = format_footer_metrics(&metrics, finish_reason.as_deref(), false);
-    println!();
-    println!();
-    println!("{}", style_text(&footer, MessageType::Footer));
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -201,24 +174,6 @@ mod tests {
 
         assert_eq!(response_text, "Hello world!");
         assert_eq!(final_finish_reason, Some("Stop".to_string()));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_run_ask_success() -> Result<()> {
-        let server = MockServer::start().await;
-        let response = ResponseTemplate::new(200)
-            .set_body_bytes(mock_event_stream_body().as_bytes())
-            .insert_header("Content-Type", "text/event-stream");
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(response)
-            .mount(&server)
-            .await;
-
-        let model_config = create_mock_model_config(&server.uri());
-        run_ask("test instruction", model_config).await?;
 
         Ok(())
     }
