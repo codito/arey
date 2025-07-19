@@ -188,9 +188,35 @@ pub mod watch {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for `execute`. This would involve mocking
-    // file system interactions and the watcher.
+    use super::watch;
+    use anyhow::Result;
+    use std::{fs, io::Write, time::Duration};
+    use tempfile::tempdir;
+    use tokio::time::timeout;
 
-    // TODO: Add unit tests for `watch::watch_file`. This would require
-    // creating temporary files and simulating file modifications.
+    #[tokio::test]
+    async fn test_watch_file_sends_notification_on_modification() -> Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test_play_file.txt");
+        let mut file = fs::File::create(&file_path)?;
+        writeln!(file, "hello")?;
+        file.sync_all()?;
+
+        let (_watcher, mut rx) = watch::watch_file(&file_path).await?;
+
+        // Sleep to ensure watcher is initialized
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        writeln!(file, " world")?;
+        file.sync_all()?;
+
+        let event_result = timeout(Duration::from_secs(2), rx.recv()).await;
+
+        assert!(
+            event_result.is_ok(),
+            "Did not receive file change notification within 2 seconds."
+        );
+
+        Ok(())
+    }
 }
