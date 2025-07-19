@@ -155,8 +155,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
 pub mod watch {
     use super::*;
     use notify::{
-        Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
-        event::{MetadataKind, ModifyKind},
+        Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind,
     };
     use tokio::sync::mpsc;
 
