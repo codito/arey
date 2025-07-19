@@ -9,12 +9,15 @@ use syntect::{
 };
 
 /// Returns a syntect theme for rendering.
+///
+/// Currently, it only supports a built-in `ansi` theme.
 pub fn get_theme(_theme_name: &str) -> Theme {
     let ansi_theme = include_str!("../../../data/ansi.tmTheme");
     let mut cursor = Cursor::new(ansi_theme.as_bytes());
     ThemeSet::load_from_reader(&mut cursor).unwrap()
 }
 
+/// Renders markdown text to the terminal with syntax highlighting.
 pub struct TerminalRenderer<'a> {
     term: &'a mut dyn Write,
     syntax_set: SyntaxSet,
@@ -30,6 +33,7 @@ pub struct TerminalRenderer<'a> {
 }
 
 impl<'a> TerminalRenderer<'a> {
+    /// Creates a new `TerminalRenderer`.
     pub fn new(term: &'a mut dyn Write, theme: &'a Theme) -> Self {
         let syntax_set = SyntaxSet::load_defaults_newlines();
         let syntax = syntax_set.find_syntax_by_extension("md").unwrap();
@@ -54,12 +58,17 @@ impl<'a> TerminalRenderer<'a> {
         }
     }
 
+    /// Clears the internal state of the renderer, preparing it for a new rendering session.
     pub fn clear(&mut self) {
         // Reset highlighter state for a new rendering session
         let syntax = self.syntax_set.find_syntax_by_extension("md").unwrap();
         self.highlighter = HighlightLines::new(syntax, self.theme);
     }
 
+    /// Renders a chunk of markdown text to the terminal.
+    ///
+    /// This method supports streaming rendering, where text can be provided in chunks.
+    /// It handles partial lines and updates the terminal output accordingly.
     pub fn render_markdown(&mut self, text: &str) -> Result<(), anyhow::Error> {
         self.line_buffer.push_str(text);
         let mut output = String::new();
@@ -187,6 +196,8 @@ impl<'a> TerminalRenderer<'a> {
 mod tests {
     use super::*;
 
+    // TODO: Add a test for `get_theme`.
+
     fn render(chunks: &[&str]) -> String {
         let theme = get_theme("dark");
         let mut buffer = Vec::new();
@@ -244,6 +255,25 @@ mod tests {
         let part1 = "\u{1b}[35m\u{1b}[3m*ite\u{1b}[0m";
         let part2 = "\u{1b}[35m\u{1b}[3m*item*\u{1b}[0m\n";
         assert!(output.ends_with(&format!("{part1}\r{part2}")));
+    }
+
+    #[test]
+    fn test_renderer_clear() {
+        let theme = get_theme("dark");
+        let mut buffer = Vec::new();
+        let mut renderer = TerminalRenderer::new(&mut buffer, &theme);
+
+        // Render something, then clear, then render again.
+        renderer.render_markdown("`cleared`").unwrap();
+        renderer.clear();
+        renderer.render_markdown("# Hi\n").unwrap();
+        let output = String::from_utf8(buffer).unwrap();
+
+        // The output should only contain the second render. The internal state should be reset.
+        assert_eq!(
+            output,
+            "\u{1b}[34m\u{1b}[1m#\u{1b}[0m \u{1b}[34m\u{1b}[1mHi\u{1b}[0m\n"
+        );
     }
 
     #[test]
