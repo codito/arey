@@ -1,7 +1,3 @@
-use crate::{
-    play::watch::watch_file,
-    ux::{ChatMessageType, format_footer_metrics, style_chat_text},
-};
 use anyhow::{Context, Result, anyhow};
 use arey_core::{
     completion::{CancellationToken, Completion, CompletionMetrics, SenderType},
@@ -10,18 +6,18 @@ use arey_core::{
     session::Session,
 };
 use chrono::Local;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use markdown::{Constructs, ParseOptions, to_mdast};
-use notify::Event;
 use serde_yaml::Value;
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 /// Result of task execution
 pub struct PlayResult {
@@ -165,193 +161,45 @@ impl PlayFile {
         Ok(())
     }
 
-    pub async fn get_response(&mut self) -> Result<()> {
+    pub async fn generate(&mut self) -> Result<impl Stream<Item = Result<Completion>>> {
         self.ensure_session().await?;
-        let session = self.session.as_ref().unwrap();
+        let session = self.session.clone().unwrap();
+        let prompt = self.prompt.clone();
+        let completion_profile = self.completion_profile.clone();
 
-        let mut session_lock = session.lock().await;
-        session_lock.add_message(SenderType::User, &self.prompt);
+        let (tx, rx) = mpsc::channel(4);
 
-        let settings: HashMap<String, String> = self
-            .completion_profile
-            .iter()
-            .filter_map(|(k, v)| {
-                v.as_str()
-                    .map(|s| (k.clone(), s.to_owned()))
-                    .or_else(|| v.as_bool().map(|b| (k.clone(), b.to_string())))
-                    .or_else(|| v.as_i64().map(|n| (k.clone(), n.to_string())))
-                    .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
-            })
-            .collect();
-        let cancel_token = CancellationToken::new();
-        let mut stream = session_lock.generate(settings, cancel_token).await?;
+        tokio::spawn(async move {
+            let mut session_lock = session.lock().await;
+            session_lock.add_message(SenderType::User, &prompt);
 
-        let mut text = String::new();
-        let mut finish_reason = None;
-        let mut metrics = CompletionMetrics::default();
+            let settings: HashMap<String, String> = completion_profile
+                .iter()
+                .filter_map(|(k, v)| {
+                    v.as_str()
+                        .map(|s| (k.clone(), s.to_owned()))
+                        .or_else(|| v.as_bool().map(|b| (k.clone(), b.to_string())))
+                        .or_else(|| v.as_i64().map(|n| (k.clone(), n.to_string())))
+                        .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
+                })
+                .collect();
+            let cancel_token = CancellationToken::new();
 
-        while let Some(chunk) = stream.next().await {
-            match chunk? {
-                Completion::Response(response) => {
-                    text.push_str(&response.text);
-                    finish_reason = response.finish_reason;
-
-                    print!("{}", response.text);
-                    std::io::stdout().flush()?;
+            match session_lock.generate(settings, cancel_token).await {
+                Ok(mut stream) => {
+                    while let Some(item) = stream.next().await {
+                        if tx.send(item).await.is_err() {
+                            break;
+                        }
+                    }
                 }
-                Completion::Metrics(usage) => metrics = usage,
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                }
             }
-        }
-
-        self.result = Some(PlayResult {
-            response: text,
-            metrics,
-            finish_reason,
-            // logs: None,
         });
 
-        Ok(())
-    }
-}
-
-pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool) -> Result<()> {
-    println!(
-        "{}",
-        style_chat_text(
-            "Welcome to arey play! Edit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.",
-            ChatMessageType::Footer
-        )
-    );
-    println!();
-
-    if no_watch {
-        run_once(play_file).await?;
-        return Ok(());
-    }
-
-    // Watch the file for changes and rerun in loop
-    let file_path = play_file.file_path.clone();
-
-    println!(
-        "{} `{}`",
-        style_chat_text("Watching", ChatMessageType::Footer),
-        file_path.display()
-    );
-
-    let (mut _watcher, mut rx) = watch_file(&file_path).await?;
-
-    loop {
-        tokio::select! {
-            Some(_event) = rx.recv() => {
-                println!();
-                println!(
-                    "{}",
-                    style_chat_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), ChatMessageType::Footer)
-                );
-                println!();
-
-                // Reload file content
-                match PlayFile::new(&file_path, config) {
-                    Ok(mut new_play_file) => {
-                        // Reuse existing model if configuration hasn't changed
-                        if play_file.model_config == new_play_file.model_config &&
-                            play_file.model_settings == new_play_file.model_settings {
-
-                            new_play_file.session = play_file.session.take();
-                        }
-                        *play_file = new_play_file;
-
-                        run_once(play_file).await?;
-                    }
-                    Err(e) => {
-                        println!("{}", style_chat_text(&format!("Error reloading file: {e}"), ChatMessageType::Error));
-                    }
-                }
-                println!();
-                println!(
-                    "{} `{}`",
-                    style_chat_text("Watching", ChatMessageType::Footer),
-                    file_path.display()
-                );
-            }
-            _ = tokio::signal::ctrl_c() => {
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_once(play_file: &mut PlayFile) -> Result<()> {
-    if play_file.session.is_none() {
-        play_file.ensure_session().await?;
-        if let Some(session_arc) = &play_file.session {
-            let session = session_arc.lock().await;
-            if let Some(metrics) = session.metrics() {
-                println!(
-                    "{} {}",
-                    style_chat_text("✓ Model loaded.", ChatMessageType::Footer),
-                    style_chat_text(
-                        &format!("{:.2}s", metrics.init_latency_ms / 1000.0),
-                        ChatMessageType::Footer
-                    )
-                );
-                println!();
-            }
-        }
-    }
-
-    play_file.get_response().await?;
-
-    if let Some(result) = &play_file.result {
-        let _ = match play_file.output_settings.get("format").map(|s| s.as_str()) {
-            Some("plain") => &result.response,
-            _ => &result.response,
-        };
-
-        let footer = format_footer_metrics(&result.metrics, result.finish_reason.as_deref(), false);
-        println!();
-        println!();
-        println!("{}", style_chat_text(&footer, ChatMessageType::Footer));
-    }
-
-    Ok(())
-}
-
-pub mod watch {
-    use super::*;
-    use notify::{
-        Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
-        event::{MetadataKind, ModifyKind},
-    };
-    use tokio::sync::mpsc;
-
-    pub async fn watch_file(
-        path: &Path,
-    ) -> anyhow::Result<(
-        RecommendedWatcher,
-        mpsc::Receiver<anyhow::Result<notify::Event>>,
-    )> {
-        let (tx, rx) = mpsc::channel::<Result<Event>>(128);
-        let mut watcher = RecommendedWatcher::new(
-            move |res: notify::Result<Event>| {
-                let tx = tx.clone();
-                if let Ok(event) = res {
-                    if matches!(
-                        event.kind,
-                        EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
-                    ) && tx.blocking_send(Ok(event)).is_err()
-                    {
-                        // Receiver closed
-                    }
-                }
-            },
-            Config::default(),
-        )?;
-
-        watcher.watch(path, RecursiveMode::NonRecursive)?;
-        Ok((watcher, rx))
+        Ok(ReceiverStream::new(rx))
     }
 }
 

@@ -1,4 +1,4 @@
-use arey::ux::{TerminalRenderer, get_theme};
+use arey::cli::ux::{TerminalRenderer, get_theme};
 use console::Term;
 use std::thread;
 use std::time::Duration;

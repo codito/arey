@@ -1,17 +1,24 @@
+//! Arey app cli definition and entrypoint.
+mod chat;
+mod play;
+mod run;
+pub mod ux;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
-use arey_core::config::get_config;
+use arey_core::config::{Config, get_config};
+use arey_core::tools::Tool;
 use clap::{Parser, Subcommand};
 
 use crate::ext::get_tools;
-
-pub mod ask;
-pub mod chat;
-pub mod play;
+use crate::log::setup_logging;
 
 /// Arey - a simple large language model app.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-pub struct Cli {
+struct Cli {
     #[command(subcommand)]
     command: Commands,
 
@@ -23,7 +30,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Run an instruction and generate response.
-    Ask {
+    Run {
         /// Instruction to run.
         instruction: Vec<String>,
         /// Model to use for completion
@@ -47,7 +54,13 @@ enum Commands {
     },
 }
 
-pub async fn run(cli: &Cli) -> Result<()> {
+pub async fn run() -> Result<()> {
+    let cli = Cli::parse();
+
+    if cli.verbose {
+        setup_logging().context("Failed to set up logging")?;
+    }
+
     // Load configuration
     let config = get_config(None).context("Failed to load configuration")?;
 
@@ -55,12 +68,20 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let available_tools = get_tools(&config).context("Failed to get builtin tools")?;
 
     match &cli.command {
-        Commands::Ask { instruction, model } => {
-            ask::execute(instruction.clone(), model.clone(), &config).await
+        Commands::Run { instruction, model } => {
+            run::execute(instruction.clone(), model.clone(), &config).await
         }
-        Commands::Chat { model } => chat::execute(model.clone(), &config, available_tools).await,
+        Commands::Chat { model } => execute_chat(model.clone(), &config, available_tools).await,
         Commands::Play { file, no_watch } => {
             play::execute(file.as_deref(), *no_watch, &config).await
         }
     }
+}
+
+async fn execute_chat(
+    model: Option<String>,
+    config: &Config,
+    available_tools: HashMap<&str, Arc<dyn Tool>>,
+) -> Result<()> {
+    crate::cli::chat::execute(model, config, available_tools).await
 }

@@ -10,7 +10,7 @@ use syntect::{
 
 /// Returns a syntect theme for rendering.
 pub fn get_theme(_theme_name: &str) -> Theme {
-    let ansi_theme = include_str!("../../data/ansi.tmTheme");
+    let ansi_theme = include_str!("../../../data/ansi.tmTheme");
     let mut cursor = Cursor::new(ansi_theme.as_bytes());
     ThemeSet::load_from_reader(&mut cursor).unwrap()
 }

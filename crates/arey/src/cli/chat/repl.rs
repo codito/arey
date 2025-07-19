@@ -1,13 +1,11 @@
 use crate::chat::Chat;
-use crate::ux::{
-    ChatMessageType, GenerationSpinner, TerminalRenderer, format_footer_metrics, get_theme,
-    style_chat_text,
+use crate::cli::ux::{
+    ChatMessageType, GenerationSpinner, TerminalRenderer, format_footer_metrics, style_chat_text,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType,
 };
-use arey_core::config::Config;
 use arey_core::tools::{Tool, ToolCall, ToolResult};
 use clap::{CommandFactory, Parser, Subcommand};
 use futures::StreamExt;
@@ -16,24 +14,9 @@ use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::{CompletionType, Editor, Helper, Highlighter, Validator};
 use std::collections::HashMap;
-use std::io::stdout;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::debug;
-
-pub async fn execute(
-    model: Option<String>,
-    config: &Config,
-    available_tools: HashMap<&str, Arc<dyn Tool>>,
-) -> Result<()> {
-    let chat = Chat::new(config, model, available_tools)
-        .await
-        .context("Failed to initialize chat service")?;
-    let theme = get_theme("ansi"); // TODO: Theme from config
-    let mut stdout = stdout();
-    let mut renderer = TerminalRenderer::new(&mut stdout, &theme);
-    run(Arc::new(Mutex::new(chat)), &mut renderer).await
-}
 
 // From chat/cli.rs
 #[derive(Parser, Debug)]
@@ -212,7 +195,7 @@ fn tool_compl(
 }
 
 /// Runs the interactive REPL.
-async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
+pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
     println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
 
     let config = rustyline::Config::builder()
