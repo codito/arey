@@ -11,6 +11,11 @@ use chrono::Local;
 use futures::StreamExt;
 use std::{io::Write, path::Path};
 
+/// Executes the play command.
+///
+/// This function handles the logic for the `play` subcommand, which can either
+/// run once to generate a response from a play file, or watch the file for
+/// changes and regenerate the response on each modification.
 pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Result<()> {
     let file_path =
         PlayFile::create_missing(file.map(Path::new)).context("Failed to create play file")?;
@@ -155,6 +160,7 @@ pub mod watch {
     };
     use tokio::sync::mpsc;
 
+    /// Watches a file for changes and sends notifications on a channel.
     pub async fn watch_file(
         path: &Path,
     ) -> Result<(RecommendedWatcher, mpsc::Receiver<Result<notify::Event>>)> {
@@ -178,4 +184,13 @@ pub mod watch {
         watcher.watch(path, RecursiveMode::NonRecursive)?;
         Ok((watcher, rx))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: Add unit tests for `execute`. This would involve mocking
+    // file system interactions and the watcher.
+
+    // TODO: Add unit tests for `watch::watch_file`. This would require
+    // creating temporary files and simulating file modifications.
 }

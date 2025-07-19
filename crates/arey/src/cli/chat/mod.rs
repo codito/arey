@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 
 mod repl;
 
+/// Executes the chat command, starting an interactive REPL session.
 pub async fn execute(
     model: Option<String>,
     config: &Config,
@@ -22,4 +23,10 @@ pub async fn execute(
     let mut stdout = stdout();
     let mut renderer = TerminalRenderer::new(&mut stdout, &theme);
     repl::run(Arc::new(Mutex::new(chat)), &mut renderer).await
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: Add unit tests for chat::execute. This would require significant
+    // mocking of the REPL and user input.
 }

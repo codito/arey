@@ -54,6 +54,7 @@ enum Commands {
     },
 }
 
+/// Runs the main CLI application.
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -84,4 +85,11 @@ async fn execute_chat(
     available_tools: HashMap<&str, Arc<dyn Tool>>,
 ) -> Result<()> {
     crate::cli::chat::execute(model, config, available_tools).await
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: Add integration tests for the CLI entrypoint `run`.
+    // This would involve running the binary with different arguments and
+    // checking exit codes and output.
 }

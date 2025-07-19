@@ -46,6 +46,9 @@ enum Command {
 }
 
 impl Command {
+    /// Executes a REPL command.
+    ///
+    /// Returns `Ok(false)` if the REPL should exit.
     pub async fn execute(self, session: Arc<Mutex<Chat<'_>>>) -> Result<bool> {
         match self {
             Command::Clear => {
@@ -197,7 +200,7 @@ fn tool_compl(
     Ok((0, Vec::new()))
 }
 
-/// Runs the interactive REPL.
+/// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
     println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
 
@@ -486,4 +489,17 @@ async fn process_tools(
 
     eprintln!();
     Ok(tool_messages)
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: Add unit tests for the REPL. This is a complex task that
+    // would require mocking rustyline, user input, and the chat service.
+    //
+    // Missing tests:
+    // - `Command::execute` for all command variants.
+    // - REPL command parsing.
+    // - REPL completions and hints.
+    // - `process_message` logic.
+    // - `process_tools` logic.
 }

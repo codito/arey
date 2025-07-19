@@ -63,6 +63,15 @@ impl<'a> TerminalRenderer<'a> {
         // Reset highlighter state for a new rendering session
         let syntax = self.syntax_set.find_syntax_by_extension("md").unwrap();
         self.highlighter = HighlightLines::new(syntax, self.theme);
+
+        let stream_syntax = self
+            .stream_syntax_set
+            .find_syntax_by_extension("md")
+            .unwrap();
+        self.parser = ParseState::new(stream_syntax);
+        self.scope_stack = ScopeStack::new();
+        self.line_buffer.clear();
+        self.last_output_was_partial = false;
     }
 
     /// Renders a chunk of markdown text to the terminal.
@@ -263,17 +272,21 @@ mod tests {
         let mut buffer = Vec::new();
         let mut renderer = TerminalRenderer::new(&mut buffer, &theme);
 
-        // Render something, then clear, then render again.
+        // Render a partial line to set internal state.
         renderer.render_markdown("`cleared`").unwrap();
+
+        // Clear the renderer's internal state.
         renderer.clear();
+
+        // Render something else. This should not be affected by the previous partial render.
         renderer.render_markdown("# Hi\n").unwrap();
         let output = String::from_utf8(buffer).unwrap();
 
-        // The output should only contain the second render. The internal state should be reset.
-        assert_eq!(
-            output,
-            "\u{1b}[34m\u{1b}[1m#\u{1b}[0m \u{1b}[34m\u{1b}[1mHi\u{1b}[0m\n"
-        );
+        // The output should be the concatenation of both renders, without a carriage return
+        // because `clear()` resets `last_output_was_partial`.
+        let expected_part1 = "\u{1b}[32m`cleared`\u{1b}[0m";
+        let expected_part2 = "\u{1b}[34m\u{1b}[1m#\u{1b}[0m \u{1b}[34m\u{1b}[1mHi\u{1b}[0m\n";
+        assert_eq!(output, format!("{expected_part1}{expected_part2}"));
     }
 
     #[test]

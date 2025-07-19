@@ -11,7 +11,7 @@ use crate::{
     svc::run::Task,
 };
 
-/// Run the ask command with given instruction and overrides
+/// Executes the run command with a given instruction and optional model override.
 pub async fn execute(
     instruction: Vec<String>,
     model: Option<String>,
