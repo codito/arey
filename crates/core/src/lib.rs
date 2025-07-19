@@ -4,6 +4,7 @@ mod provider;
 pub mod completion;
 pub mod config;
 pub mod model;
+pub mod session;
 pub mod tools;
 
 pub use crate::assets::get_data_dir;

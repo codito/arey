@@ -1,14 +1,13 @@
 use crate::{
-    console::{MessageType, format_footer_metrics, style_text},
     play::watch::watch_file,
+    ux::{ChatMessageType, format_footer_metrics, style_chat_text},
 };
 use anyhow::{Context, Result, anyhow};
 use arey_core::{
-    completion::{
-        CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
-    },
+    completion::{CancellationToken, Completion, CompletionMetrics, SenderType},
     config::{AreyConfigError, Config},
-    model::{ModelConfig, ModelMetrics},
+    model::ModelConfig,
+    session::Session,
 };
 use chrono::Local;
 use futures::StreamExt;
@@ -20,6 +19,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tokio::sync::Mutex;
 
@@ -39,7 +39,7 @@ pub struct PlayFile {
     pub prompt: String,
     pub completion_profile: HashMap<String, Value>,
     pub output_settings: HashMap<String, String>,
-    pub model: Option<Mutex<Box<dyn CompletionModel + Send + Sync>>>,
+    pub session: Option<Arc<Mutex<Session>>>,
     pub result: Option<PlayResult>,
 }
 
@@ -129,7 +129,7 @@ impl PlayFile {
                         .collect()
                 })
                 .unwrap_or_default(),
-            model: None,
+            session: None,
             result: None,
         })
     }
@@ -151,37 +151,26 @@ impl PlayFile {
         Ok(tmp_file)
     }
 
-    pub async fn load_model(&mut self) -> Result<ModelMetrics> {
-        let model_config = self
-            .model_config
-            .as_ref()
-            .ok_or_else(|| AreyConfigError::Config("Missing model configuration".to_string()))?;
+    pub async fn ensure_session(&mut self) -> Result<()> {
+        if self.session.is_none() {
+            let model_config = self.model_config.as_ref().ok_or_else(|| {
+                AreyConfigError::Config("Missing model configuration".to_string())
+            })?;
 
-        let mut config = model_config.clone();
-        for (key, value) in &self.model_settings {
-            config.settings.insert(key.clone(), value.clone());
+            let session = Session::new(model_config.clone(), "").await?;
+
+            // TODO: Apply model_settings overrides
+            self.session = Some(Arc::new(Mutex::new(session)));
         }
-
-        let mut model = arey_core::get_completion_llm(config.clone())
-            .map_err(|e| anyhow!("Model init error: {e}"))?;
-        model.load("").await?;
-
-        let metrics = model.metrics().clone();
-        self.model = Some(Mutex::new(model));
-        Ok(metrics)
+        Ok(())
     }
 
     pub async fn get_response(&mut self) -> Result<()> {
-        let model_lock = self
-            .model
-            .as_ref()
-            .ok_or_else(|| anyhow!("Model not loaded"))?;
+        self.ensure_session().await?;
+        let session = self.session.as_ref().unwrap();
 
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: self.prompt.clone(),
-            tools: Vec::new(),
-        }];
+        let mut session_lock = session.lock().await;
+        session_lock.add_message(SenderType::User, &self.prompt);
 
         let settings: HashMap<String, String> = self
             .completion_profile
@@ -194,13 +183,8 @@ impl PlayFile {
                     .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
             })
             .collect();
-
         let cancel_token = CancellationToken::new();
-
-        let mut model_guard = model_lock.lock().await;
-        let mut stream = model_guard
-            .complete(&messages, None, &settings, cancel_token)
-            .await;
+        let mut stream = session_lock.generate(settings, cancel_token).await?;
 
         let mut text = String::new();
         let mut finish_reason = None;
@@ -233,9 +217,9 @@ impl PlayFile {
 pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool) -> Result<()> {
     println!(
         "{}",
-        style_text(
+        style_chat_text(
             "Welcome to arey play! Edit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.",
-            MessageType::Footer
+            ChatMessageType::Footer
         )
     );
     println!();
@@ -250,7 +234,7 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
 
     println!(
         "{} `{}`",
-        style_text("Watching", MessageType::Footer),
+        style_chat_text("Watching", ChatMessageType::Footer),
         file_path.display()
     );
 
@@ -262,7 +246,7 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
                 println!();
                 println!(
                     "{}",
-                    style_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), MessageType::Footer)
+                    style_chat_text(&format!("[{}] File modified, re-generating...", Local::now().format("%Y-%m-%d %H:%M:%S")), ChatMessageType::Footer)
                 );
                 println!();
 
@@ -273,20 +257,20 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
                         if play_file.model_config == new_play_file.model_config &&
                             play_file.model_settings == new_play_file.model_settings {
 
-                            new_play_file.model = play_file.model.take();
+                            new_play_file.session = play_file.session.take();
                         }
                         *play_file = new_play_file;
 
                         run_once(play_file).await?;
                     }
                     Err(e) => {
-                        println!("{}", style_text(&format!("Error reloading file: {e}"), MessageType::Error));
+                        println!("{}", style_chat_text(&format!("Error reloading file: {e}"), ChatMessageType::Error));
                     }
                 }
                 println!();
                 println!(
                     "{} `{}`",
-                    style_text("Watching", MessageType::Footer),
+                    style_chat_text("Watching", ChatMessageType::Footer),
                     file_path.display()
                 );
             }
@@ -300,17 +284,22 @@ pub async fn run_play(play_file: &mut PlayFile, config: &Config, no_watch: bool)
 }
 
 async fn run_once(play_file: &mut PlayFile) -> Result<()> {
-    if play_file.model.is_none() {
-        let metrics = play_file.load_model().await?;
-        println!(
-            "{} {}",
-            style_text("✓ Model loaded.", MessageType::Footer),
-            style_text(
-                &format!("{:.2}s", metrics.init_latency_ms / 1000.0),
-                MessageType::Footer
-            )
-        );
-        println!();
+    if play_file.session.is_none() {
+        play_file.ensure_session().await?;
+        if let Some(session_arc) = &play_file.session {
+            let session = session_arc.lock().await;
+            if let Some(metrics) = session.metrics() {
+                println!(
+                    "{} {}",
+                    style_chat_text("✓ Model loaded.", ChatMessageType::Footer),
+                    style_chat_text(
+                        &format!("{:.2}s", metrics.init_latency_ms / 1000.0),
+                        ChatMessageType::Footer
+                    )
+                );
+                println!();
+            }
+        }
     }
 
     play_file.get_response().await?;
@@ -324,7 +313,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
         let footer = format_footer_metrics(&result.metrics, result.finish_reason.as_deref(), false);
         println!();
         println!();
-        println!("{}", style_text(&footer, MessageType::Footer));
+        println!("{}", style_chat_text(&footer, ChatMessageType::Footer));
     }
 
     Ok(())
@@ -440,7 +429,6 @@ task:
             _ => panic!("temperature should be a number"),
         }
         assert_eq!(play_file.output_settings["format"], "plain");
-        assert!(play_file.model.is_none());
         assert!(play_file.result.is_none());
 
         Ok(())

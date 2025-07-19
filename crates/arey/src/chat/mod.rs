@@ -1,6 +1,7 @@
 // Unified chat interface
 mod cli;
+mod repl;
 mod service;
 
-pub use cli::start_chat;
+pub use repl::run;
 pub use service::*;

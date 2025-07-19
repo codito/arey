@@ -1,3 +1,5 @@
+//! A session is a shared context between a human and the AI assistant.
+//! Context includes the conversation, shared artifacts, and tools.
 use crate::{
     completion::{CancellationToken, ChatMessage, Completion, CompletionModel, SenderType},
     model::{ModelConfig, ModelMetrics},
@@ -7,7 +9,7 @@ use anyhow::{Context, Result};
 use futures::stream::BoxStream;
 use std::{collections::HashMap, sync::Arc};
 
-/// Represents an ongoing conversation session with an AI model
+/// A session with shared context between Human and AI model.
 pub struct Session {
     model: Box<dyn CompletionModel + Send + Sync>,
     messages: Vec<ChatMessage>,
@@ -53,9 +55,9 @@ impl Session {
     /// Generate a response stream for the current conversation
     pub async fn generate(
         &mut self,
+        settings: HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'_, Result<Completion>>> {
-        let settings = HashMap::new(); // Use default settings for now
         let tool_slice = if self.tools.is_empty() {
             None
         } else {
@@ -76,5 +78,13 @@ impl Session {
     /// Get model metrics if available
     pub fn metrics(&self) -> Option<&ModelMetrics> {
         self.metrics.as_ref()
+    }
+
+    /// Get the last message from the assistant
+    pub fn last_assistant_message(&self) -> Option<&ChatMessage> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.sender == SenderType::Assistant)
     }
 }

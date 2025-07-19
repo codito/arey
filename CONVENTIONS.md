@@ -26,10 +26,11 @@ Use the below rules for your code contributions in this repo.
 - Focus on the task at hand. Never mix feature change and refactoring together.
 - Smaller commits are better.
 - Respect the existing structure and convention in the repo.
+- You **must** document all modules and public API surface.
 
 ### Design
 
-- You must respect DRY, SOLID and similar clean code practices.
+- You must respect DRY, SOLID, and similar clean code practices.
 - Do not introduce unnecessary dependencies.
 - Code must be usable, correct and performant.
 
