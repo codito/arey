@@ -169,10 +169,8 @@ pub mod watch {
             move |res: notify::Result<Event>| {
                 let tx = tx.clone();
                 if let Ok(event) = res {
-                    if matches!(
-                        event.kind,
-                        EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
-                    ) && tx.blocking_send(Ok(event)).is_err()
+                    if matches!(event.kind, EventKind::Modify(ModifyKind::Data(_)))
+                        && tx.blocking_send(Ok(event)).is_err()
                     {
                         // Receiver closed
                     }
