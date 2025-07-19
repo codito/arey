@@ -221,12 +221,14 @@ impl PlayFile {
 
 #[cfg(test)]
 mod test {
-    use std::io::Write;
-
     use arey_core::config::get_config;
+    use serde_json::json;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     use super::*;
-    use serde_yaml::Value;
     use tempfile::{NamedTempFile, tempdir};
 
     const SAMPLE_PLAY_CONTENT: &str = r#"---
@@ -241,42 +243,70 @@ output:
 Test prompt
 "#;
 
-    const DUMMY_CONFIG_CONTENT: &str = r#"
+    fn mock_event_stream_body() -> String {
+        let events = [
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": "Hello"},
+                    "index": 0,
+                    "finish_reason": null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "delta": {"content": " world!"},
+                    "index": 0,
+                    "finish_reason": "stop"
+                }]
+            }),
+        ];
+        let mut body: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+        body.push_str("data: [DONE]\n\n");
+        body
+    }
+
+    fn create_temp_config_file(server_uri: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        let config_content = format!(
+            r#"
 models:
-  dummy-7b:
-    name: dummy-7b
-    type: gguf
-    n_ctx: 4096
-    path: /path/to/dummy_model.gguf
-profiles:
-  default:
-    temperature: 0.7
-    repeat_penalty: 1.176
-    top_k: 40
-    top_p: 0.1
+  test-model:
+    provider: openai
+    base_url: "{server_uri}"
+    api_key: "MOCK_OPENAI_API_KEY"
+profiles: {{}}
 chat:
-  model: dummy-7b
-  profile: default
+  model: test-model
 task:
-  model: dummy-7b
-  profile: default
-"#;
+  model: test-model
+"#,
+        );
+        std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
+        file
+    }
 
-    fn create_temp_config() -> Result<Config> {
-        let mut config_file = NamedTempFile::new()?;
-        write!(config_file, "{DUMMY_CONFIG_CONTENT}")?;
-
+    async fn get_test_config(server: &MockServer) -> Result<Config> {
+        let config_file = create_temp_config_file(&server.uri());
         get_config(Some(config_file.path().to_path_buf()))
             .map_err(|e| anyhow!("Failed to create temp config file. Error {}", e))
     }
 
-    #[test]
-    fn test_play_file_creation() -> Result<()> {
+    #[tokio::test]
+    async fn test_play_file_creation() -> Result<()> {
+        let server = MockServer::start().await;
         let temp_dir = tempdir()?;
         let file_path = temp_dir.path().join("test_play.md");
         fs::write(&file_path, SAMPLE_PLAY_CONTENT)?;
 
-        let config = create_temp_config()?;
+        let config = get_test_config(&server).await?;
 
         let play_file = PlayFile::new(&file_path, &config)?;
 
@@ -333,6 +363,58 @@ task:
             .unwrap_or_default();
         assert!(file_name.starts_with("arey_play"));
         assert!(file_name.ends_with(".md"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ensure_session() -> Result<()> {
+        let server = MockServer::start().await;
+        let temp_dir = tempdir()?;
+        let file_path = temp_dir.path().join("test_play.md");
+        fs::write(&file_path, SAMPLE_PLAY_CONTENT)?;
+
+        let config = get_test_config(&server).await?;
+        let mut play_file = PlayFile::new(&file_path, &config)?;
+
+        assert!(play_file.session.is_none());
+        play_file.ensure_session().await?;
+        assert!(play_file.session.is_some());
+
+        // Should not fail on second call
+        play_file.ensure_session().await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_generate() -> Result<()> {
+        let server = MockServer::start().await;
+        let response = ResponseTemplate::new(200)
+            .set_body_bytes(mock_event_stream_body().as_bytes())
+            .insert_header("Content-Type", "text/event-stream");
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+
+        let temp_dir = tempdir()?;
+        let file_path = temp_dir.path().join("test_play.md");
+        fs::write(&file_path, SAMPLE_PLAY_CONTENT)?;
+
+        let config = get_test_config(&server).await?;
+        let mut play_file = PlayFile::new(&file_path, &config)?;
+
+        let mut stream = play_file.generate().await?;
+        let mut response_text = String::new();
+        while let Some(result) = stream.next().await {
+            if let Completion::Response(response) = result? {
+                response_text.push_str(&response.text);
+            }
+        }
+
+        assert_eq!(response_text, "Hello world!");
 
         Ok(())
     }
