@@ -493,13 +493,75 @@ async fn process_tools(
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for the REPL. This is a complex task that
-    // would require mocking rustyline, user input, and the chat service.
-    //
-    // Missing tests:
-    // - `Command::execute` for all command variants.
-    // - REPL command parsing.
-    // - REPL completions and hints.
-    // - `process_message` logic.
-    // - `process_tools` logic.
+    use super::*;
+    use anyhow::Result;
+    use arey_core::{
+        completion::SenderType,
+        tools::{Tool, ToolError, ToolResult},
+    };
+    use async_trait::async_trait;
+    use rustyline::history::DefaultHistory;
+    use serde_json::{Value, json};
+
+    #[derive(Debug)]
+    struct MockTool;
+
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> String {
+            "mock_tool".to_string()
+        }
+
+        fn description(&self) -> String {
+            "A mock tool for testing".to_string()
+        }
+
+        fn parameters(&self) -> Value {
+            json!({})
+        }
+
+        async fn execute(&self, _args: &Value) -> std::result::Result<Value, ToolError> {
+            Ok(json!("mock tool output"))
+        }
+    }
+
+    #[test]
+    fn test_repl_completer_for_commands() {
+        let repl = Repl {
+            command_names: vec!["/help".to_string(), "/clear".to_string()],
+            tool_names: vec![],
+        };
+        let line = "/c";
+        let history = DefaultHistory::new();
+        let (start, candidates) = repl
+            .complete(line, line.len(), &rustyline::Context::new(&history))
+            .unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "/clear");
+    }
+
+    #[tokio::test]
+    async fn test_process_tools() -> Result<()> {
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool {});
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("mock_tool", mock_tool.clone())]);
+        let tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "mock_tool".to_string(),
+            arguments: "{}".to_string(),
+        }];
+
+        let messages = process_tools(&available_tools, &tool_calls).await?;
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        assert_eq!(msg.sender, SenderType::Tool);
+
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+        assert_eq!(tool_result.call.id, "call_1");
+        assert_eq!(tool_result.output, json!("mock tool output"));
+
+        Ok(())
+    }
 }
