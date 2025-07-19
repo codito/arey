@@ -12,6 +12,7 @@ use arey_core::{
 use chrono::Local;
 use futures::StreamExt;
 use std::{
+    fs,
     io::{Write, stdout},
     path::Path,
 };
@@ -42,10 +43,23 @@ pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Res
     println!("Watching `{}`", file_path.display());
 
     let (mut _watcher, mut rx) = watch::watch_file(&file_path).await?;
+    let mut last_modified = fs::metadata(&file_path)?.modified()?;
 
     loop {
         tokio::select! {
             Some(_event) = rx.recv() => {
+                // Drain subsequent events to debounce filesystem notifications.
+                while rx.try_recv().is_ok() {}
+
+                let current_modified = match fs::metadata(&file_path).and_then(|m| m.modified()) {
+                    Ok(time) => time,
+                    Err(_) => continue, // Couldn't get metadata, skip.
+                };
+
+                if current_modified == last_modified {
+                    continue; // No change in modification time.
+                }
+
                 println!();
                 println!(
                     "{}",
@@ -65,6 +79,7 @@ pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Res
                         play_file = new_play_file;
 
                         run_once(&mut play_file).await?;
+                        last_modified = current_modified;
                     }
                     Err(e) => {
                         println!("{}", style_chat_text(&format!("Error reloading file: {e}"), ChatMessageType::Error));
@@ -176,10 +191,8 @@ pub mod watch {
             move |res: notify::Result<Event>| {
                 let tx = tx.clone();
                 if let Ok(event) = res {
-                    if matches!(
-                        event.kind,
-                        EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
-                    ) && tx.blocking_send(Ok(event)).is_err()
+                    if matches!(event.kind, EventKind::Modify(_))
+                        && tx.blocking_send(Ok(event)).is_err()
                     {
                         // Receiver closed
                     }
@@ -197,7 +210,7 @@ pub mod watch {
 mod tests {
     use super::watch;
     use anyhow::Result;
-    use notify::{EventKind, event::ModifyKind};
+    use notify::EventKind;
     use std::{fs, io::Write, time::Duration};
     use tempfile::tempdir;
     use tokio::time::timeout;
@@ -215,10 +228,8 @@ mod tests {
         // Sleep to ensure watcher is initialized
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Changing permissions is a reliable way to trigger a metadata change.
-        let mut perms = fs::metadata(&file_path)?.permissions();
-        perms.set_readonly(true);
-        fs::set_permissions(&file_path, perms)?;
+        // Modify the file content to trigger a notification.
+        fs::write(&file_path, "world")?;
 
         let event_result = timeout(Duration::from_secs(2), rx.recv()).await;
 
@@ -229,8 +240,8 @@ mod tests {
 
         let event = event_result.unwrap().unwrap().unwrap();
         assert!(
-            matches!(event.kind, EventKind::Modify(ModifyKind::Metadata(_))),
-            "Expected a metadata modify event, but got {event:?}",
+            matches!(event.kind, EventKind::Modify(_)),
+            "Expected a modify event, but got {event:?}",
         );
 
         Ok(())
