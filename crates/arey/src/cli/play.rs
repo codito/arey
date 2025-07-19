@@ -215,8 +215,10 @@ mod tests {
         // Sleep to ensure watcher is initialized
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        writeln!(file, " world")?;
-        file.sync_all()?;
+        // Changing permissions is a reliable way to trigger a metadata change.
+        let mut perms = fs::metadata(&file_path)?.permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&file_path, perms)?;
 
         let event_result = timeout(Duration::from_secs(2), rx.recv()).await;
 
