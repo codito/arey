@@ -32,7 +32,12 @@ tracing-subscriber = { workspace = true, features = [
     "registry",
     "env-filter",
 ] }
-syntect = "5.2.0"
+syntect = { version = "5.2.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "plist-load",
+    "regex-onig",
+] }
 
 [dev-dependencies]
 async-trait.workspace = true

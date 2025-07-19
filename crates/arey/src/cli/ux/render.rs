@@ -1,4 +1,4 @@
-use console::Style;
+use console::{Style, Term};
 use std::io::{Cursor, Write};
 use syntect::easy::HighlightLines;
 use syntect::{
@@ -30,6 +30,7 @@ pub struct TerminalRenderer<'a> {
     line_buffer: String,
     stream_syntax_set: SyntaxSet,
     last_output_was_partial: bool,
+    last_partial_line_width: usize,
 }
 
 impl<'a> TerminalRenderer<'a> {
@@ -55,6 +56,7 @@ impl<'a> TerminalRenderer<'a> {
             line_buffer: String::new(),
             stream_syntax_set,
             last_output_was_partial: false,
+            last_partial_line_width: 0,
         }
     }
 
@@ -72,6 +74,7 @@ impl<'a> TerminalRenderer<'a> {
         self.scope_stack = ScopeStack::new();
         self.line_buffer.clear();
         self.last_output_was_partial = false;
+        self.last_partial_line_width = 0;
     }
 
     /// Renders a chunk of markdown text to the terminal.
@@ -132,13 +135,28 @@ impl<'a> TerminalRenderer<'a> {
         }
 
         if self.last_output_was_partial {
-            self.term.write_all(b"\r")?;
+            let (_rows, cols) = Term::stdout().size();
+            let term_width = if cols == 0 { 80 } else { cols as usize };
+            let num_lines = self.last_partial_line_width.div_ceil(term_width);
+
+            if num_lines > 1 {
+                // Move cursor up by the number of wrapped lines.
+                self.term
+                    .write_all(format!("\x1B[{}A", num_lines - 1).as_bytes())?;
+            }
+            // Move cursor to beginning of the line and clear from cursor to end of screen.
+            self.term.write_all(b"\r\x1B[J")?;
         }
 
         self.term.write_all(output.as_bytes())?;
         self.term.flush()?;
 
         self.last_output_was_partial = !output.ends_with('\n');
+        if self.last_output_was_partial {
+            self.last_partial_line_width = console::measure_text_width(&self.line_buffer);
+        } else {
+            self.last_partial_line_width = 0;
+        }
 
         Ok(())
     }
@@ -233,7 +251,7 @@ mod tests {
         let output = render(&["# He", "llo\n"]);
         let part1 = "\u{1b}[34m\u{1b}[1m#\u{1b}[0m \u{1b}[34m\u{1b}[1mHe\u{1b}[0m";
         let part2 = "\u{1b}[34m\u{1b}[1m#\u{1b}[0m \u{1b}[34m\u{1b}[1mHello\u{1b}[0m\n";
-        assert_eq!(output, format!("{part1}\r{part2}"));
+        assert_eq!(output, format!("{part1}\r\x1B[J{part2}"));
     }
 
     #[test]
@@ -244,9 +262,9 @@ mod tests {
 
         let expected = [
             "\u{1b}[32m`\u{1b}[0m",
-            "\r\u{1b}[32m`a\u{1b}[0m",
-            "\r\u{1b}[32m`a`\u{1b}[0m",
-            "\r\u{1b}[32m`a`\u{1b}[0m\n",
+            "\r\x1B[J\u{1b}[32m`a\u{1b}[0m",
+            "\r\x1B[J\u{1b}[32m`a`\u{1b}[0m",
+            "\r\x1B[J\u{1b}[32m`a`\u{1b}[0m\n",
         ]
         .join("");
         assert!(output.ends_with(&expected));
@@ -263,7 +281,7 @@ mod tests {
         let output = render(&["*ite", "m*\n"]);
         let part1 = "\u{1b}[35m\u{1b}[3m*ite\u{1b}[0m";
         let part2 = "\u{1b}[35m\u{1b}[3m*item*\u{1b}[0m\n";
-        assert!(output.ends_with(&format!("{part1}\r{part2}")));
+        assert!(output.ends_with(&format!("{part1}\r\x1B[J{part2}")));
     }
 
     #[test]
