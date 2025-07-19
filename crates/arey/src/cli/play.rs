@@ -176,10 +176,7 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
 
 pub mod watch {
     use super::*;
-    use notify::{
-        Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
-        event::{MetadataKind, ModifyKind},
-    };
+    use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
     use tokio::sync::mpsc;
 
     /// Watches a file for changes and sends notifications on a channel.
