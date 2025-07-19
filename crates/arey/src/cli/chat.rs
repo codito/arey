@@ -30,7 +30,8 @@ pub async fn execute(
         .await
         .context("Failed to initialize chat service")?;
     let theme = get_theme("ansi"); // TODO: Theme from config
-    let mut renderer = TerminalRenderer::new(&mut stdout(), &theme);
+    let mut stdout = stdout();
+    let mut renderer = TerminalRenderer::new(&mut stdout, &theme);
     run(Arc::new(Mutex::new(chat)), &mut renderer).await
 }
 

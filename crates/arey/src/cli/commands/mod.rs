@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use arey_core::{config::get_config, get_data_dir};
+use arey_core::config::get_config;
 use clap::{Parser, Subcommand};
 
 use crate::ext::get_tools;
