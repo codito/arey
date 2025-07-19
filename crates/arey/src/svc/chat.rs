@@ -8,13 +8,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Chat conversation between human and AI model
+/// Represents an interactive chat session between a user and an AI model.
+///
+/// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
     session: Arc<Mutex<Session>>,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
 }
 
 impl<'a> Chat<'a> {
+    /// Creates a new `Chat` session.
+    ///
+    /// It uses the specified model from the configuration, or the default chat model if `None`.
     pub async fn new(
         config: &Config,
         model: Option<String>,
@@ -40,6 +45,7 @@ impl<'a> Chat<'a> {
         })
     }
 
+    /// Sets the tools available for the current chat session.
     pub async fn set_tools(&self, tool_names: &[String]) -> Result<()> {
         let mut tools = Vec::new();
         for name in tool_names {
@@ -55,6 +61,7 @@ impl<'a> Chat<'a> {
         Ok(())
     }
 
+    /// Adds messages to the conversation history.
     pub async fn add_messages(
         &self,
         user_messages: Vec<ChatMessage>,
@@ -70,6 +77,7 @@ impl<'a> Chat<'a> {
         }
     }
 
+    /// Generates a streaming response from the model based on the conversation history.
     pub async fn stream_response(
         &self,
         cancel_token: CancellationToken,
@@ -93,11 +101,13 @@ impl<'a> Chat<'a> {
         Ok(Box::pin(stream))
     }
 
+    /// Clears the conversation history of the session.
     pub async fn clear_messages(&self) {
         let mut session = self.session.lock().await;
         session.clear_history();
     }
 
+    /// Retrieves the last message from the assistant in the conversation history.
     pub async fn get_last_assistant_message(&self) -> Option<ChatMessage> {
         let session = self.session.lock().await;
         session.last_assistant_message().cloned()

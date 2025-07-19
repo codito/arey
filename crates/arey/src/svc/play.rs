@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-/// Result of task execution
+/// Holds the result of a `PlayFile` execution.
 pub struct PlayResult {
     pub response: String,
     pub metrics: CompletionMetrics,
@@ -27,7 +27,7 @@ pub struct PlayResult {
     // pub logs: Option<String>,
 }
 
-/// Play file with model settings and prompt
+/// Represents a markdown file with frontmatter for configuration and a prompt.
 pub struct PlayFile {
     pub file_path: PathBuf,
     pub model_config: Option<ModelConfig>,
@@ -76,6 +76,10 @@ fn extract_frontmatter(content: &str) -> Result<(Option<Value>, String)> {
 }
 
 impl PlayFile {
+    /// Parses a play file from the given path.
+    ///
+    /// It reads the file, extracts frontmatter for configuration, and the rest of the content
+    /// as the prompt.
     pub fn new(file_path: impl AsRef<Path>, config: &Config) -> Result<Self> {
         let file_path = file_path.as_ref().to_path_buf();
         let content = fs::read_to_string(&file_path)
@@ -130,6 +134,11 @@ impl PlayFile {
         })
     }
 
+    /// Creates a new play file from a template if it doesn't exist.
+    ///
+    /// If `file_path` is `Some` and the path does not exist, it creates the file.
+    /// If `file_path` is `None`, it creates a temporary play file.
+    /// It returns the path to the created file.
     pub fn create_missing(file_path: Option<&Path>) -> Result<PathBuf> {
         let tmp_file = match file_path {
             Some(p) if p.exists() => p.to_path_buf(),
@@ -147,6 +156,10 @@ impl PlayFile {
         Ok(tmp_file)
     }
 
+    /// Ensures that a chat session is initialized for the `PlayFile`.
+    ///
+    /// If a session does not already exist, it creates one using the model configuration
+    /// from the play file.
     pub async fn ensure_session(&mut self) -> Result<()> {
         if self.session.is_none() {
             let model_config = self.model_config.as_ref().ok_or_else(|| {
@@ -161,6 +174,9 @@ impl PlayFile {
         Ok(())
     }
 
+    /// Generates a response based on the prompt in the play file.
+    ///
+    /// It returns a stream of `Completion` events.
     pub async fn generate(&mut self) -> Result<impl Stream<Item = Result<Completion>>> {
         self.ensure_session().await?;
         let session = self.session.clone().unwrap();

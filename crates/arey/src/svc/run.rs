@@ -8,6 +8,7 @@ use arey_core::completion::{
 use arey_core::get_completion_llm;
 use arey_core::model::{ModelConfig, ModelMetrics};
 
+/// Represents a single, non-interactive instruction to be executed by a model.
 pub struct Task {
     instruction: String,
     model_config: ModelConfig,
@@ -15,6 +16,7 @@ pub struct Task {
 }
 
 impl Task {
+    /// Creates a new `Task` with the given instruction and model configuration.
     pub fn new(instruction: String, model_config: ModelConfig) -> Self {
         Self {
             instruction,
@@ -23,6 +25,10 @@ impl Task {
         }
     }
 
+    /// Loads the language model for the task.
+    ///
+    /// This method initializes the model and loads the system prompt.
+    /// It should be called before `run`.
     pub async fn load_model(&mut self) -> Result<ModelMetrics> {
         let config = self.model_config.clone();
         let mut model = get_completion_llm(config).context("Failed to initialize model")?;
@@ -38,6 +44,11 @@ impl Task {
         Ok(metrics)
     }
 
+    /// Executes the task and returns a stream of completion results.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if `load_model` has not been called first.
     pub async fn run(&mut self) -> Result<BoxStream<'_, Result<Completion>>> {
         let message = ChatMessage {
             sender: SenderType::User,
