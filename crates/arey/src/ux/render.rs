@@ -4,7 +4,7 @@ use two_face::re_exports::syntect::{
     easy::HighlightLines,
     highlighting::{FontStyle, Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
-    util::{LinesWithEndings, as_24_bit_terminal_escaped},
+    util::LinesWithEndings,
 };
 
 pub fn get_render_theme(theme_name: &str) -> Theme {
