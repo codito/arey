@@ -1,5 +1,7 @@
 use crate::{
-    cli::ux::{ChatMessageType, format_footer_metrics, style_chat_text},
+    cli::ux::{
+        ChatMessageType, TerminalRenderer, format_footer_metrics, get_theme, style_chat_text,
+    },
     svc::play::{PlayFile, PlayResult},
 };
 use anyhow::{Context, Result};
@@ -9,7 +11,10 @@ use arey_core::{
 };
 use chrono::Local;
 use futures::StreamExt;
-use std::{io::Write, path::Path};
+use std::{
+    io::{Write, stdout},
+    path::Path,
+};
 
 /// Executes the play command.
 ///
@@ -97,22 +102,41 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     }
 
     let result = {
+        let is_plain_format = matches!(
+            play_file.output_settings.get("format").map(|s| s.as_str()),
+            Some("plain")
+        );
         let mut stream = play_file.generate().await?;
 
         let mut text = String::new();
         let mut finish_reason = None;
         let mut metrics = CompletionMetrics::default();
 
-        while let Some(chunk) = stream.next().await {
-            match chunk? {
-                Completion::Response(response) => {
-                    text.push_str(&response.text);
-                    finish_reason = response.finish_reason;
-
-                    print!("{}", response.text);
-                    std::io::stdout().flush()?;
+        if !is_plain_format {
+            let theme = get_theme("ansi"); // TODO: Theme from config
+            let mut stdout = stdout();
+            let mut renderer = TerminalRenderer::new(&mut stdout, &theme);
+            while let Some(chunk) = stream.next().await {
+                match chunk? {
+                    Completion::Response(response) => {
+                        text.push_str(&response.text);
+                        finish_reason = response.finish_reason;
+                        renderer.render_markdown(&response.text)?;
+                    }
+                    Completion::Metrics(usage) => metrics = usage,
                 }
-                Completion::Metrics(usage) => metrics = usage,
+            }
+        } else {
+            while let Some(chunk) = stream.next().await {
+                match chunk? {
+                    Completion::Response(response) => {
+                        text.push_str(&response.text);
+                        finish_reason = response.finish_reason;
+                        print!("{}", response.text);
+                        std::io::stdout().flush()?;
+                    }
+                    Completion::Metrics(usage) => metrics = usage,
+                }
             }
         }
 
@@ -126,11 +150,6 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     play_file.result = Some(result);
 
     if let Some(result) = &play_file.result {
-        let _ = match play_file.output_settings.get("format").map(|s| s.as_str()) {
-            Some("plain") => &result.response,
-            _ => &result.response,
-        };
-
         let footer = format_footer_metrics(&result.metrics, result.finish_reason.as_deref(), false);
         println!();
         println!();
