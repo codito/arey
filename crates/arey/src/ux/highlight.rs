@@ -94,7 +94,7 @@ impl<'a> MarkdownHighlighter<'a> {
                 &mut highlight_state,
                 &ops[..],
                 line_content,
-                &self.syntax_set,
+                &highlighter,
             )
             .collect::<Vec<_>>();
             self.scope_stack = highlight_state.path;
@@ -115,7 +115,7 @@ impl<'a> MarkdownHighlighter<'a> {
                 &mut temp_highlighter,
                 &ops[..],
                 &self.line_buffer,
-                &self.syntax_set,
+                &highlighter,
             )
             .collect::<Vec<_>>();
             output.push_str(&to_ansi_terminal_escaped(&ranges));
