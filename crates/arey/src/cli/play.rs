@@ -22,11 +22,7 @@ pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Res
     let mut play_file = PlayFile::new(&file_path, config)?;
 
     println!(
-        "{}",
-        style_chat_text(
-            "Welcome to arey play! Edit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.",
-            ChatMessageType::Footer
-        )
+        "Welcome to arey play!\nEdit the play file below in your favorite editor and I'll generate a response for you. Use `Ctrl+C` to abort play session.",
     );
     println!();
 
@@ -38,11 +34,7 @@ pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Res
     // Watch the file for changes and rerun in loop
     let file_path = play_file.file_path.clone();
 
-    println!(
-        "{} `{}`",
-        style_chat_text("Watching", ChatMessageType::Footer),
-        file_path.display()
-    );
+    println!("Watching `{}`", file_path.display());
 
     let (mut _watcher, mut rx) = watch::watch_file(&file_path).await?;
 
@@ -74,11 +66,7 @@ pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Res
                     }
                 }
                 println!();
-                println!(
-                    "{} `{}`",
-                    style_chat_text("Watching", ChatMessageType::Footer),
-                    file_path.display()
-                );
+                println!("Watching `{}`", file_path.display());
             }
             _ = tokio::signal::ctrl_c() => {
                 break;
@@ -155,7 +143,8 @@ async fn run_once(play_file: &mut PlayFile) -> Result<()> {
 pub mod watch {
     use super::*;
     use notify::{
-        Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind,
+        Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+        event::{MetadataKind, ModifyKind},
     };
     use tokio::sync::mpsc;
 
@@ -168,8 +157,10 @@ pub mod watch {
             move |res: notify::Result<Event>| {
                 let tx = tx.clone();
                 if let Ok(event) = res {
-                    if matches!(event.kind, EventKind::Modify(ModifyKind::Data(_)))
-                        && tx.blocking_send(Ok(event)).is_err()
+                    if matches!(
+                        event.kind,
+                        EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any))
+                    ) && tx.blocking_send(Ok(event)).is_err()
                     {
                         // Receiver closed
                     }
@@ -187,6 +178,7 @@ pub mod watch {
 mod tests {
     use super::watch;
     use anyhow::Result;
+    use notify::{EventKind, event::ModifyKind};
     use std::{fs, io::Write, time::Duration};
     use tempfile::tempdir;
     use tokio::time::timeout;
@@ -212,6 +204,12 @@ mod tests {
         assert!(
             event_result.is_ok(),
             "Did not receive file change notification within 2 seconds."
+        );
+
+        let event = event_result.unwrap().unwrap().unwrap();
+        assert!(
+            matches!(event.kind, EventKind::Modify(ModifyKind::Metadata(_))),
+            "Expected a metadata modify event, but got {event:?}",
         );
 
         Ok(())
