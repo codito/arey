@@ -1,18 +1,25 @@
+use std::io::Cursor;
+
 use console::Style;
-use two_face::re_exports::syntect::{
-    highlighting::{FontStyle, HighlightState, ScopeStack, Style as SyntectStyle, Theme, ThemeSet},
-    parsing::{ParseState, SyntaxSet},
+use syntect::{
+    highlighting::{
+        FontStyle, HighlightState, Highlighter, Style as SyntectStyle, Theme, ThemeSet,
+    },
+    parsing::{ParseState, ScopeStack, SyntaxSet},
 };
 
 /// Returns a syntect theme for rendering.
-pub fn get_theme(theme_name: &str) -> Theme {
+pub fn get_theme(_theme_name: &str) -> Theme {
     // TODO: fix the theme to a terminal compatible one
-    let theme_set = two_face::theme::extra();
-    let theme_key = match theme_name {
-        "dark" => two_face::theme::EmbeddedThemeName::Base16OceanDark,
-        _ => two_face::theme::EmbeddedThemeName::Ansi,
-    };
-    theme_set.get(theme_key).clone()
+    // let theme_set = ThemeSet::new();
+    // let theme_key = match theme_name {
+    //     "dark" => two_face::theme::EmbeddedThemeName::Base16OceanDark,
+    //     _ => two_face::theme::EmbeddedThemeName::Ansi,
+    // };
+    // theme_set.get(theme_key).clone()
+    let ansi_theme = include_str!("../../data/ansi.tmTheme");
+    let mut cursor = Cursor::new(ansi_theme.as_bytes());
+    ThemeSet::load_from_reader(&mut cursor).unwrap()
 }
 
 /// A stateful markdown highlighter for streaming terminal output.
@@ -69,6 +76,8 @@ impl<'a> MarkdownHighlighter<'a> {
         self.line_buffer.push_str(text);
         let mut output = String::new();
 
+        let highlighter = Highlighter::new(self.theme);
+
         // Process all complete lines in the buffer first.
         while let Some(i) = self.line_buffer.find('\n') {
             let line_to_process = self.line_buffer.drain(..=i).collect::<String>();
@@ -80,15 +89,15 @@ impl<'a> MarkdownHighlighter<'a> {
                 .parser
                 .parse_line(line_content, &self.syntax_set)
                 .unwrap();
-            let mut highlighter = HighlightState::new(self.theme, self.scope_stack.clone());
+            let mut highlight_state = HighlightState::new(&highlighter, self.scope_stack.clone());
             let ranges = syntect::highlighting::HighlightIterator::new(
-                &mut highlighter,
+                &mut highlight_state,
                 &ops[..],
                 line_content,
                 &self.syntax_set,
             )
             .collect::<Vec<_>>();
-            self.scope_stack = highlighter.stack;
+            self.scope_stack = highlight_state.path;
 
             output.push_str(&to_ansi_terminal_escaped(&ranges));
             output.push('\n');
@@ -101,7 +110,7 @@ impl<'a> MarkdownHighlighter<'a> {
             let ops = temp_parser
                 .parse_line(&self.line_buffer, &self.syntax_set)
                 .unwrap();
-            let mut temp_highlighter = HighlightState::new(self.theme, self.scope_stack.clone());
+            let mut temp_highlighter = HighlightState::new(&highlighter, self.scope_stack.clone());
             let ranges = syntect::highlighting::HighlightIterator::new(
                 &mut temp_highlighter,
                 &ops[..],
