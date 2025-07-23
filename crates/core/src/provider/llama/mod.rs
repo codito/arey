@@ -7,7 +7,6 @@ use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use llama_cpp_2::model::LlamaChatMessage;
 use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
