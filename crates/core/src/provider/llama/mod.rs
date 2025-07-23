@@ -23,6 +23,9 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tracing::instrument;
 
+mod template;
+use crate::provider::llama::template::apply_chat_template;
+
 pub struct LlamaBaseModel {
     backend: Arc<LlamaBackend>,
     model: Arc<Mutex<LlamaModel>>,
@@ -130,10 +133,8 @@ impl CompletionModel for LlamaBaseModel {
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
         let shared_backend = self.backend.clone();
-        let llama_messages: Vec<LlamaChatMessage> = messages
-            .iter()
-            .map(|m| LlamaChatMessage::new(m.sender.clone().into(), m.text.clone()).unwrap())
-            .collect();
+        // Clone messages to capture owned copies to move into the closure
+        let messages: Vec<ChatMessage> = messages.to_vec();
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
@@ -142,14 +143,7 @@ impl CompletionModel for LlamaBaseModel {
                     .new_context(&shared_backend, context_params)
                     .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-                let prompt = model
-                    .chat_template(None)
-                    .map_err(|e| anyhow!("Failed to retrieve default chat template: {e}"))
-                    .and_then(|tmpl| {
-                        model
-                            .apply_chat_template(&tmpl, &llama_messages, true)
-                            .map_err(|e| anyhow!("Failed to apply chat template to messages: {e}"))
-                    })?;
+                let prompt = apply_chat_template(&model, &messages)?;
 
                 let tokens = model
                     .str_to_token(&prompt, AddBos::Always)
