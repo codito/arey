@@ -4,7 +4,7 @@ use crate::completion::{
 };
 use crate::model::{ModelConfig, ModelMetrics};
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use llama_cpp_2::{LogOptions, send_logs_to_tracing};
@@ -142,7 +142,11 @@ impl CompletionModel for LlamaBaseModel {
                     .new_context(&shared_backend, context_params)
                     .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-                let prompt = apply_chat_template(&model, &messages)?;
+                let template_str = model
+                    .chat_template(None)
+                    .context("Failed to retrieve default chat template")?
+                    .to_string()?;
+                let prompt = apply_chat_template(&template_str, &messages)?;
 
                 let tokens = model
                     .str_to_token(&prompt, AddBos::Always)
