@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -60,6 +61,13 @@ impl From<&dyn Tool> for ToolSpec {
     }
 }
 
+/// Conversion from Arc<dyn Tool> to ToolSpec
+impl From<Arc<dyn Tool>> for ToolSpec {
+    fn from(tool: Arc<dyn Tool>) -> Self {
+        ToolSpec::from(&*tool)
+    }
+}
+
 /// A trait for defining tools that can be used by the model.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -114,7 +122,8 @@ mod tests {
     #[test]
     fn test_tool_spec_conversion() {
         let mock_tool = MockTool;
-        let tool_spec = ToolSpec::from(&mock_tool as &dyn Tool);
+        let mock_tool_arc: Arc<dyn Tool> = Arc::new(mock_tool);
+        let tool_spec = ToolSpec::from(&*mock_tool_arc);
 
         assert_eq!(tool_spec.tool_type, "function");
         assert_eq!(tool_spec.function.name, "test_tool");
@@ -139,7 +148,8 @@ mod tests {
     #[test]
     fn test_tool_spec_serialization() {
         let mock_tool = MockTool;
-        let tool_spec = ToolSpec::from(&mock_tool as &dyn Tool);
+        let mock_tool_arc: Arc<dyn Tool> = Arc::new(mock_tool);
+        let tool_spec = ToolSpec::from(&*mock_tool_arc);
 
         let serialized = serde_json::to_value(&tool_spec).unwrap();
         let expected = json!({
