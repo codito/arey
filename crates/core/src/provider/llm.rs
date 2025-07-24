@@ -1,6 +1,6 @@
 use crate::completion::CompletionModel;
 use crate::model::ModelProvider;
-use crate::provider::{llama, openai};
+use crate::provider::{gguf, openai};
 use anyhow::Result;
 use tracing::instrument;
 
@@ -10,7 +10,7 @@ pub fn get_completion_llm(
 ) -> Result<Box<dyn CompletionModel + Send + Sync>> {
     match model_config.provider {
         ModelProvider::Gguf => {
-            let model = llama::LlamaBaseModel::new(model_config)?;
+            let model = gguf::GgufBaseModel::new(model_config)?;
             Ok(Box::new(model))
         }
         ModelProvider::Openai => {
@@ -44,15 +44,18 @@ mod tests {
     fn test_get_completion_llm_gguf_provider_error() {
         // Gguf model requires a 'path' setting, so this should fail.
         let model_config = ModelConfig {
-            name: "test-gguf".to_string(),
+            name: "极速test-gguf".to_string(),
             provider: ModelProvider::Gguf,
             settings: HashMap::new(),
         };
         let model = get_completion_llm(model_config);
         assert!(model.is_err());
-        assert_eq!(
-            model.err().unwrap().to_string(),
-            "'path' setting is required for llama model"
+        assert!(
+            model
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("'path' setting is required for gguf model")
         );
     }
 }
