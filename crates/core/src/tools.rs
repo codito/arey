@@ -25,6 +25,41 @@ pub struct ToolResult {
     pub output: Value,
 }
 
+/// Specification for describing tools to models
+#[derive(Serialize, Debug, Clone)]
+pub struct ToolSpec {
+    /// Currently only "function" type is supported
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    /// Function specification details
+    pub function: FunctionSpec,
+}
+
+/// Specification format for functions (tools as functions)
+#[derive(Serialize, Debug, Clone)]
+pub struct FunctionSpec {
+    /// Name of the function
+    pub name: String,
+    /// Description of what the function does
+    pub description: String,
+    /// JSON schema representing function parameters
+    pub parameters: Value,
+}
+
+/// Conversion from Tool trait object to ToolSpec
+impl From<&dyn Tool> for ToolSpec {
+    fn from(tool: &dyn Tool) -> Self {
+        ToolSpec {
+            tool_type: "function".to_string(),
+            function: FunctionSpec {
+                name: tool.name(),
+                description: tool.description(),
+                parameters: tool.parameters(),
+            },
+        }
+    }
+}
+
 /// A trait for defining tools that can be used by the model.
 #[async_trait]
 pub trait Tool: Send + Sync {
