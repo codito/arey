@@ -1,10 +1,28 @@
-use crate::completion::{ChatMessage, SenderType};
+use crate::{
+    completion::{ChatMessage, SenderType},
+    tools::ToolSpec,
+};
 use anyhow::{Context, Result};
-use minijinja::{Environment, context};
+use minijinja::{Environment, Error, ErrorKind, context, value::Value};
+use minijinja_contrib::pycompat::unknown_method_callback;
+use serde_json;
+use tracing::{debug, error};
 
 /// Applies chat template using the model's built-in template
-pub fn apply_chat_template(template_str: &str, messages: &[ChatMessage]) -> Result<String> {
-    let env = Environment::new();
+pub fn apply_chat_template(
+    template_str: &str,
+    messages: &[ChatMessage],
+    tools: Option<&[ToolSpec]>,
+) -> Result<String> {
+    let mut env = Environment::new();
+
+    // Allow python compatibility methods like startswith to be available
+    env.set_unknown_method_callback(unknown_method_callback);
+    env.add_filter("tojson", |v: Value| -> Result<String, Error> {
+        serde_json::to_string(&v).map_err(|e| {
+            Error::new(ErrorKind::InvalidOperation, "failed to convert to JSON").with_source(e)
+        })
+    });
     let tmpl = env
         .template_from_str(template_str)
         .context("Invalid template format")?;
@@ -26,7 +44,30 @@ pub fn apply_chat_template(template_str: &str, messages: &[ChatMessage]) -> Resu
         })
         .collect();
 
-    tmpl.render(context! { messages => &context_messages })
+    let tool_list = tools.unwrap_or_default();
+    let context_tools: Vec<serde_json::Value> = tool_list
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<_, _>>()
+        .context("Failed to serialize tool spec")?;
+
+    debug!(
+        ?template_str,
+        ?context_messages,
+        tools = ?context_tools,
+        "Rendering GGUF chat template"
+    );
+
+    tmpl.render(context! { messages => &context_messages, tools => &context_tools })
+        .inspect_err(|e| {
+            error!("Could not render template: {:#}", e);
+            // render causes as well
+            let mut err = &e as &dyn std::error::Error;
+            while let Some(next_err) = err.source() {
+                error!("caused by: {next_err:#}");
+                err = next_err;
+            }
+        })
         .context("Template rendering failed")
 }
 
@@ -46,7 +87,7 @@ mod tests {
             tools: vec![],
         }];
 
-        let result = apply_chat_template(TEMPLATE, &messages);
+        let result = apply_chat_template(TEMPLATE, &messages, None);
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.contains(
@@ -74,7 +115,7 @@ mod tests {
             },
         ];
 
-        let result = apply_chat_template(TEMPLATE, &messages);
+        let result = apply_chat_template(TEMPLATE, &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
         assert!(output.contains(
@@ -106,7 +147,7 @@ mod tests {
             },
         ];
 
-        let result = apply_chat_template(TEMPLATE, &messages);
+        let result = apply_chat_template(TEMPLATE, &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
         assert!(output.contains(

@@ -151,6 +151,7 @@ dependencies = [
  "llama-cpp-2",
  "markdown",
  "minijinja",
+ "minijinja-contrib",
  "notify",
  "once_cell",
  "path-absolutize",
@@ -1668,6 +1669,16 @@ version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e60ac08614cc09062820e51d5d94c2fce16b94ea4e5003bb81b99a95f84e876"
 dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "minijinja-contrib"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f93e5bfa889f16d8c10ec92ac964074a68a7206c0fd9748ff23a31942c85d97c"
+dependencies = [
+ "minijinja",
  "serde",
 ]
 

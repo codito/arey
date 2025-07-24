@@ -37,6 +37,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 notify.workspace = true
 minijinja = "2.11.0"
+minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
 
 [dev-dependencies]
 tempfile = { workspace = true, features = [

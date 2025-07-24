@@ -3,7 +3,7 @@ use crate::completion::{
     CompletionResponse,
 };
 use crate::model::{ModelConfig, ModelMetrics};
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolSpec};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -112,7 +112,7 @@ impl CompletionModel for GgufBaseModel {
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
-        _tools: Option<&[Arc<dyn Tool>]>,
+        tools: Option<&[Arc<dyn Tool>]>,
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion, anyhow::Error>> {
@@ -134,6 +134,8 @@ impl CompletionModel for GgufBaseModel {
         let shared_backend = self.backend.clone();
         // Clone messages to capture owned copies to move into the closure
         let messages: Vec<ChatMessage> = messages.to_vec();
+        let tool_specs: Option<Vec<ToolSpec>> =
+            tools.map(|t| t.iter().map(|tool| tool.clone().into()).collect());
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
@@ -146,7 +148,7 @@ impl CompletionModel for GgufBaseModel {
                     .chat_template(None)
                     .context("Failed to retrieve default chat template")?
                     .to_string()?;
-                let prompt = apply_chat_template(&template_str, &messages)?;
+                let prompt = apply_chat_template(&template_str, &messages, tool_specs.as_deref())?;
 
                 let tokens = model
                     .str_to_token(&prompt, AddBos::Always)
