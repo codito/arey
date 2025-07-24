@@ -75,3 +75,91 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with the given arguments.
     async fn execute(&self, arguments: &Value) -> Result<Value, ToolError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    struct MockTool;
+
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> String {
+            "test_tool".to_string()
+        }
+
+        fn description(&self) -> String {
+            "A test tool for unit testing".to_string()
+        }
+
+        fn parameters(&self) -> Value {
+            json!({
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Test input parameter"
+                    }
+                },
+                "required": ["input"]
+            })
+        }
+
+        async fn execute(&self, _arguments: &Value) -> Result<Value, ToolError> {
+            Ok(json!({"status": "success"}))
+        }
+    }
+
+    #[test]
+    fn test_tool_spec_conversion() {
+        let mock_tool = MockTool;
+        let tool_spec = ToolSpec::from(&mock_tool as &dyn Tool);
+
+        assert_eq!(tool_spec.tool_type, "function");
+        assert_eq!(tool_spec.function.name, "test_tool");
+        assert_eq!(
+            tool_spec.function.description,
+            "A test tool for unit testing"
+        );
+
+        let expected_params = json!({
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "Test input parameter"
+                }
+            },
+            "required": ["input"]
+        });
+        assert_eq!(tool_spec.function.parameters, expected_params);
+    }
+
+    #[test]
+    fn test_tool_spec_serialization() {
+        let mock_tool = MockTool;
+        let tool_spec = ToolSpec::from(&mock_tool as &dyn Tool);
+
+        let serialized = serde_json::to_value(&tool_spec).unwrap();
+        let expected = json!({
+            "type": "function",
+            "function": {
+                "name": "test_tool",
+                "description": "A test tool for unit testing",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "input": {
+                            "type": "string",
+                            "description": "Test input parameter"
+                        }
+                    },
+                    "required": ["input"]
+                }
+            }
+        });
+
+        assert_eq!(serialized, expected);
+    }
+}
