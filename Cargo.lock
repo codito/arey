@@ -156,6 +156,7 @@ dependencies = [
  "once_cell",
  "path-absolutize",
  "rand 0.9.1",
+ "regex",
  "reqwest 0.11.27",
  "serde",
  "serde_json",

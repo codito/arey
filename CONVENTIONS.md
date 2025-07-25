@@ -37,3 +37,5 @@ Use the below rules for your code contributions in this repo.
 ### Testing
 
 - Always add unit tests for a change.
+- For assertions, log the actual value in `assert()` or similar methods if
+  needed. This will help determine regressions without debugging the test.

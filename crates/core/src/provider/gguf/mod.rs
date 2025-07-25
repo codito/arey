@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use tracing::instrument;
 
 mod template;
-use crate::provider::gguf::template::apply_chat_template;
+use crate::provider::gguf::template::{ToolCallParser, apply_chat_template};
 
 pub struct GgufBaseModel {
     backend: Arc<LlamaBackend>,
@@ -31,6 +31,7 @@ pub struct GgufBaseModel {
     context_params: LlamaContextParams,
     // model_config: ModelConfig,
     metrics: ModelMetrics,
+    model_name: String,
 }
 
 impl GgufBaseModel {
@@ -94,6 +95,7 @@ impl GgufBaseModel {
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
+            model_name: model_config.name,
         })
     }
 }
@@ -128,6 +130,7 @@ impl CompletionModel for GgufBaseModel {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1234);
 
+        let model_name = self.model_name.clone();
         let context_params = self.context_params.clone();
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
@@ -139,6 +142,9 @@ impl CompletionModel for GgufBaseModel {
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
+                let (start_re, end_re) = template::get_tool_call_regexes(&model_name);
+                let mut tool_parser = ToolCallParser::new(start_re, end_re)
+                    .context("Failed to create tool call parser")?;
                 let model = model_ref.blocking_lock();
                 let mut ctx = model
                     .new_context(&shared_backend, context_params)
@@ -210,9 +216,29 @@ impl CompletionModel for GgufBaseModel {
                     n_cur += 1;
                     token_count += 1;
 
-                    // Send token through channel
+                    // Parse chunk for tool calls and text
+                    let (plain_text, tool_calls) = tool_parser.parse(&last_chunk);
+
+                    if !plain_text.is_empty() || !tool_calls.is_empty() {
+                        // Send token through channel
+                        let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
+                            text: plain_text,
+                            tool_calls: if tool_calls.is_empty() {
+                                None
+                            } else {
+                                Some(tool_calls)
+                            },
+                            finish_reason: None,
+                            raw_chunk: None,
+                        })));
+                    }
+                }
+
+                // Flush any remaining text from parser
+                let remaining_text = tool_parser.flush();
+                if !remaining_text.is_empty() {
                     let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
-                        text: last_chunk,
+                        text: remaining_text,
                         tool_calls: None,
                         finish_reason: None,
                         raw_chunk: None,
