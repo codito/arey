@@ -51,16 +51,16 @@ pub fn apply_chat_template(
         .collect::<Result<_, _>>()
         .context("Failed to serialize tool spec")?;
 
-    debug!(
-        ?template_str,
-        ?context_messages,
-        tools = ?context_tools,
-        "Rendering GGUF chat template"
-    );
-
     tmpl.render(context! { messages => &context_messages, tools => &context_tools })
         .inspect_err(|e| {
-            error!("Could not render template: {:#}", e);
+            error!(
+                ?template_str,
+                ?context_messages,
+                tools = ?context_tools,
+                error = ?e,
+                "Failed to render chat template"
+            );
+
             // render causes as well
             let mut err = &e as &dyn std::error::Error;
             while let Some(next_err) = err.source() {
