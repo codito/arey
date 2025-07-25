@@ -150,10 +150,13 @@ dependencies = [
  "lazy_static",
  "llama-cpp-2",
  "markdown",
+ "minijinja",
+ "minijinja-contrib",
  "notify",
  "once_cell",
  "path-absolutize",
  "rand 0.9.1",
+ "regex",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -1659,6 +1662,25 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "minijinja"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e60ac08614cc09062820e51d5d94c2fce16b94ea4e5003bb81b99a95f84e876"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "minijinja-contrib"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f93e5bfa889f16d8c10ec92ac964074a68a7206c0fd9748ff23a31942c85d97c"
+dependencies = [
+ "minijinja",
+ "serde",
 ]
 
 [[package]]

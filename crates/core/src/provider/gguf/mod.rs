@@ -3,11 +3,10 @@ use crate::completion::{
     CompletionResponse,
 };
 use crate::model::{ModelConfig, ModelMetrics};
-use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use crate::tools::{Tool, ToolSpec};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use llama_cpp_2::model::LlamaChatMessage;
 use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -23,15 +22,19 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tracing::instrument;
 
-pub struct LlamaBaseModel {
+mod template;
+use crate::provider::gguf::template::{ToolCallParser, apply_chat_template};
+
+pub struct GgufBaseModel {
     backend: Arc<LlamaBackend>,
     model: Arc<Mutex<LlamaModel>>,
     context_params: LlamaContextParams,
     // model_config: ModelConfig,
     metrics: ModelMetrics,
+    model_name: String,
 }
 
-impl LlamaBaseModel {
+impl GgufBaseModel {
     #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
         // if verbose {
@@ -42,7 +45,7 @@ impl LlamaBaseModel {
         let path = model_config
             .settings
             .get("path")
-            .ok_or_else(|| anyhow!("'path' setting is required for llama model"))?
+            .ok_or_else(|| anyhow!("'path' setting is required for gguf model"))?
             .as_str()
             .unwrap();
         let expand_path = shellexpand::tilde(path).into_owned();
@@ -92,12 +95,13 @@ impl LlamaBaseModel {
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
+            model_name: model_config.name,
         })
     }
 }
 
 #[async_trait]
-impl CompletionModel for LlamaBaseModel {
+impl CompletionModel for GgufBaseModel {
     fn metrics(&self) -> ModelMetrics {
         self.metrics.clone()
     }
@@ -110,7 +114,7 @@ impl CompletionModel for LlamaBaseModel {
     async fn complete(
         &mut self,
         messages: &[ChatMessage],
-        _tools: Option<&[Arc<dyn Tool>]>,
+        tools: Option<&[Arc<dyn Tool>]>,
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'_, Result<Completion, anyhow::Error>> {
@@ -126,30 +130,31 @@ impl CompletionModel for LlamaBaseModel {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1234);
 
+        let model_name = self.model_name.clone();
         let context_params = self.context_params.clone();
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
         let shared_backend = self.backend.clone();
-        let llama_messages: Vec<LlamaChatMessage> = messages
-            .iter()
-            .map(|m| LlamaChatMessage::new(m.sender.clone().into(), m.text.clone()).unwrap())
-            .collect();
+        // Clone messages to capture owned copies to move into the closure
+        let messages: Vec<ChatMessage> = messages.to_vec();
+        let tool_specs: Option<Vec<ToolSpec>> =
+            tools.map(|t| t.iter().map(|tool| tool.clone().into()).collect());
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
+                let (start_re, end_re) = template::get_tool_call_regexes(&model_name);
+                let mut tool_parser = ToolCallParser::new(start_re, end_re)
+                    .context("Failed to create tool call parser")?;
                 let model = model_ref.blocking_lock();
                 let mut ctx = model
                     .new_context(&shared_backend, context_params)
                     .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
-                let prompt = model
+                let template_str = model
                     .chat_template(None)
-                    .map_err(|e| anyhow!("Failed to retrieve default chat template: {e}"))
-                    .and_then(|tmpl| {
-                        model
-                            .apply_chat_template(&tmpl, &llama_messages, true)
-                            .map_err(|e| anyhow!("Failed to apply chat template to messages: {e}"))
-                    })?;
+                    .context("Failed to retrieve default chat template")?
+                    .to_string()?;
+                let prompt = apply_chat_template(&template_str, &messages, tool_specs.as_deref())?;
 
                 let tokens = model
                     .str_to_token(&prompt, AddBos::Always)
@@ -211,9 +216,29 @@ impl CompletionModel for LlamaBaseModel {
                     n_cur += 1;
                     token_count += 1;
 
-                    // Send token through channel
+                    // Parse chunk for tool calls and text
+                    let (plain_text, tool_calls) = tool_parser.parse(&last_chunk);
+
+                    if !plain_text.is_empty() || !tool_calls.is_empty() {
+                        // Send token through channel
+                        let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
+                            text: plain_text,
+                            tool_calls: if tool_calls.is_empty() {
+                                None
+                            } else {
+                                Some(tool_calls)
+                            },
+                            finish_reason: None,
+                            raw_chunk: None,
+                        })));
+                    }
+                }
+
+                // Flush any remaining text from parser
+                let remaining_text = tool_parser.flush();
+                if !remaining_text.is_empty() {
                     let _ = tx.blocking_send(Ok(Completion::Response(CompletionResponse {
-                        text: last_chunk,
+                        text: remaining_text,
                         tool_calls: None,
                         finish_reason: None,
                         raw_chunk: None,
@@ -259,38 +284,40 @@ impl CompletionModel for LlamaBaseModel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::ModelConfig;
+    use crate::{model::ModelConfig, provider::gguf::GgufBaseModel};
     use std::collections::HashMap;
 
     #[test]
-    fn test_llama_model_new_missing_path() {
+    fn test_gguf_model_new_missing_path() {
         let model_config = ModelConfig {
-            name: "test-llama".to_string(),
+            name: "test-gguf".to_string(),
             provider: crate::model::ModelProvider::Gguf,
             settings: HashMap::new(),
         };
-        let model = LlamaBaseModel::new(model_config);
+        let model = GgufBaseModel::new(model_config);
         assert!(model.is_err());
-        assert_eq!(
-            model.err().unwrap().to_string(),
-            "'path' setting is required for llama model"
+        assert!(
+            model
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("'path' setting is required for gguf model")
         );
     }
 
     #[test]
-    fn test_llama_model_new_path_not_found() {
+    fn test_gguf_model_new_path_not_found() {
         let mut settings = HashMap::new();
         settings.insert(
             "path".to_string(),
             "/path/to/non/existent/model.gguf".into(),
         );
         let model_config = ModelConfig {
-            name: "test-llama".to_string(),
+            name: "test-gguf".to_string(),
             provider: crate::model::ModelProvider::Gguf,
             settings,
         };
-        let model = LlamaBaseModel::new(model_config);
+        let model = GgufBaseModel::new(model_config);
         assert!(model.is_err());
         assert!(
             model
@@ -303,11 +330,11 @@ mod tests {
 
     #[test]
     #[ignore = "requires a valid GGUF model file for a full integration test"]
-    fn test_llama_model_complete() {
+    fn test_gguf_model_complete() {
         // This test requires a real model and is complex to set up.
         // It would involve:
-        // 1. Pointing to a valid GGUF model file.
-        // 2. Creating a LlamaBaseModel.
+        // 极速1. Pointing to a valid GGUF model file.
+        // 2. Creating a GgufBaseModel.
         // 3. Calling complete with sample messages.
         // 4. Asserting on the streamed response.
     }
