@@ -105,10 +105,7 @@ mod tests {
         let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
         assert!(result.is_ok());
         let output = result.unwrap();
-        assert!(output.contains(
-            "<|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>"
-        ));
-        assert!(output.contains("<|im_user|>user<|im_middle|>Hello<|im_end|>"));
+        assert!(output.contains("<|im_start|>user\nHello<|im_end|>"));
     }
 
     #[test]
@@ -133,9 +130,10 @@ mod tests {
         let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
-        assert!(output.contains(
-            "<|tool_call_begin|>call_123<|tool_call_argument_begin|>{\"location\": \"Boston\"}<|tool_call_end|>"
-        ));
+        assert!(output.contains("<tool_call>"));
+        assert!(output.contains(r#"{"name": "get_weather"}"#));
+        assert!(output.contains(r#""arguments": {"location": "Boston"}"#));
+        assert!(output.contains("</tool_call>"));
     }
 
     #[test]
@@ -165,12 +163,12 @@ mod tests {
         let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
+        assert!(output.contains("<tool_response>"), "Output: {output}");
         assert!(
-            output.contains(
-                "<|im_system|>tool<|im_middle|>{\"temperature\": 22, \"unit\": \"celsius\"}"
-            ),
+            output.contains(r#"{"temperature": 22, "unit": "celsius"}"#),
             "Output: {output}"
         );
+        assert!(output.contains("</tool_response>"), "Output: {output}");
     }
 
     #[test]
@@ -184,10 +182,7 @@ mod tests {
         let result = apply_chat_template("", &messages, None);
         assert!(result.is_ok());
         let output = result.unwrap();
-        assert!(output.contains(
-            "<|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>"
-        ));
-        assert!(output.contains("<|im_user|>user<|im_middle|>Hello<|im_end|>"));
+        assert!(output.contains("<|im_start|>user\nHello<|im_end|>"));
     }
 
     #[test]
@@ -212,8 +207,9 @@ mod tests {
         let result = apply_chat_template("", &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
-        assert!(output.contains(
-            "<|tool_call_begin|>call_123<|tool_call_argument_begin|>{\"location\": \"Boston\"}<|tool_call_end|>"
-        ));
+        assert!(output.contains("<tool_call>"));
+        assert!(output.contains(r#"{"name": "get_weather"}"#));
+        assert!(output.contains(r#""arguments": {"location": "Boston"}"#));
+        assert!(output.contains("</tool_call>"));
     }
 }
