@@ -8,12 +8,20 @@ use minijinja_contrib::pycompat::unknown_method_callback;
 use serde_json;
 use tracing::{debug, error};
 
+const DEFAULT_TEMPLATE: &str = include_str!("../../../data/default_template.jinja");
+
 /// Applies chat template using the model's built-in template
 pub fn apply_chat_template(
     template_str: &str,
     messages: &[ChatMessage],
     tools: Option<&[ToolSpec]>,
 ) -> Result<String> {
+    debug!(
+        template_from_model = !template_str.is_empty(),
+        messages_count = messages.len(),
+        tools_available = tools.is_some(),
+        "Apply chat template"
+    );
     let mut env = Environment::new();
 
     // Allow python compatibility methods like startswith to be available
@@ -23,8 +31,15 @@ pub fn apply_chat_template(
             Error::new(ErrorKind::InvalidOperation, "failed to convert to JSON").with_source(e)
         })
     });
+
+    let template = if template_str.is_empty() {
+        DEFAULT_TEMPLATE
+    } else {
+        template_str
+    };
+
     let tmpl = env
-        .template_from_str(template_str)
+        .template_from_str(template)
         .context("Invalid template format")?;
 
     // Convert ChatMessages into Jinja-compatible values
@@ -54,7 +69,7 @@ pub fn apply_chat_template(
     tmpl.render(context! { messages => &context_messages, tools => &context_tools })
         .inspect_err(|e| {
             error!(
-                ?template_str,
+                ?template,
                 ?context_messages,
                 tools = ?context_tools,
                 error = ?e,
@@ -77,7 +92,7 @@ mod tests {
     use crate::completion::{ChatMessage, SenderType};
     use crate::tools::ToolCall;
 
-    const TEMPLATE: &str = "{%- if tools -%}\n  <|im_system|>tool_declare<|im_middle|>{{ tools | tojson }}<|im_end|>\n{%- endif -%}\n{%- for message in messages -%}\n  {%- if loop.first and messages[0]['role'] != 'system' -%}\n    <|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>\n  {%- endif -%}\n  {%- if message.role == 'system' -%}\n    <|im_system|>system<|im_middle|>\n  {%- elif message.role == 'user' -%}\n    <|im_user|>user<|im_middle|>\n  {%- elif message.role == 'assistant' -%}\n    <|im_assistant|>assistant<|im_middle|>\n  {%- elif message.role == 'tool' -%}\n    <|im_system|>tool<|im_middle|>\n  {%- endif -%}\n  {%- if message.role == 'assistant' and message.tool_calls -%}\n    {%- if message.content -%}{{ message.content }}{%- endif -%}\n    <|tool_calls_section_begin|>\n    {%- for tool_call in message.tool_calls -%}\n      <|tool_call_begin|>{{ tool_call.id }}<|tool_call_argument_begin|>{{ tool_call.arguments }}<|tool_call_end|>\n    {%- endfor -%}\n    <|tool_calls_section_end|>\n  {%- elif message.role == 'tool' -%}\n    {{ message.content }}\n  {%- elif message.content is string -%}\n    {{ message.content }}\n  {%- elif message.content is not none -%}\n    {% for content in message['content'] -%}\n      {% if content['type'] == 'image' or 'image' in content or 'image_url' in content -%}\n        <|media_start|>image<|media_content|><|media_pad|><|media_end|>\n      {% else -%}\n        {{ content['text'] }}\n      {%- endif -%}\n    {%- endfor -%}\n  {%- endif -%}\n  <|im_end|>\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n  <|im_assistant|>assistant<|im_middle|>\n{%- endif -%}";
+    use super::DEFAULT_TEMPLATE;
 
     #[test]
     fn test_user_message() {
@@ -87,7 +102,7 @@ mod tests {
             tools: vec![],
         }];
 
-        let result = apply_chat_template(TEMPLATE, &messages, None);
+        let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.contains(
@@ -115,7 +130,7 @@ mod tests {
             },
         ];
 
-        let result = apply_chat_template(TEMPLATE, &messages, None);
+        let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
         assert!(output.contains(
@@ -147,11 +162,58 @@ mod tests {
             },
         ];
 
-        let result = apply_chat_template(TEMPLATE, &messages, None);
+        let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
+        assert!(result.is_ok(), "Result: {result:?}");
+        let output = result.unwrap();
+        assert!(
+            output.contains(
+                "<|im_system|>tool<|im_middle|>{\"temperature\": 22, \"unit\": \"celsius\"}"
+            ),
+            "Output: {output}"
+        );
+    }
+
+    #[test]
+    fn test_user_message_with_empty_template() {
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Hello".into(),
+            tools: vec![],
+        }];
+
+        let result = apply_chat_template("", &messages, None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains(
+            "<|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>"
+        ));
+        assert!(output.contains("<|im_user|>user<|im_middle|>Hello<|im_end|>"));
+    }
+
+    #[test]
+    fn test_assistant_message_with_tool_call_with_empty_template() {
+        let messages = vec![
+            ChatMessage {
+                sender: SenderType::User,
+                text: "What's the weather in Boston?".into(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "".into(),
+                tools: vec![ToolCall {
+                    id: "call_123".to_string(),
+                    name: "get_weather".to_string(),
+                    arguments: "{\"location\": \"Boston\"}".to_string(),
+                }],
+            },
+        ];
+
+        let result = apply_chat_template("", &messages, None);
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
         assert!(output.contains(
-            "<|im_system|>tool<|im_middle|>{\"temperature\": 22, \"unit\": \"celsius\"}"
+            "<|tool_call_begin|>call_123<|tool_call_argument_begin|>{\"location\": \"Boston\"}<|tool_call_end|>"
         ));
     }
 }
