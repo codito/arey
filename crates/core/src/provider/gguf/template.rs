@@ -122,7 +122,7 @@ mod tests {
                 tools: vec![ToolCall {
                     id: "call_123".to_string(),
                     name: "get_weather".to_string(),
-                    arguments: "{\"location\": \"Boston\"}".to_string(),
+                    arguments: serde_json::to_string("{\"location\": \"Boston\"}").unwrap(),
                 }],
             },
         ];
@@ -199,7 +199,7 @@ mod tests {
                 tools: vec![ToolCall {
                     id: "call_123".to_string(),
                     name: "get_weather".to_string(),
-                    arguments: "{\"location\": \"Boston\"}".to_string(),
+                    arguments: serde_json::to_string("{\"location\": \"Boston\"}").unwrap(),
                 }],
             },
         ];
