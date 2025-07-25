@@ -131,8 +131,8 @@ mod tests {
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
         assert!(output.contains("<tool_call>"));
-        assert!(output.contains(r#"{"name": "get_weather"}"#));
-        assert!(output.contains(r#""arguments": {"location": "Boston"}"#));
+        assert!(output.contains(r#""name": "get_weather""#));
+        assert!(output.contains(r#""arguments": "{\"location\": \"Boston\"}""#));
         assert!(output.contains("</tool_call>"));
     }
 
@@ -208,8 +208,8 @@ mod tests {
         assert!(result.is_ok(), "Result: {result:?}");
         let output = result.unwrap();
         assert!(output.contains("<tool_call>"));
-        assert!(output.contains(r#"{"name": "get_weather"}"#));
-        assert!(output.contains(r#""arguments": {"location": "Boston"}"#));
+        assert!(output.contains(r#""name": "get_weather""#));
+        assert!(output.contains(r#""arguments": "{\"location\": \"Boston\"}""#));
         assert!(output.contains("</tool_call>"));
     }
 }
