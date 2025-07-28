@@ -160,7 +160,7 @@ impl CompletionModel for GgufBaseModel {
                     .str_to_token(&prompt, AddBos::Always)
                     .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
-                let mut batch = LlamaBatch::new(512, 1);
+                let mut batch = LlamaBatch::new(tokens.len(), 1);
                 for (i, &token) in tokens.iter().enumerate() {
                     batch
                         .add(token, i as i32, &[0], i == tokens.len() - 1)
