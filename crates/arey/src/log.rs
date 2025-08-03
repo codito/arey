@@ -40,8 +40,10 @@ pub fn setup_logging() -> anyhow::Result<()> {
         .open(log_path)?;
 
     tracing_subscriber::fmt()
-        .with_env_filter("arey=debug,rustyline=info")
+        .with_env_filter("arey=debug,rustyline=info,llama-cpp-2=debug")
         .with_writer(log_file)
+        .with_ansi(false) // Disable ANSI escape codes for file logging
+        .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339()) // Use local time
         .init();
     Ok(())
 }

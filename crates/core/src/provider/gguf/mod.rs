@@ -20,7 +20,8 @@ use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-use tracing::instrument;
+use tracing::level_filters::LevelFilter;
+use tracing::{debug, instrument};
 
 mod template;
 use crate::provider::gguf::template::{ToolCallParser, apply_chat_template};
@@ -37,10 +38,9 @@ pub struct GgufBaseModel {
 impl GgufBaseModel {
     #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
-        // if verbose {
-        //     tracing_subscriber::fmt().init();
-        // }
-        send_logs_to_tracing(LogOptions::default().with_logs_enabled(true));
+        // Send logs to tracing if verbose is enabled
+        let tracing_enabled = is_tracing_enabled();
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(tracing_enabled));
 
         let path = model_config
             .settings
@@ -50,6 +50,7 @@ impl GgufBaseModel {
             .unwrap();
         let expand_path = shellexpand::tilde(path).into_owned();
         let model_path = PathBuf::from(expand_path);
+        debug!("Model path: {}", model_path.display());
 
         if !model_path.exists() {
             return Err(anyhow!(
@@ -60,8 +61,10 @@ impl GgufBaseModel {
 
         let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
 
+        debug!("Model configuration: {:?}", model_config.settings);
         let mut model_params = LlamaModelParams::default();
         if let Some(n_gpu_layers) = model_config.settings.get("n_gpu_layers") {
+            debug!("CUDA enabled: n_gpu_layers = {:?}", n_gpu_layers);
             if let Some(val) = n_gpu_layers.as_i64() {
                 model_params = model_params.with_n_gpu_layers(val as u32);
             }
@@ -139,6 +142,8 @@ impl CompletionModel for GgufBaseModel {
         let messages: Vec<ChatMessage> = messages.to_vec();
         let tool_specs: Option<Vec<ToolSpec>> =
             tools.map(|t| t.iter().map(|tool| tool.clone().into()).collect());
+
+        debug!("Context params: {:?}", context_params);
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
@@ -280,6 +285,11 @@ impl CompletionModel for GgufBaseModel {
         // Use the Receiver as a Stream
         Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
+}
+
+/// Returns true if any subscriber is active and its max level is at least TRACE.
+pub fn is_tracing_enabled() -> bool {
+    tracing::level_filters::LevelFilter::current() != LevelFilter::OFF
 }
 
 #[cfg(test)]
