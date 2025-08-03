@@ -185,7 +185,9 @@ pub fn create_or_get_config_file(
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;
     let content = fs::read_to_string(&config_file)?;
-    let raw: RawConfig = serde_yaml::from_str(&content)?;
+    let mut val: serde_yaml::Value = serde_yaml::from_str(&content)?;
+    val.apply_merge()?; // Apply merge keys. Model configs can use it.
+    let raw: RawConfig = serde_yaml::from_value(val)?;
     raw.to_config()
 }
 
