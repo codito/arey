@@ -518,6 +518,9 @@ models:
 profiles:
   default:
     temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
 
 chat:
   model: model-a
