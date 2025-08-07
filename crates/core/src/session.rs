@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn test_record_completion_multiple_unknown() {
         let mut session = new_session(100);
-        session.add_message(SenderType::User, "This is a slightly longer message."); // 32 chars
+        session.add_message(SenderType::User, "This is a slightly longer message."); // 34 chars
         session.add_message(SenderType::User, "Short one."); // 10 chars
 
         let metrics = CompletionMetrics {
@@ -312,10 +312,10 @@ mod tests {
         };
         session.record_completion(new_chat_msg(SenderType::Assistant, "Response 1"), &metrics);
         assert_eq!(session.messages.len(), 3);
-        // 100 * (32 / (32+10)) = 76.19 -> 76
-        assert_eq!(session.messages[0].1, Some(76));
-        // Remainder: 100 - 76 = 24
-        assert_eq!(session.messages[1].1, Some(24));
+        // 100 * (34 / (34+10)) = 77.27 -> 77
+        assert_eq!(session.messages[0].1, Some(77));
+        // Remainder: 100 - 77 = 23
+        assert_eq!(session.messages[1].1, Some(23));
         assert_eq!(session.messages[2].1, Some(20));
     }
 
