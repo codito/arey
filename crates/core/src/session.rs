@@ -144,8 +144,7 @@ impl Session {
                     let msg_tokens = if i == last_index {
                         new_tokens.saturating_sub(distributed_tokens)
                     } else {
-                        (new_tokens as f64 * (msg_chars as f64 / total_unknown_chars as f64))
-                            .round() as usize
+                        (new_tokens * msg_chars) / total_unknown_chars
                     };
                     self.messages[*msg_idx].1 = Some(msg_tokens);
                     distributed_tokens += msg_tokens;
