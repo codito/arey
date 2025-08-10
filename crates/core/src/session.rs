@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{Context, Result};
 use futures::stream::BoxStream;
 use std::{collections::HashMap, sync::Arc};
+use tracing::debug;
 
 /// A session with shared context between Human and AI model.
 pub struct Session {
@@ -186,6 +187,10 @@ impl Session {
             self.system_prompt.len() / 4
         };
         let available_tokens: usize = max_tokens.saturating_sub(system_prompt_tokens);
+        debug!(
+            "Token trimming: available tokens: {}, System prompt tokens: {}",
+            available_tokens, system_prompt_tokens
+        );
 
         let mut start_index = self.messages.len();
         let mut current_tokens = 0;
@@ -206,6 +211,7 @@ impl Session {
                 }
             }
         }
+        debug!("Token trimming: start index: {}", start_index);
 
         self.messages[start_index..]
             .iter()
