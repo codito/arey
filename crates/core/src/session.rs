@@ -293,10 +293,32 @@ impl Session {
         }
         debug!("Token trimming: start index: {}", start_index);
 
-        self.messages[start_index..]
+        let mut final_messages: Vec<ChatMessage> = self.messages[start_index..]
             .iter()
             .map(|(m, _)| m.clone())
-            .collect()
+            .collect();
+
+        // Truncate all but the last tool message to a reasonable limit.
+        let last_tool_idx = final_messages
+            .iter()
+            .rposition(|m| m.sender == SenderType::Tool);
+
+        if let Some(last_idx) = last_tool_idx {
+            const MAX_TOOL_RESPONSE_CHARS: usize = 512;
+            const TRUNCATION_MARKER: &str = "\n... [truncated]";
+
+            for (i, msg) in final_messages.iter_mut().enumerate() {
+                if i < last_idx
+                    && msg.sender == SenderType::Tool
+                    && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
+                {
+                    msg.text.truncate(MAX_TOOL_RESPONSE_CHARS);
+                    msg.text.push_str(TRUNCATION_MARKER);
+                }
+            }
+        }
+
+        final_messages
     }
 }
 
@@ -568,5 +590,50 @@ mod tests {
         let trimmed_tight = session.get_trimmed_messages(51);
         assert_eq!(trimmed_tight.len(), 1, "Should trim the assistant message");
         assert_eq!(trimmed_tight[0].text, "U1");
+    }
+
+    #[test]
+    fn test_tool_response_truncation() {
+        // Test that intermediate tool responses are truncated, but the last one is not.
+        let mut session = new_session(4096); // Large context to avoid other trimming
+        let long_tool_output1 = "a".repeat(600);
+        let long_tool_output2 = "b".repeat(600);
+        let long_tool_output3 = "c".repeat(600);
+
+        session.add_message(SenderType::User, "U1");
+        session.add_message(SenderType::Tool, &long_tool_output1);
+        session.add_message(SenderType::User, "U2");
+        session.add_message(SenderType::Tool, &long_tool_output2);
+        session.add_message(SenderType::User, "U3");
+        session.add_message(SenderType::Tool, &long_tool_output3);
+
+        let trimmed = session.get_trimmed_messages(0);
+        assert_eq!(trimmed.len(), 6);
+
+        const MAX_TOOL_RESPONSE_CHARS: usize = 512;
+        const TRUNCATION_MARKER: &str = "\n... [truncated]";
+        let truncated_len = MAX_TOOL_RESPONSE_CHARS + TRUNCATION_MARKER.len();
+
+        // First tool message should be truncated
+        assert_eq!(trimmed[1].sender, SenderType::Tool);
+        assert!(trimmed[1].text.ends_with(TRUNCATION_MARKER));
+        assert_eq!(trimmed[1].text.len(), truncated_len);
+
+        // Second tool message should be truncated
+        assert_eq!(trimmed[3].sender, SenderType::Tool);
+        assert!(trimmed[3].text.ends_with(TRUNCATION_MARKER));
+        assert_eq!(trimmed[3].text.len(), truncated_len);
+
+        // Third (last) tool message should NOT be truncated
+        assert_eq!(trimmed[5].sender, SenderType::Tool);
+        assert_eq!(trimmed[5].text.len(), long_tool_output3.len());
+
+        // Test with a single tool response - should not be truncated
+        let mut session_single = new_session(4096);
+        session_single.add_message(SenderType::User, "U1");
+        session_single.add_message(SenderType::Tool, &long_tool_output1);
+        let trimmed_single = session_single.get_trimmed_messages(0);
+        assert_eq!(trimmed_single.len(), 2);
+        assert_eq!(trimmed_single[1].text.len(), long_tool_output1.len());
     }
 }
