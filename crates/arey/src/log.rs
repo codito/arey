@@ -1,6 +1,7 @@
 //! Logging for arey.
 use anyhow::Context;
 use arey_core::get_data_dir;
+use tracing_subscriber::fmt::time::OffsetTime;
 
 /// Initializes the application's logging system.
 ///
@@ -43,7 +44,7 @@ pub fn setup_logging() -> anyhow::Result<()> {
         .with_env_filter("arey=debug,rustyline=info,llama-cpp-2=debug")
         .with_writer(log_file)
         .with_ansi(false) // Disable ANSI escape codes for file logging
-        .with_timer(tracing_subscriber::fmt::time::LocalTime::rfc_3339()) // Use local time
+        .with_timer(OffsetTime::local_rfc_3339()?) // Use local time
         .init();
     Ok(())
 }
