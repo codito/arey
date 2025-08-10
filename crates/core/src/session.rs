@@ -171,17 +171,17 @@ impl Session {
         available_tokens: usize,
         estimate_tokens_fn: &dyn Fn(&ChatMessage) -> usize,
     ) -> Vec<ChatMessage> {
-        let mut trimmed_messages = std::collections::VecDeque::new();
+        let mut final_messages = Vec::new();
         let mut used_tokens = 0;
 
-        // Iterate backwards over the block, adding newest messages first.
-        for (msg, count) in block_messages.iter().rev() {
+        // Iterate forwards through the block to preserve conversational order.
+        for (msg, count) in block_messages.iter() {
             let mut msg_to_add = msg.clone();
             let mut tokens = count.unwrap_or_else(|| estimate_tokens_fn(&msg_to_add));
 
             if used_tokens + tokens > available_tokens {
-                // If the message makes the block too large, try to shrink it.
-                // We only shrink tool responses as they are the most likely to be verbose.
+                // If the message doesn't fit, check if we can truncate it.
+                // We only truncate tool messages as they are the most likely to be verbose.
                 if msg_to_add.sender == SenderType::Tool {
                     let budget_for_this_msg = available_tokens.saturating_sub(used_tokens);
                     // Use a 4 chars/token heuristic to determine how much text to keep.
@@ -191,26 +191,26 @@ impl Session {
                         msg_to_add.text.push_str("\n... [truncated]");
                         // After truncation, the token cost is now the budget we had.
                         tokens = budget_for_this_msg;
+                    } else {
+                        // It's a tool message but can't be truncated enough. Stop.
+                        break;
                     }
+                } else {
+                    // It's not a tool message and it doesn't fit. Stop.
+                    break;
                 }
             }
 
             // Add the message only if it fits (either originally or after truncation).
             if used_tokens + tokens <= available_tokens {
                 used_tokens += tokens;
-                trimmed_messages.push_front(msg_to_add);
+                final_messages.push(msg_to_add);
             } else {
-                // This message (even after potential truncation) is too large.
-                // Since we are iterating from newest to oldest, we can't skip this
-                // and take an older one, so we stop here.
-                debug!(
-                    "Token trimming: Skipping message to fit budget. Used tokens: {}, available: {}",
-                    used_tokens, available_tokens
-                );
+                // This can happen if budget was 0 and truncation wasn't possible. Stop.
                 break;
             }
         }
-        trimmed_messages.into_iter().collect()
+        final_messages
     }
 
     /// Returns a list of messages that fits within the model's context window.
