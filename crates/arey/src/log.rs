@@ -1,6 +1,8 @@
 //! Logging for arey.
 use anyhow::Context;
 use arey_core::get_data_dir;
+use std::io::LineWriter;
+use std::sync::Mutex;
 use tracing_subscriber::fmt::time::OffsetTime;
 
 /// Initializes the application's logging system.
@@ -40,9 +42,11 @@ pub fn setup_logging() -> anyhow::Result<()> {
         .append(true)
         .open(log_path)?;
 
+    let writer = Mutex::new(LineWriter::new(log_file));
+
     tracing_subscriber::fmt()
         .with_env_filter("arey=debug,rustyline=info,llama-cpp-2=debug")
-        .with_writer(log_file)
+        .with_writer(writer)
         .with_ansi(false) // Disable ANSI escape codes for file logging
         .with_timer(OffsetTime::local_rfc_3339()?) // Use local time
         .init();
