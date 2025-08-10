@@ -187,12 +187,11 @@ pub mod watch {
         let mut watcher = RecommendedWatcher::new(
             move |res: notify::Result<Event>| {
                 let tx = tx.clone();
-                if let Ok(event) = res {
-                    if matches!(event.kind, EventKind::Modify(_))
-                        && tx.blocking_send(Ok(event)).is_err()
-                    {
-                        // Receiver closed
-                    }
+                if let Ok(event) = res
+                    && matches!(event.kind, EventKind::Modify(_))
+                    && tx.blocking_send(Ok(event)).is_err()
+                {
+                    // Receiver closed
                 }
             },
             Config::default(),

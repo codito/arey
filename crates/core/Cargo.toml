@@ -12,19 +12,17 @@ async-openai.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-console.workspace = true
 dirs.workspace = true
 encoding_rs.workspace = true
 env_logger.workspace = true
 futures.workspace = true
 home.workspace = true
-indicatif.workspace = true
 lazy_static.workspace = true
-llama-cpp-2.workspace = true
 markdown.workspace = true
 once_cell.workspace = true
 path-absolutize.workspace = true
 rand.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -36,12 +34,14 @@ tokio-stream.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 notify.workspace = true
+minijinja = "2.11.0"
+minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
+llama-cpp-2 = "=0.1.113"
+llama-cpp-sys-2 = "=0.1.113"
 
 [dev-dependencies]
-tempfile = { workspace = true, features = [
-] } # Changed to inherit from workspace.dependencies
-wiremock = { workspace = true, features = [
-] } # Changed to inherit from workspace.dependencies
+tempfile = { workspace = true, features = [] }
+wiremock = { workspace = true, features = [] }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 
 

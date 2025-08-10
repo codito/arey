@@ -185,7 +185,9 @@ pub fn create_or_get_config_file(
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;
     let content = fs::read_to_string(&config_file)?;
-    let raw: RawConfig = serde_yaml::from_str(&content)?;
+    let mut val: serde_yaml::Value = serde_yaml::from_str(&content)?;
+    val.apply_merge()?; // Apply merge keys. Model configs can use it.
+    let raw: RawConfig = serde_yaml::from_value(val)?;
     raw.to_config()
 }
 
@@ -490,6 +492,93 @@ task:
         let err = get_config(Some(config_file)).unwrap_err();
         assert!(
             matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found"))
+        );
+    }
+
+    #[test]
+    fn test_get_config_with_merge_keys() {
+        const MERGE_KEY_CONFIG: &str = r#"
+models:
+  gguf-base: &gguf-base
+    type: gguf
+    n_ctx: 4096
+    common-key: "common-value"
+
+  model-a:
+    <<: *gguf-base
+    name: model-a
+    path: /path/to/model-a.gguf
+
+  model-b:
+    <<: *gguf-base
+    name: model-b
+    path: /path/to/model-b.gguf
+    n_ctx: 8192 # override
+
+profiles:
+  default:
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+
+chat:
+  model: model-a
+  profile: default
+
+task:
+  model: model-b
+  profile: default
+"#;
+        let config_file = create_temp_config(MERGE_KEY_CONFIG);
+        let config = get_config(Some(config_file)).unwrap();
+
+        assert_eq!(config.models.len(), 3); // gguf-base, model-a, model-b
+
+        let gguf_base = config.models.get("gguf-base").unwrap();
+        assert_eq!(gguf_base.name, "gguf-base");
+        assert_eq!(gguf_base.settings.len(), 2);
+        assert_eq!(
+            gguf_base.settings.get("n_ctx").unwrap(),
+            &serde_yaml::Value::Number(4096.into())
+        );
+        assert_eq!(
+            gguf_base.settings.get("common-key").unwrap(),
+            &serde_yaml::Value::String("common-value".to_string())
+        );
+
+        let model_a = config.models.get("model-a").unwrap();
+        assert_eq!(model_a.name, "model-a");
+        let model_a_settings = &model_a.settings;
+        assert_eq!(model_a_settings.len(), 3);
+        assert_eq!(
+            model_a_settings.get("n_ctx").unwrap(),
+            &serde_yaml::Value::Number(4096.into())
+        );
+        assert_eq!(
+            model_a_settings.get("common-key").unwrap(),
+            &serde_yaml::Value::String("common-value".to_string())
+        );
+        assert_eq!(
+            model_a_settings.get("path").unwrap(),
+            &serde_yaml::Value::String("/path/to/model-a.gguf".to_string())
+        );
+
+        let model_b = config.models.get("model-b").unwrap();
+        assert_eq!(model_b.name, "model-b");
+        let model_b_settings = &model_b.settings;
+        assert_eq!(model_b_settings.len(), 3);
+        assert_eq!(
+            model_b_settings.get("n_ctx").unwrap(),
+            &serde_yaml::Value::Number(8192.into())
+        ); // overridden
+        assert_eq!(
+            model_b_settings.get("common-key").unwrap(),
+            &serde_yaml::Value::String("common-value".to_string())
+        );
+        assert_eq!(
+            model_b_settings.get("path").unwrap(),
+            &serde_yaml::Value::String("/path/to/model-b.gguf".to_string())
         );
     }
 }

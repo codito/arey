@@ -57,6 +57,10 @@ enum Commands {
 /// Runs the main CLI application.
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
+    // let cli = Cli {
+    //     command: Commands::Chat { model: None },
+    //     verbose: true,
+    // };
 
     if cli.verbose {
         setup_logging().context("Failed to set up logging")?;
