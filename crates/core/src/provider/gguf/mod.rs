@@ -7,6 +7,7 @@ use crate::tools::{Tool, ToolSpec};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use llama_cpp_2::token::LlamaToken;
 use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -26,12 +27,18 @@ use tracing::{debug, instrument};
 mod template;
 use crate::provider::gguf::template::{ToolCallParser, apply_chat_template};
 
+struct GgufCacheState {
+    tokens: Vec<LlamaToken>,
+    raw_state: Vec<u8>,
+}
+
 pub struct GgufBaseModel {
     backend: Arc<LlamaBackend>,
     model: Arc<Mutex<LlamaModel>>,
     context_params: LlamaContextParams,
     // model_config: ModelConfig,
     metrics: ModelMetrics,
+    cache_state: Arc<Mutex<Option<GgufCacheState>>>,
     model_name: String,
 }
 
@@ -94,6 +101,7 @@ impl GgufBaseModel {
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
+            cache_state: Arc::new(Mutex::new(None)),
             model_name: model_config.name,
         })
     }
@@ -134,6 +142,7 @@ impl CompletionModel for GgufBaseModel {
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
         let shared_backend = self.backend.clone();
+        let cache_state = self.cache_state.clone();
         // Clone messages to capture owned copies to move into the closure
         let messages: Vec<ChatMessage> = messages.to_vec();
         let tool_specs: Option<Vec<ToolSpec>> =
@@ -160,34 +169,69 @@ impl CompletionModel for GgufBaseModel {
                     .context("Failed to retrieve default chat template")?
                     .to_string()?;
                 let prompt = apply_chat_template(&template_str, &messages, tool_specs.as_deref())?;
-                let prompt_tokens = model
-                    .str_to_token(&prompt, AddBos::Always)
-                    .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
-                // Try to match already evaluated prompt in context from previous calls and only evaluate the new tokens
-                // TODO
+                // Lock the shared cache state
+                let cache_guard = cache_state.blocking_lock();
+
+                let (prompt_tokens, common_prefix_len) = {
+                    let all_tokens = model
+                        .str_to_token(&prompt, AddBos::Always)
+                        .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
+
+                    if let Some(cached) = &*cache_guard {
+                        // Deserialize previous state into the new context
+                        unsafe {
+                            ctx.set_state_data(&cached.raw_state);
+                        }
+
+                        // Find the common prefix between the old and new prompt
+                        let common_len = all_tokens
+                            .iter()
+                            .zip(cached.tokens.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+
+                        // If the prompt has changed, remove the divergent part of the KV cache
+                        if common_len < cached.tokens.len() {
+                            // Seq ID 0, remove from common_len to the end of the cached sequence.
+                            ctx.clear_kv_cache_seq(
+                                Some(0),
+                                Some(common_len as u32),
+                                Some(cached.tokens.len() as u32),
+                            )?;
+                        }
+                        (all_tokens, common_len)
+                    } else {
+                        (all_tokens, 0)
+                    }
+                };
+
+                // We are done reading the cache, so we can release the lock
+                drop(cache_guard);
 
                 // Add the prompt tokens to context in batches
+                let tokens_to_process = &prompt_tokens[common_prefix_len..];
                 debug!(
-                    "Evaluating prompt with {} tokens in batches of {}",
-                    prompt_tokens.len(),
-                    n_batch
+                    "Evaluating prompt with {} tokens in batches of {} ({} from cache)",
+                    tokens_to_process.len(),
+                    n_batch,
+                    common_prefix_len,
                 );
                 let mut batch = LlamaBatch::new(n_batch, 1);
-                let mut in_token_count = 0i32; // Number of tokens in the current context
-                for chunk in prompt_tokens.chunks(n_batch) {
+                let mut in_token_count = common_prefix_len as i32; // Number of tokens in the current context
+                for (chunk_idx, chunk) in tokens_to_process.chunks(n_batch).enumerate() {
                     batch.clear();
-                    for token in chunk.iter() {
-                        in_token_count += 1;
-
+                    for (token_idx, token) in chunk.iter().enumerate() {
                         // Token position in context memory (KV cache) must be sequential
                         // (`token_pos`).
                         // Logits are computed only for the last token in the prompt. We set
                         // `is_last` accordingly.
-                        let token_pos = in_token_count - 1;
-                        let is_last = in_token_count == prompt_tokens.len() as i32;
+                        let token_pos =
+                            (common_prefix_len + chunk_idx * n_batch + token_idx) as i32;
+                        let is_last = token_pos as usize == prompt_tokens.len() - 1;
                         batch.add(*token, token_pos, &[0], is_last)?;
                     }
+                    in_token_count += batch.n_tokens();
 
                     ctx.decode(&mut batch)
                         .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
@@ -295,6 +339,20 @@ impl CompletionModel for GgufBaseModel {
                 let completion_latency_ms =
                     completion_end.duration_since(prompt_eval_end).as_millis() as f32;
 
+                // After the loop, before the task ends, save the new state.
+                let state_size = ctx.get_state_size();
+                let mut new_raw_state = vec![0u8; state_size];
+                unsafe {
+                    ctx.copy_state_data(new_raw_state.as_mut_ptr());
+                }
+
+                // Re-acquire lock to write the new state
+                let mut cache_guard = cache_state.blocking_lock();
+                *cache_guard = Some(GgufCacheState {
+                    tokens: prompt_tokens,
+                    raw_state: new_raw_state,
+                });
+
                 let _ = tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
                     prompt_tokens: prompt_token_count,
                     prompt_eval_latency_ms,
@@ -374,9 +432,103 @@ mod tests {
     fn test_gguf_model_complete() {
         // This test requires a real model and is complex to set up.
         // It would involve:
-        // 极速1. Pointing to a valid GGUF model file.
+        // 1. Pointing to a valid GGUF model file.
         // 2. Creating a GgufBaseModel.
         // 3. Calling complete with sample messages.
         // 4. Asserting on the streamed response.
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a valid GGUF model file for a full integration test"]
+    async fn test_gguf_model_kv_cache() {
+        use crate::completion::{CancellationToken, ChatMessage, CompletionModel, SenderType};
+        use futures::stream::StreamExt;
+        use std::env;
+
+        let model_path = env::var("AREY_TEST_GGUF_MODEL_PATH");
+        if model_path.is_err() {
+            println!("Skipping test_gguf_model_kv_cache: AREY_TEST_GGUF_MODEL_PATH not set");
+            return;
+        }
+
+        let mut settings = HashMap::new();
+        settings.insert("path".to_string(), model_path.unwrap().into());
+        let model_config = ModelConfig {
+            name: "test-gguf-cache".to_string(),
+            provider: crate::model::ModelProvider::Gguf,
+            settings,
+        };
+        let mut model = GgufBaseModel::new(model_config).unwrap();
+
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "The first three letters of the alphabet are:".to_string(),
+            tools: Vec::new(),
+        }];
+
+        let mut settings = HashMap::new();
+        settings.insert("max_tokens".to_string(), "10".to_string());
+
+        let mut first_latency = 0.0;
+        {
+            let mut stream = model
+                .complete(&messages, None, &settings, CancellationToken::new())
+                .await;
+
+            while let Some(Ok(completion)) = stream.next().await {
+                if let crate::completion::Completion::Metrics(metrics) = completion {
+                    first_latency = metrics.prompt_eval_latency_ms;
+                    break;
+                }
+            }
+        }
+
+        assert!(first_latency > 0.0, "First latency should be positive");
+
+        // Second call with same prompt should be faster due to cache
+        let mut second_latency = 0.0;
+        {
+            let mut stream = model
+                .complete(&messages, None, &settings, CancellationToken::new())
+                .await;
+
+            while let Some(Ok(completion)) = stream.next().await {
+                if let crate::completion::Completion::Metrics(metrics) = completion {
+                    second_latency = metrics.prompt_eval_latency_ms;
+                    break;
+                }
+            }
+        }
+
+        assert!(second_latency > 0.0, "Second latency should be positive");
+        assert!(
+            second_latency < first_latency,
+            "Second call with cache should be faster. first: {}, second: {}",
+            first_latency,
+            second_latency
+        );
+
+        // Third call with different prompt should have latency, but may still be fast.
+        // This part mainly ensures it doesn't crash.
+        let messages2 = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "The first three letters of the alphabet are not:".to_string(),
+            tools: Vec::new(),
+        }];
+
+        let mut third_latency = 0.0;
+        {
+            let mut stream = model
+                .complete(&messages2, None, &settings, CancellationToken::new())
+                .await;
+
+            while let Some(Ok(completion)) = stream.next().await {
+                if let crate::completion::Completion::Metrics(metrics) = completion {
+                    third_latency = metrics.prompt_eval_latency_ms;
+                    break;
+                }
+            }
+        }
+        assert!(third_latency > 0.0, "Third latency should be positive");
     }
 }
