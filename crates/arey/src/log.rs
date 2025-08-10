@@ -42,6 +42,7 @@ pub fn setup_logging() -> anyhow::Result<()> {
         .append(true)
         .open(log_path)?;
 
+    // Ensure the logs are flushed after every line
     let writer = Mutex::new(LineWriter::new(log_file));
 
     tracing_subscriber::fmt()

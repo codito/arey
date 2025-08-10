@@ -35,6 +35,25 @@ pub struct GgufBaseModel {
     model_name: String,
 }
 
+impl ModelConfig {
+    /// Convert the model config to model params
+    pub fn to_model_params(&self) -> LlamaModelParams {
+        let n_gpu_layers = self
+            .get_setting::<u32>("n_gpu_layers")
+            .inspect(|n| debug!("CUDA enabled: n_gpu_layers = {}", n));
+
+        LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers.unwrap_or(0))
+    }
+
+    /// Convert the model config to context params
+    pub fn to_context_params(&self) -> LlamaContextParams {
+        LlamaContextParams::default()
+            .with_n_threads(self.get_setting::<i32>("n_threads").unwrap_or(-1))
+            .with_n_batch(self.get_setting::<u32>("n_batch").unwrap_or(512))
+            .with_n_ctx(self.get_setting::<u32>("n_ctx").and_then(NonZeroU32::new))
+    }
+}
+
 impl GgufBaseModel {
     #[instrument(skip(model_config))]
     pub fn new(model_config: ModelConfig) -> Result<Self> {
@@ -42,13 +61,10 @@ impl GgufBaseModel {
         let tracing_enabled = is_tracing_enabled();
         send_logs_to_tracing(LogOptions::default().with_logs_enabled(tracing_enabled));
 
-        let path = model_config
-            .settings
-            .get("path")
-            .ok_or_else(|| anyhow!("'path' setting is required for gguf model"))?
-            .as_str()
-            .unwrap();
-        let expand_path = shellexpand::tilde(path).into_owned();
+        let path: String = model_config
+            .get_setting("path")
+            .ok_or_else(|| anyhow!("'path' setting is required for gguf model"))?;
+        let expand_path = shellexpand::tilde(&path).into_owned();
         let model_path = PathBuf::from(expand_path);
         debug!("Model path: {}", model_path.display());
 
@@ -61,34 +77,14 @@ impl GgufBaseModel {
 
         let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
 
+        let model_params = model_config.to_model_params();
+        let context_params = model_config.to_context_params();
         debug!("Model configuration: {:?}", model_config.settings);
-        let mut model_params = LlamaModelParams::default();
-        if let Some(n_gpu_layers) = model_config.settings.get("n_gpu_layers") {
-            debug!("CUDA enabled: n_gpu_layers = {:?}", n_gpu_layers);
-            if let Some(val) = n_gpu_layers.as_i64() {
-                model_params = model_params.with_n_gpu_layers(val as u32);
-            }
-        }
+        debug!("Model params: {:?}", model_params);
+        debug!("Context params: {:?}", context_params);
 
         let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
             .map_err(|e| anyhow!("Model loading failed: {e}"))?;
-
-        let mut context_params = LlamaContextParams::default();
-        if let Some(threads) = model_config
-            .settings
-            .get("n_threads")
-            .and_then(|v| v.as_i64())
-        {
-            context_params = context_params.with_n_threads(threads as i32);
-        }
-        if let Some(n_ctx) = model_config
-            .settings
-            .get("n_ctx")
-            .and_then(|v| v.as_i64())
-            .and_then(|v| NonZeroU32::new(v as u32))
-        {
-            context_params = context_params.with_n_ctx(Some(n_ctx));
-        }
 
         Ok(Self {
             backend: Arc::new(backend),
@@ -143,62 +139,87 @@ impl CompletionModel for GgufBaseModel {
         let tool_specs: Option<Vec<ToolSpec>> =
             tools.map(|t| t.iter().map(|tool| tool.clone().into()).collect());
 
-        debug!("Context params: {:?}", context_params);
-
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
                 let (start_re, end_re) = template::get_tool_call_regexes(&model_name);
                 let mut tool_parser = ToolCallParser::new(start_re, end_re)
                     .context("Failed to create tool call parser")?;
                 let model = model_ref.blocking_lock();
+
+                let n_batch = context_params.n_batch() as usize;
+
+                // Create a new context
                 let mut ctx = model
                     .new_context(&shared_backend, context_params)
                     .map_err(|e| anyhow!("Context creation failed: {e}"))?;
 
+                // Prepare the prompt
+                let prompt_eval_start = std::time::Instant::now();
                 let template_str = model
                     .chat_template(None)
                     .context("Failed to retrieve default chat template")?
                     .to_string()?;
                 let prompt = apply_chat_template(&template_str, &messages, tool_specs.as_deref())?;
-
-                let tokens = model
+                let prompt_tokens = model
                     .str_to_token(&prompt, AddBos::Always)
                     .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
-                let mut batch = LlamaBatch::new(tokens.len(), 1);
-                for (i, &token) in tokens.iter().enumerate() {
-                    batch
-                        .add(token, i as i32, &[0], i == tokens.len() - 1)
-                        .map_err(|e| anyhow!("Batch add failed: {e}"))?;
+                // Try to match already evaluated prompt in context from previous calls and only evaluate the new tokens
+                // TODO
+
+                // Add the prompt tokens to context in batches
+                debug!(
+                    "Evaluating prompt with {} tokens in batches of {}",
+                    prompt_tokens.len(),
+                    n_batch
+                );
+                let mut batch = LlamaBatch::new(n_batch, 1);
+                let mut in_token_count = 0i32; // Number of tokens in the current context
+                for chunk in prompt_tokens.chunks(n_batch) {
+                    batch.clear();
+                    for token in chunk.iter() {
+                        in_token_count += 1;
+
+                        // Token position in context memory (KV cache) must be sequential
+                        // (`token_pos`).
+                        // Logits are computed only for the last token in the prompt. We set
+                        // `is_last` accordingly.
+                        let token_pos = in_token_count - 1;
+                        let is_last = in_token_count == prompt_tokens.len() as i32;
+                        batch.add(*token, token_pos, &[0], is_last)?;
+                    }
+
+                    ctx.decode(&mut batch)
+                        .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
                 }
 
-                // Start timing for prompt evaluation
-                let start_time = std::time::Instant::now();
-
-                // Process prompt
-                ctx.decode(&mut batch)
-                    .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
-
                 // Capture prompt metrics
-                let prompt_token_count = tokens.len() as u32;
+                let prompt_token_count = prompt_tokens.len() as u32;
                 let prompt_eval_end = std::time::Instant::now();
-                let prompt_eval_latency_ms =
-                    prompt_eval_end.duration_since(start_time).as_millis() as f32;
+                let prompt_eval_latency_ms = prompt_eval_end
+                    .duration_since(prompt_eval_start)
+                    .as_millis() as f32;
+                debug!(
+                    "Prompt evaluation took {}ms for {} tokens",
+                    prompt_eval_latency_ms, prompt_token_count
+                );
 
                 let mut sampler =
                     LlamaSampler::chain_simple([LlamaSampler::dist(seed), LlamaSampler::greedy()]);
 
-                let mut n_cur = batch.n_tokens();
-                let mut token_count = 0;
+                let mut out_token_count = 0;
                 let mut decoder = encoding_rs::UTF_8.new_decoder();
 
                 // Generation loop
-                while token_count < max_tokens {
+                debug!("Starting generation loop");
+                // Use the token pos to sample in the last batch
+                let mut sample_pos = (in_token_count - 1) % n_batch as i32;
+                while out_token_count < max_tokens {
                     if cancel_token.is_cancelled() {
                         break;
                     }
 
-                    let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+                    let token = sampler.sample(&ctx, sample_pos);
                     sampler.accept(token);
 
                     // Skip special tokens: break on end of stream
@@ -214,12 +235,14 @@ impl CompletionModel for GgufBaseModel {
                     let mut last_chunk = String::with_capacity(32);
                     let _ = decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
 
+                    // Note we're now decoding one token at a time to get the logits
                     batch.clear();
-                    batch.add(token, n_cur, &[0], true)?;
+                    batch.add(token, in_token_count, &[0], true)?;
                     ctx.decode(&mut batch)?;
 
-                    n_cur += 1;
-                    token_count += 1;
+                    in_token_count += 1;
+                    out_token_count += 1;
+                    sample_pos = batch.n_tokens() - 1;
 
                     // Parse chunk for tool calls and text
                     let (plain_text, tool_calls) = tool_parser.parse(&last_chunk);
@@ -251,7 +274,7 @@ impl CompletionModel for GgufBaseModel {
                 }
 
                 // Send finish reason
-                let finish_reason = if token_count < max_tokens {
+                let finish_reason = if out_token_count < max_tokens {
                     "Stop"
                 } else {
                     "Length"
@@ -262,6 +285,10 @@ impl CompletionModel for GgufBaseModel {
                     finish_reason: Some(finish_reason.to_string()),
                     raw_chunk: None,
                 })));
+                debug!(
+                    "Completed text generation with finish reason: {}",
+                    finish_reason
+                );
 
                 // After generation loop, send completion metrics
                 let completion_end = std::time::Instant::now();
@@ -271,10 +298,14 @@ impl CompletionModel for GgufBaseModel {
                 let _ = tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
                     prompt_tokens: prompt_token_count,
                     prompt_eval_latency_ms,
-                    completion_tokens: token_count,
+                    completion_tokens: out_token_count,
                     completion_latency_ms,
                     raw_chunk: None,
                 })));
+                debug!(
+                    "Generated {} tokens in {}ms",
+                    out_token_count, completion_latency_ms
+                );
 
                 Ok(())
             })() {

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IntoDeserializer};
 use std::collections::HashMap;
 
 /// Model configuration for the tool.
@@ -10,6 +10,18 @@ pub struct ModelConfig {
     pub provider: ModelProvider,
     #[serde(default, flatten)]
     pub settings: HashMap<String, serde_yaml::Value>,
+}
+
+impl ModelConfig {
+    /// Get a setting value by key, deserializing it into the requested type.
+    pub fn get_setting<'a, T>(&'a self, key: &str) -> Option<T>
+    where
+        T: Deserialize<'a>,
+    {
+        self.settings
+            .get(key)
+            .and_then(|v| T::deserialize(v.clone().into_deserializer()).ok())
+    }
 }
 
 /// Supported model provider integrations (serialized as lowercase strings).
@@ -91,5 +103,35 @@ mod tests {
     fn test_model_metrics_default() {
         let metrics: ModelMetrics = Default::default();
         assert_eq!(metrics.init_latency_ms, 0.0);
+    }
+
+    #[test]
+    fn test_model_config_get_setting() {
+        let yaml = r#"
+            name: test_model
+            provider: openai
+            str_key: "hello"
+            int_key: 123
+            neg_int_key: -456
+        "#;
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Test getting a string
+        assert_eq!(
+            config.get_setting::<String>("str_key"),
+            Some("hello".to_string())
+        );
+
+        // Test getting different integer types
+        assert_eq!(config.get_setting::<i64>("int_key"), Some(123));
+        assert_eq!(config.get_setting::<u32>("int_key"), Some(123));
+        assert_eq!(config.get_setting::<i32>("neg_int_key"), Some(-456));
+
+        // Test getting a missing key
+        assert_eq!(config.get_setting::<String>("missing_key"), None);
+
+        // Test type mismatch
+        assert_eq!(config.get_setting::<i64>("str_key"), None);
+        assert_eq!(config.get_setting::<String>("int_key"), None);
     }
 }

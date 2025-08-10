@@ -34,12 +34,7 @@ impl Session {
             .await
             .context("Failed to load model with system prompt")?;
 
-        let context_size = model_config
-            .settings
-            .get("n_ctx")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-            .unwrap_or(4096);
+        let context_size = model_config.get_setting::<usize>("n_ctx").unwrap_or(4096);
 
         let metrics = Some(model.metrics());
 
@@ -81,8 +76,12 @@ impl Session {
         } else {
             Some(self.tools.as_slice())
         };
+        let max_tokens = settings
+            .get("max_tokens")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(1024);
 
-        let messages_to_send = self.get_trimmed_messages();
+        let messages_to_send = self.get_trimmed_messages(max_tokens);
 
         Ok(self
             .model
@@ -210,13 +209,22 @@ impl Session {
                 break;
             }
         }
+
+        debug!(
+            "Trimmed block of {} messages to {} messages using {} tokens",
+            block_messages.len(),
+            final_messages.len(),
+            used_tokens
+        );
+
         final_messages
     }
 
     /// Returns a list of messages that fits within the model's context window.
     /// It trims older messages, attempting to keep conversational turns intact.
-    fn get_trimmed_messages(&self) -> Vec<ChatMessage> {
-        let max_tokens = self.context_size;
+    fn get_trimmed_messages(&self, max_output_tokens: usize) -> Vec<ChatMessage> {
+        // Leave room for the response. TODO: use the max_tokens parameter from completion model.
+        let max_tokens = self.context_size - max_output_tokens;
 
         // Heuristic for messages without a known token count.
         let estimate_tokens = |msg: &ChatMessage| -> usize {
@@ -408,7 +416,7 @@ mod tests {
             .push((new_chat_msg(SenderType::Assistant, "A1"), Some(10)));
         session.add_message(SenderType::User, "U2, estimated"); // 14 chars -> 3 tokens est.
         // System(1) + U1(10) + A1(10) + U2_est(3) = 24 < 100. No trimming.
-        let trimmed = session.get_trimmed_messages();
+        let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 3);
     }
 
@@ -427,7 +435,7 @@ mod tests {
         // available_tokens = 30-1=29.
         // U2 block (10) fits. current_tokens=10.
         // U1 block (20) doesn't fit with U2 (10+20 > 29). Trim U1 block.
-        let trimmed = session.get_trimmed_messages();
+        let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 1);
         assert_eq!(trimmed[0].text, "U2");
     }
@@ -446,7 +454,7 @@ mod tests {
             .push((new_chat_msg(SenderType::User, "U2"), Some(15)));
         // available=34. U2 block (15) fits. current=15.
         // U1 block (20) doesn't fit with U2 (15+20 > 34). Trim U1 block.
-        let trimmed = session.get_trimmed_messages();
+        let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 1);
         assert_eq!(trimmed[0].text, "U2");
     }
@@ -474,7 +482,7 @@ mod tests {
 
         // Turn 2
         session.add_message(SenderType::User, "User message 2"); // est. 3 tokens
-        let messages_to_send = session.get_trimmed_messages();
+        let messages_to_send = session.get_trimmed_messages(0);
         // Sys(1)+U1_block(30)+U2_est(3) = 34 < 50. All sent.
         assert_eq!(messages_to_send.len(), 3);
 
@@ -495,7 +503,7 @@ mod tests {
         session
             .messages
             .push((new_chat_msg(SenderType::User, "another one"), Some(10)));
-        let messages_to_send_2 = session.get_trimmed_messages();
+        let messages_to_send_2 = session.get_trimmed_messages(0);
         // available=49. "another one" block(10) fits. current=10.
         // "U3" block(est 8) fits. current=18.
         // "U2" block(10) fits. current=28.
@@ -517,7 +525,7 @@ mod tests {
         // available_tokens = 40 (context) - 1 (system prompt) = 39
         // block_tokens_est = 6 (user) + 50 (tool) = 56. This is > 39.
         // The block must be truncated.
-        let trimmed = session.get_trimmed_messages();
+        let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 2, "Both messages should be present");
 
         assert_eq!(
@@ -538,5 +546,27 @@ mod tests {
             expected_truncated_text_len,
             "Tool message should be truncated to fit the budget"
         );
+    }
+
+    #[test]
+    fn test_get_trimmed_messages_with_max_output_tokens() {
+        let mut session = new_session(100);
+        session
+            .messages
+            .push((new_chat_msg(SenderType::User, "U1"), Some(25)));
+        session
+            .messages
+            .push((new_chat_msg(SenderType::Assistant, "A1"), Some(25)));
+
+        // available for prompt: 100 (context) - 40 (output) - 1 (system) = 59
+        // messages are 25+25=50. 50 < 59, so no trimming.
+        let trimmed_spacious = session.get_trimmed_messages(40);
+        assert_eq!(trimmed_spacious.len(), 2);
+
+        // available for prompt: 100 (context) - 51 (output) - 1 (system) = 48
+        // messages are 50. 50 > 48, so it must trim the oversized block.
+        let trimmed_tight = session.get_trimmed_messages(51);
+        assert_eq!(trimmed_tight.len(), 1, "Should trim the assistant message");
+        assert_eq!(trimmed_tight[0].text, "U1");
     }
 }
