@@ -160,6 +160,59 @@ impl Session {
             .push((assistant_message, Some(metrics.completion_tokens as usize)));
     }
 
+    /// Trims a single, oversized block of messages to fit within the available token budget.
+    ///
+    /// This function works backwards from the end of the block, prioritizing newer messages.
+    /// It aggressively truncates `Tool` messages if necessary to make the block fit, ensuring
+    /// the returned list of messages strictly adheres to the token limit.
+    fn trim_oversized_block(
+        &self,
+        block_messages: &[(ChatMessage, Option<usize>)],
+        available_tokens: usize,
+        estimate_tokens_fn: &dyn Fn(&ChatMessage) -> usize,
+    ) -> Vec<ChatMessage> {
+        let mut trimmed_messages = std::collections::VecDeque::new();
+        let mut used_tokens = 0;
+
+        // Iterate backwards over the block, adding newest messages first.
+        for (msg, count) in block_messages.iter().rev() {
+            let mut msg_to_add = msg.clone();
+            let mut tokens = count.unwrap_or_else(|| estimate_tokens_fn(&msg_to_add));
+
+            if used_tokens + tokens > available_tokens {
+                // If the message makes the block too large, try to shrink it.
+                // We only shrink tool responses as they are the most likely to be verbose.
+                if msg_to_add.sender == SenderType::Tool {
+                    let budget_for_this_msg = available_tokens.saturating_sub(used_tokens);
+                    // Use a 4 chars/token heuristic to determine how much text to keep.
+                    let chars_to_keep = budget_for_this_msg * 4;
+                    if msg_to_add.text.len() > chars_to_keep {
+                        msg_to_add.text.truncate(chars_to_keep);
+                        msg_to_add.text.push_str("\n... [truncated]");
+                        // After truncation, the token cost is now the budget we had.
+                        tokens = budget_for_this_msg;
+                    }
+                }
+            }
+
+            // Add the message only if it fits (either originally or after truncation).
+            if used_tokens + tokens <= available_tokens {
+                used_tokens += tokens;
+                trimmed_messages.push_front(msg_to_add);
+            } else {
+                // This message (even after potential truncation) is too large.
+                // Since we are iterating from newest to oldest, we can't skip this
+                // and take an older one, so we stop here.
+                debug!(
+                    "Token trimming: Skipping message to fit budget. Used tokens: {}, available: {}",
+                    used_tokens, available_tokens
+                );
+                break;
+            }
+        }
+        trimmed_messages.into_iter().collect()
+    }
+
     /// Returns a list of messages that fits within the model's context window.
     /// It trims older messages, attempting to keep conversational turns intact.
     fn get_trimmed_messages(&self) -> Vec<ChatMessage> {
@@ -207,7 +260,26 @@ impl Session {
                     start_index = i;
                     current_block_tokens = 0;
                 } else {
-                    break;
+                    // This block is too big to fit with the others.
+                    if start_index == self.messages.len() {
+                        // This is the *most recent* block, and it's oversized.
+                        // We cannot simply discard it, as that would mean sending an empty prompt.
+                        // Instead, we must truncate it to fit the context window.
+                        debug!(
+                            "Token trimming: Most recent block is oversized ({} tokens > {} available). Truncating it.",
+                            current_block_tokens, available_tokens
+                        );
+                        let oversized_block = &self.messages[i..];
+                        return self.trim_oversized_block(
+                            oversized_block,
+                            available_tokens,
+                            &estimate_tokens,
+                        );
+                    } else {
+                        // This is an older block that doesn't fit. We stop here and
+                        // only include the newer blocks that have already been approved.
+                        break;
+                    }
                 }
             }
         }
@@ -431,5 +503,40 @@ mod tests {
         // Should have U2, A2, U3, "another one". Total 4 messages.
         assert_eq!(messages_to_send_2.len(), 4);
         assert_eq!(messages_to_send_2[0].text, "User message 2");
+    }
+
+    #[test]
+    fn test_get_trimmed_messages_oversized_block_with_tool_message() {
+        // This test simulates a single conversational block that is too large for the context.
+        // The block contains a large tool message that should be truncated.
+        let mut session = new_session(40); // small context
+        session.add_message(SenderType::User, "Check the weather for me."); // 6 tokens est
+        let large_tool_output = "a".repeat(200); // 50 tokens est
+        session.add_message(SenderType::Tool, &large_tool_output); // This is part of the same block
+
+        // available_tokens = 40 (context) - 1 (system prompt) = 39
+        // block_tokens_est = 6 (user) + 50 (tool) = 56. This is > 39.
+        // The block must be truncated.
+        let trimmed = session.get_trimmed_messages();
+        assert_eq!(trimmed.len(), 2, "Both messages should be present");
+
+        assert_eq!(
+            trimmed[0].text, "Check the weather for me.",
+            "User message should be untouched"
+        );
+        assert!(
+            trimmed[1].text.ends_with("\n... [truncated]"),
+            "Tool message should be truncated"
+        );
+
+        // Calculate expected truncated size
+        // available_tokens = 39. User msg cost = 6. Remaining budget for tool msg = 33.
+        // Expected chars = 33 * 4 = 132.
+        let expected_truncated_text_len = 132 + "\n... [truncated]".len();
+        assert_eq!(
+            trimmed[1].text.len(),
+            expected_truncated_text_len,
+            "Tool message should be truncated to fit the budget"
+        );
     }
 }
