@@ -51,7 +51,6 @@ fn get_model_config(model_path: &Path, name: &str) -> ModelConfig {
 }
 
 #[tokio::test]
-#[ignore = "integration test that downloads a model"]
 async fn test_gguf_model_complete() {
     let model_path = match get_model_path().await {
         Ok(path) => path,
@@ -98,7 +97,6 @@ async fn test_gguf_model_complete() {
 }
 
 #[tokio::test]
-#[ignore = "integration test that downloads a model"]
 async fn test_gguf_model_kv_cache() {
     let model_path = match get_model_path().await {
         Ok(path) => path,
