@@ -10,10 +10,13 @@ use std::{
     io::copy,
     path::{Path, PathBuf},
 };
+use tokio::sync::OnceCell;
 
 const MODEL_URL: &str =
     "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-UD-Q4_K_XL.gguf";
 const MODEL_FILENAME: &str = "Qwen3-0.6B-UD-Q4_K_XL.gguf";
+
+static DOWNLOAD_ONCE: OnceCell<()> = OnceCell::const_new();
 
 fn get_test_data_dir() -> PathBuf {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -25,14 +28,24 @@ async fn get_model_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     fs::create_dir_all(&data_dir)?;
     let model_path = data_dir.join(MODEL_FILENAME);
 
-    if !model_path.exists() {
-        println!("Downloading test model from {}...", MODEL_URL);
-        let response = reqwest::get(MODEL_URL).await?;
-        let mut dest = fs::File::create(&model_path)?;
-        let content = response.bytes().await?;
-        copy(&mut content.as_ref(), &mut dest)?;
-        println!("Model downloaded to {}", model_path.display());
-    }
+    DOWNLOAD_ONCE
+        .get_or_init(|| async {
+            if !model_path.exists() {
+                println!("Downloading test model from {}...", MODEL_URL);
+                let response = reqwest::get(MODEL_URL)
+                    .await
+                    .expect("Failed to download test model");
+                let mut dest = fs::File::create(&model_path)
+                    .expect("Failed to create model file for download");
+                let content = response
+                    .bytes()
+                    .await
+                    .expect("Failed to read model bytes from response");
+                copy(&mut content.as_ref(), &mut dest).expect("Failed to write model to file");
+                println!("Model downloaded to {}", model_path.display());
+            }
+        })
+        .await;
 
     Ok(model_path)
 }
