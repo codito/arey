@@ -258,6 +258,7 @@ impl CompletionModel for GgufBaseModel {
                     LlamaSampler::chain_simple([LlamaSampler::dist(seed), LlamaSampler::greedy()]);
 
                 let mut out_token_count = 0;
+                let mut generated_tokens = Vec::new();
                 let mut decoder = encoding_rs::UTF_8.new_decoder();
 
                 // Generation loop
@@ -281,6 +282,7 @@ impl CompletionModel for GgufBaseModel {
 
                     let token = sampler.sample(&ctx, sample_pos);
                     sampler.accept(token);
+                    generated_tokens.push(token);
 
                     // Skip special tokens: break on end of stream
                     if model.is_eog_token(token) {
@@ -365,7 +367,12 @@ impl CompletionModel for GgufBaseModel {
                 // Re-acquire lock to write the new state
                 let mut cache_guard = cache_state.blocking_lock();
                 *cache_guard = Some(GgufCacheState {
-                    tokens: prompt_tokens,
+                    // Save the full context including the generated tokens for the next turn
+                    tokens: prompt_tokens
+                        .iter()
+                        .chain(generated_tokens.iter())
+                        .copied()
+                        .collect(),
                     raw_state: new_raw_state,
                 });
 
