@@ -36,6 +36,7 @@ pub fn apply_chat_template(
     });
 
     let template = if template_str.is_empty() {
+        debug!("Using default template");
         DEFAULT_TEMPLATE
     } else {
         template_str
@@ -69,24 +70,29 @@ pub fn apply_chat_template(
         .collect::<Result<_, _>>()
         .context("Failed to serialize tool spec")?;
 
-    tmpl.render(context! { messages => &context_messages, tools => &context_tools })
-        .inspect_err(|e| {
-            error!(
-                ?template,
-                ?context_messages,
-                tools = ?context_tools,
-                error = ?e,
-                "Failed to render chat template"
-            );
+    tmpl.render(context! {
+    messages => &context_messages,
+    tools => &context_tools,
+    add_generation_prompt => true, // append <im_start|>assistant
+    /* enable_thinking => false */
+    })
+    .inspect_err(|e| {
+        error!(
+            ?template,
+            ?context_messages,
+            tools = ?context_tools,
+            error = ?e,
+            "Failed to render chat template"
+        );
 
-            // render causes as well
-            let mut err = &e as &dyn std::error::Error;
-            while let Some(next_err) = err.source() {
-                error!("caused by: {next_err:#}");
-                err = next_err;
-            }
-        })
-        .context("Template rendering failed")
+        // render causes as well
+        let mut err = &e as &dyn std::error::Error;
+        while let Some(next_err) = err.source() {
+            error!("caused by: {next_err:#}");
+            err = next_err;
+        }
+    })
+    .context("Template rendering failed")
 }
 
 const DEFAULT_TOOL_CALL_START_TAG: &str = "<tool_call>";
