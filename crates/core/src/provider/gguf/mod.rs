@@ -218,23 +218,29 @@ impl CompletionModel for GgufBaseModel {
                     common_prefix_len,
                 );
                 let mut batch = LlamaBatch::new(n_batch, 1);
-                let mut in_token_count = common_prefix_len as i32; // Number of tokens in the current context
-                for (chunk_idx, chunk) in tokens_to_process.chunks(n_batch).enumerate() {
+                let mut in_token_count = common_prefix_len as i32;
+                for chunk in tokens_to_process.chunks(n_batch) {
                     batch.clear();
-                    for (token_idx, token) in chunk.iter().enumerate() {
-                        // Token position in context memory (KV cache) must be sequential
-                        // (`token_pos`).
-                        // Logits are computed only for the last token in the prompt. We set
-                        // `is_last` accordingly.
-                        let token_pos =
-                            (common_prefix_len + chunk_idx * n_batch + token_idx) as i32;
-                        let is_last = token_pos as usize == prompt_tokens.len() - 1;
-                        batch.add(*token, token_pos, &[0], is_last)?;
+                    for token in chunk.iter() {
+                        // Logits are computed only for the last token in the prompt.
+                        let is_last = in_token_count as usize == prompt_tokens.len() - 1;
+                        batch.add(*token, in_token_count, &[0], is_last)?;
+                        in_token_count += 1;
                     }
-                    in_token_count += batch.n_tokens();
-
                     ctx.decode(&mut batch)
                         .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
+                }
+
+                // If the entire prompt was from cache, we still need to decode the last token to
+                // generate logits for the next token.
+                if tokens_to_process.is_empty() && !prompt_tokens.is_empty() {
+                    batch.clear();
+                    // We need to re-evaluate the last token of the prompt to have logits to sample from
+                    let last_token_pos = (prompt_tokens.len() - 1) as i32;
+                    let last_token = prompt_tokens[last_token_pos as usize];
+                    batch.add(last_token, last_token_pos, &[0], true)?;
+                    ctx.decode(&mut batch)
+                        .map_err(|e| anyhow!("Final prompt token decoding failed: {e}"))?;
                 }
 
                 // Capture prompt metrics
@@ -256,8 +262,18 @@ impl CompletionModel for GgufBaseModel {
 
                 // Generation loop
                 debug!("Starting generation loop");
-                // Use the token pos to sample in the last batch
-                let mut sample_pos = (in_token_count - 1) % n_batch as i32;
+                // Use the token pos to sample in the last batch. The position is relative to the
+                // last batch decoded.
+                let mut sample_pos = if !prompt_tokens.is_empty() {
+                    if !tokens_to_process.is_empty() {
+                        ((tokens_to_process.len() - 1) % n_batch) as i32
+                    } else {
+                        // The last token was re-decoded in a batch of 1
+                        0
+                    }
+                } else {
+                    0
+                };
                 while out_token_count < max_tokens {
                     if cancel_token.is_cancelled() {
                         break;
@@ -460,7 +476,7 @@ mod tests {
         };
         let mut model = GgufBaseModel::new(model_config).unwrap();
 
-        let messages = vec![ChatMessage {
+        let messages1 = vec![ChatMessage {
             sender: SenderType::User,
             text: "The first three letters of the alphabet are:".to_string(),
             tools: Vec::new(),
@@ -469,37 +485,31 @@ mod tests {
         let mut settings = HashMap::new();
         settings.insert("max_tokens".to_string(), "10".to_string());
 
-        let mut first_latency = 0.0;
-        {
+        async fn get_prompt_latency(
+            model: &mut GgufBaseModel,
+            messages: &[ChatMessage],
+            settings: &HashMap<String, String>,
+        ) -> f32 {
             let mut stream = model
-                .complete(&messages, None, &settings, CancellationToken::new())
+                .complete(messages, None, settings, CancellationToken::new())
                 .await;
-
-            while let Some(Ok(completion)) = stream.next().await {
-                if let crate::completion::Completion::Metrics(metrics) = completion {
-                    first_latency = metrics.prompt_eval_latency_ms;
-                    break;
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(crate::completion::Completion::Metrics(metrics)) => {
+                        return metrics.prompt_eval_latency_ms;
+                    }
+                    Ok(_) => {}
+                    Err(e) => panic!("Stream returned an error: {}", e),
                 }
             }
+            0.0
         }
 
+        let first_latency = get_prompt_latency(&mut model, &messages1, &settings).await;
         assert!(first_latency > 0.0, "First latency should be positive");
 
         // Second call with same prompt should be faster due to cache
-        let mut second_latency = 0.0;
-        {
-            let mut stream = model
-                .complete(&messages, None, &settings, CancellationToken::new())
-                .await;
-
-            while let Some(Ok(completion)) = stream.next().await {
-                if let crate::completion::Completion::Metrics(metrics) = completion {
-                    second_latency = metrics.prompt_eval_latency_ms;
-                    break;
-                }
-            }
-        }
-
+        let second_latency = get_prompt_latency(&mut model, &messages1, &settings).await;
         assert!(second_latency > 0.0, "Second latency should be positive");
         assert!(
             second_latency < first_latency,
@@ -508,27 +518,25 @@ mod tests {
             second_latency
         );
 
-        // Third call with different prompt should have latency, but may still be fast.
-        // This part mainly ensures it doesn't crash.
+        // Third call with a longer prompt (append to previous)
         let messages2 = vec![ChatMessage {
             sender: SenderType::User,
-            text: "The first three letters of the alphabet are not:".to_string(),
+            text: "The first three letters of the alphabet are: A, B, C. What comes next?"
+                .to_string(),
             tools: Vec::new(),
         }];
-
-        let mut third_latency = 0.0;
-        {
-            let mut stream = model
-                .complete(&messages2, None, &settings, CancellationToken::new())
-                .await;
-
-            while let Some(Ok(completion)) = stream.next().await {
-                if let crate::completion::Completion::Metrics(metrics) = completion {
-                    third_latency = metrics.prompt_eval_latency_ms;
-                    break;
-                }
-            }
-        }
+        let third_latency = get_prompt_latency(&mut model, &messages2, &settings).await;
         assert!(third_latency > 0.0, "Third latency should be positive");
+
+        // Fourth call with a prompt that is a prefix of the previous one.
+        // This tests that the cache is correctly handled when tokens are removed.
+        let fourth_latency = get_prompt_latency(&mut model, &messages1, &settings).await;
+        assert!(fourth_latency > 0.0, "Fourth latency should be positive");
+        assert!(
+            fourth_latency < third_latency,
+            "Fourth call with prefix prompt should be faster than third. third: {}, fourth: {}",
+            third_latency,
+            fourth_latency
+        );
     }
 }
