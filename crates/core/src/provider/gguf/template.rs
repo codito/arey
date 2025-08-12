@@ -110,7 +110,7 @@ const DEFAULT_TOOL_CALL_END_TAG: &str = "</tool_call>";
 static MODEL_SPECIFIC_TAGS: Lazy<HashMap<&'static str, (&'static str, &'static str)>> =
     Lazy::new(|| {
         let mut m: HashMap<&'static str, (&'static str, &'static str)> = HashMap::new();
-        m.insert("granite", ("<|tool_call|>", r"$"));
+        m.insert("granite", ("<|tool_call|>", ""));
         m
     });
 
@@ -139,11 +139,17 @@ struct RawToolCall {
 
 impl ToolCallParser {
     pub fn new(start_tag_pattern: &str, end_tag_pattern: &str) -> Result<Self> {
-        let complete_call_pattern = format!(
-            r"{}(?s)(.*?){}",
-            escape(start_tag_pattern),
-            escape(end_tag_pattern)
-        );
+        let complete_call_pattern = if end_tag_pattern.is_empty() {
+            // For models with no end tag, we'll handle parsing with a different logic.
+            // This regex is a dummy that won't match anything, so the main loop is skipped.
+            "$^".to_string()
+        } else {
+            format!(
+                r"{}(?s)(.*?){}",
+                escape(start_tag_pattern),
+                escape(end_tag_pattern)
+            )
+        };
         Ok(Self {
             buffer: String::new(),
             next_id: 0,
@@ -161,6 +167,49 @@ impl ToolCallParser {
         let mut tool_calls = Vec::new();
         let mut plain_text = String::new();
         let mut last_end = 0;
+
+        // Special handling for models without a tool call end tag (e.g., Granite).
+        if self.complete_call_re.as_str() == "$^" {
+            if let Some(mat) = self.start_tag_re.find(&self.buffer) {
+                plain_text.push_str(&self.buffer[..mat.start()]);
+                let tool_call_part = self.buffer[mat.start()..].to_string();
+                let content = &tool_call_part[(mat.end() - mat.start())..];
+
+                if self.expects_array {
+                    match serde_json::from_str::<Vec<RawToolCall>>(content) {
+                        Ok(parsed) => {
+                            for raw_tool_call in parsed {
+                                tool_calls.push(ToolCall {
+                                    id: format!("call_{}", self.next_id),
+                                    name: raw_tool_call.name,
+                                    arguments: raw_tool_call.arguments.to_string(),
+                                });
+                                self.next_id += 1;
+                            }
+                            self.buffer.clear();
+                        }
+                        Err(e) if e.is_eof() => {
+                            // Incomplete JSON, so we buffer the tool call part.
+                            self.buffer = tool_call_part;
+                        }
+                        Err(_) => {
+                            // Invalid JSON, treat the whole tool call part as plain text.
+                            plain_text.push_str(&tool_call_part);
+                            self.buffer.clear();
+                        }
+                    }
+                } else {
+                    // Not expecting an array, and no end tag. This is an unsupported configuration.
+                    // Treat as plain text to avoid getting stuck.
+                    plain_text.push_str(&tool_call_part);
+                    self.buffer.clear();
+                }
+            } else {
+                plain_text.push_str(&self.buffer);
+                self.buffer.clear();
+            }
+            return (plain_text, tool_calls);
+        }
 
         for captures in self.complete_call_re.captures_iter(&self.buffer) {
             // There will be exactly one capture group in a successful match
@@ -558,8 +607,8 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_granite_array_of_calls() {
-        let mut parser = ToolCallParser::new("<|tool_call|>", "$").unwrap();
-        let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]$"#;
+        let mut parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
+        let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]"#;
         let (text, calls) = parser.parse(chunk);
 
         assert!(text.is_empty());
@@ -576,13 +625,13 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_granite_array_streaming() {
-        let mut parser = ToolCallParser::new("<|tool_call|>", "$").unwrap();
+        let mut parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
         let chunk1 = r#"<|tool_call|>[{"name": "search", "arguments": {"query": "rust"}}, "#;
         let (text, calls) = parser.parse(chunk1);
         assert_eq!(text, "");
         assert_eq!(calls.len(), 0);
 
-        let chunk2 = r#"{"name": "weather", "arguments": {"location": "moon"}}]$"#;
+        let chunk2 = r#"{"name": "weather", "arguments": {"location": "moon"}}]"#;
         let (text, calls) = parser.parse(chunk2);
         assert_eq!(text, "");
         assert_eq!(calls.len(), 2);
