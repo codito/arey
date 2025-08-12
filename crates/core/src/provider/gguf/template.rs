@@ -156,8 +156,8 @@ impl ToolCallParser {
                 plain_text.push_str(&self.buffer[last_end..outer_match.start()]);
 
                 let tool_content = inner_match.as_str().trim();
-                match serde_json::from_str::<RawToolCall>(tool_content) {
-                    Ok(raw_tool_call) => {
+                match parse_raw_tool_call(tool_content) {
+                    Some(raw_tool_call) => {
                         tool_calls.push(ToolCall {
                             id: format!("call_{}", self.next_id),
                             name: raw_tool_call.name,
@@ -165,12 +165,8 @@ impl ToolCallParser {
                         });
                         self.next_id += 1;
                     }
-                    Err(e) => {
-                        error!(
-                            "Failed to parse tool call JSON: {}. Content: '{}'",
-                            e, tool_content
-                        );
-                        // If parsing fails, treat the whole block as plain text.
+                    None => {
+                        error!("Failed to parse tool call JSON. Content: '{tool_content}'");
                         plain_text.push_str(outer_match.as_str());
                     }
                 }
@@ -195,6 +191,23 @@ impl ToolCallParser {
     pub fn flush(&mut self) -> String {
         std::mem::take(&mut self.buffer)
     }
+}
+
+fn parse_raw_tool_call(content: &str) -> Option<RawToolCall> {
+    // First try parsing as direct RawToolCall
+    if let Ok(raw) = serde_json::from_str::<RawToolCall>(content) {
+        return Some(raw);
+    }
+
+    // Then try wrapped format: { "call": { ... RawToolCall ... } }
+    if let Ok(wrapped) = serde_json::from_str::<serde_json::Value>(content)
+        && let Some(call_obj) = wrapped.get("call")
+        && let Ok(raw) = serde_json::from_value(call_obj.clone())
+    {
+        return Some(raw);
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -424,5 +437,47 @@ mod tests {
 
         let final_text = parser.flush();
         assert!(final_text.is_empty());
+    }
+
+    #[test]
+    fn test_tool_call_parser_wrapped_format() {
+        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let chunk = r#"<tool_call>{"call": {"name":"get_weather","arguments":{"location":"Paris"}}}</tool_call>"#;
+        let (_, calls) = parser.parse(chunk);
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments, r#"{"location":"Paris"}"#);
+    }
+
+    #[test]
+    fn test_tool_call_parser_mixed_formats() {
+        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let chunk = r#"
+            <tool_call>{"name":"direct_search","arguments":{"query":"Rust"}}</tool_call>
+            <tool_call>{"call": {"name":"wrapped_weather","arguments":{"location":"London"}}}</tool_call>
+        "#;
+        let (_, calls) = parser.parse(chunk);
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "direct_search");
+        assert_eq!(calls[0].arguments, r#"{"query":"Rust"}"#);
+        assert_eq!(calls[1].name, "wrapped_weather");
+        assert_eq!(calls[1].arguments, r#"{"location":"London"}"#);
+    }
+
+    #[test]
+    fn test_tool_call_parser_ignores_invalid() {
+        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let chunk = r#"<tool_call>This is not JSON</tool_call>
+            <tool_call>{"call": {"invalid_key": "value"}}</tool_call>
+            <tool_call>{"call": {"name": "missing_arguments"}}</tool_call>
+            <tool_call>{"wrong_top_key": {"name":"weather"}}</tool_call>"#;
+        let (text, calls) = parser.parse(chunk);
+
+        // All tool call tags should be present in output since parsing fails
+        assert_eq!(calls.len(), 0);
+        assert!(text.contains("<tool_call>"));
+        assert!(text.contains("</tool_call>"));
     }
 }
