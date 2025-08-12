@@ -1,11 +1,10 @@
+//! Chat template handling for GGUF models
 use crate::{
     completion::{ChatMessage, SenderType},
     tools::{ToolCall, ToolSpec},
 };
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use minijinja::{Environment, Error, ErrorKind, context, value::Value};
-use minijinja_contrib::pycompat::unknown_method_callback;
+use minijinja::{Environment, Error, State, context, value::Value};
 use once_cell::sync::Lazy;
 use regex::{Regex, escape};
 use serde_json;
@@ -28,17 +27,11 @@ pub fn apply_chat_template(
     );
     let mut env = Environment::new();
 
+    // We include minijinja with builtins for filters like tojson
     // Allow python compatibility methods like startswith to be available
     env.set_unknown_method_callback(unknown_method_callback);
-    env.add_filter("tojson", |v: Value| -> Result<String, Error> {
-        serde_json::to_string(&v).map_err(|e| {
-            Error::new(ErrorKind::InvalidOperation, "failed to convert to JSON").with_source(e)
-        })
-    });
-
-    env.add_filter("strftime_now", |format: String| -> String {
-        let now: DateTime<Utc> = Utc::now();
-        now.format(&format).to_string()
+    env.add_function("strftime_now", |format: String| {
+        chrono::Local::now().format(&format).to_string()
     });
 
     let template = if template_str.is_empty() {
@@ -101,21 +94,31 @@ pub fn apply_chat_template(
     .context("Template rendering failed")
 }
 
+fn unknown_method_callback(
+    state: &State,
+    value: &Value,
+    method: &str,
+    args: &[Value],
+) -> std::result::Result<Value, Error> {
+    debug!("Unknown method callback: {method}");
+    minijinja_contrib::pycompat::unknown_method_callback(state, value, method, args)
+}
+
 const DEFAULT_TOOL_CALL_START_TAG: &str = "<tool_call>";
 const DEFAULT_TOOL_CALL_END_TAG: &str = "</tool_call>";
 
 static MODEL_SPECIFIC_TAGS: Lazy<HashMap<&'static str, (&'static str, &'static str)>> =
     Lazy::new(|| {
         let mut m: HashMap<&'static str, (&'static str, &'static str)> = HashMap::new();
-        // Example for a hypothetical model:
-        m.insert("special-model-v1", ("<|tool_code|>", "<|/tool_code|>"));
+        m.insert("granite", ("<|tool_call|>", ""));
         m
     });
 
 pub fn get_tool_call_regexes(model_name: &str) -> (&'static str, &'static str) {
     MODEL_SPECIFIC_TAGS
-        .get(model_name)
-        .copied()
+        .iter()
+        .find(|(k, _)| model_name.to_lowercase().contains(*k))
+        .map(|(_, v)| *v)
         .unwrap_or((DEFAULT_TOOL_CALL_START_TAG, DEFAULT_TOOL_CALL_END_TAG))
 }
 
@@ -351,13 +354,13 @@ mod tests {
         assert_eq!(default_end, DEFAULT_TOOL_CALL_END_TAG);
 
         // Test model-specific case
-        let (specific_start, specific_end) = get_tool_call_regexes("special-model-v1");
-        assert_eq!(specific_start, "<|tool_code|>");
-        assert_eq!(specific_end, "<|/tool_code|>");
+        let (specific_start, specific_end) = get_tool_call_regexes("Granite-3.3-8b-Instruct");
+        assert_eq!(specific_start, "<|tool_call|>");
+        assert_eq!(specific_end, "");
     }
 
     #[test]
-    fn test_strftime_now_filter() {
+    fn test_strftime_now_function() {
         // This test verifies the strftime_now filter produces the expected format
         let messages = vec![ChatMessage {
             sender: SenderType::User,
@@ -365,9 +368,14 @@ mod tests {
             tools: vec![],
         }];
 
-        let template_with_format = r#"{{ "%Y-%m-%d %H:%M:%S" | strftime_now }}"#;
+        let template_with_format = r#"{% strftime_now("%Y-%m-%d %H:%M:%S") %}"#;
         let result = apply_chat_template(template_with_format, &messages, None);
-        assert!(result.is_ok(), "Template rendering failed");
+        assert!(
+            result.is_ok(),
+            "Template rendering failed. Template: {}, Error: {}",
+            template_with_format,
+            result.err().unwrap()
+        );
 
         let output = result.unwrap();
         println!("Formatted time: {}", output);
@@ -381,9 +389,14 @@ mod tests {
         );
 
         // Test with another format
-        let template_with_month_day = r#"{{ "%B %d" | strftime_now }}"#;
+        let template_with_month_day = r#"{% strftime_now("%B %d") %}"#;
         let result = apply_chat_template(template_with_month_day, &messages, None);
-        assert!(result.is_ok(), "Template rendering failed");
+        assert!(
+            result.is_ok(),
+            "Template rendering failed. Template: {}, Error: {}",
+            template_with_format,
+            result.err().unwrap()
+        );
 
         let output = result.unwrap();
         println!("Formatted month/day: {}", output);
