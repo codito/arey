@@ -19,9 +19,6 @@ const MODEL_FILENAME: &str = "Qwen3-0.6B-UD-Q4_K_XL.gguf";
 
 static DOWNLOAD_ONCE: OnceCell<()> = OnceCell::const_new();
 
-/// Mutex to ensure GGUF tests run serially, as the backend can only be initialized once.
-static GGUF_TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
 fn get_test_data_dir() -> PathBuf {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     PathBuf::from(manifest_dir).join("data")
@@ -69,7 +66,6 @@ fn get_model_config(model_path: &Path, name: &str) -> ModelConfig {
 
 #[tokio::test]
 async fn test_gguf_model_complete() {
-    let _guard = GGUF_TEST_MUTEX.lock().await;
     let model_path = match get_model_path().await {
         Ok(path) => path,
         Err(e) => {
@@ -116,7 +112,6 @@ async fn test_gguf_model_complete() {
 
 #[tokio::test]
 async fn test_gguf_model_kv_cache() {
-    let _guard = GGUF_TEST_MUTEX.lock().await;
     let model_path = match get_model_path().await {
         Ok(path) => path,
         Err(e) => {

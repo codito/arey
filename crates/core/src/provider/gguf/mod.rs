@@ -17,6 +17,7 @@ use llama_cpp_2::{
     model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
 use tokio::sync::Mutex;
@@ -26,6 +27,15 @@ use tracing::{debug, instrument};
 
 mod template;
 use crate::provider::gguf::template::{ToolCallParser, apply_chat_template};
+
+static GGUF_BACKEND: OnceCell<Arc<LlamaBackend>> = OnceCell::new();
+
+fn get_backend() -> Result<&'static Arc<LlamaBackend>> {
+    GGUF_BACKEND.get_or_try_init(|| -> Result<Arc<LlamaBackend>> {
+        let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
+        Ok(Arc::new(backend))
+    })
+}
 
 struct GgufCacheState {
     tokens: Vec<LlamaToken>,
@@ -84,7 +94,7 @@ impl GgufBaseModel {
             ));
         }
 
-        let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
+        let backend = get_backend()?.clone();
 
         let model_params = model_config.to_model_params();
         let context_params = model_config.to_context_params();
@@ -97,7 +107,7 @@ impl GgufBaseModel {
 
         Ok(Self {
             basename: model.meta_val_str("general.basename").unwrap(),
-            backend: Arc::new(backend),
+            backend,
             model: Arc::new(Mutex::new(model)),
             context_params,
             // model_config,
