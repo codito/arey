@@ -371,7 +371,7 @@ mod tests {
         // Test model-specific case
         let (specific_start, specific_end) = get_tool_call_regexes("Granite-3.3-8b-Instruct");
         assert_eq!(specific_start, "<|tool_call|>");
-        assert_eq!(specific_end, "");
+        assert_eq!(specific_end, "$");
     }
 
     #[test]
