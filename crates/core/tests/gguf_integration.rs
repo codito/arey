@@ -4,19 +4,23 @@ use arey_core::{
     provider::gguf::GgufBaseModel,
 };
 use futures::stream::StreamExt;
+use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
     env, fs,
     io::copy,
     path::{Path, PathBuf},
 };
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 
 const MODEL_URL: &str =
     "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-UD-Q4_K_XL.gguf";
 const MODEL_FILENAME: &str = "Qwen3-0.6B-UD-Q4_K_XL.gguf";
 
 static DOWNLOAD_ONCE: OnceCell<()> = OnceCell::const_new();
+
+/// Mutex to ensure GGUF tests run serially, as the backend can only be initialized once.
+static GGUF_TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 fn get_test_data_dir() -> PathBuf {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -65,6 +69,7 @@ fn get_model_config(model_path: &Path, name: &str) -> ModelConfig {
 
 #[tokio::test]
 async fn test_gguf_model_complete() {
+    let _guard = GGUF_TEST_MUTEX.lock().await;
     let model_path = match get_model_path().await {
         Ok(path) => path,
         Err(e) => {
@@ -111,6 +116,7 @@ async fn test_gguf_model_complete() {
 
 #[tokio::test]
 async fn test_gguf_model_kv_cache() {
+    let _guard = GGUF_TEST_MUTEX.lock().await;
     let model_path = match get_model_path().await {
         Ok(path) => path,
         Err(e) => {
