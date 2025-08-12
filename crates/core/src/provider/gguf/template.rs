@@ -110,7 +110,7 @@ const DEFAULT_TOOL_CALL_END_TAG: &str = "</tool_call>";
 static MODEL_SPECIFIC_TAGS: Lazy<HashMap<&'static str, (&'static str, &'static str)>> =
     Lazy::new(|| {
         let mut m: HashMap<&'static str, (&'static str, &'static str)> = HashMap::new();
-        m.insert("granite", ("<|tool_call|>", ""));
+        m.insert("granite", ("<|tool_call|>", "$"));
         m
     });
 
