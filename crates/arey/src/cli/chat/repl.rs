@@ -57,15 +57,7 @@ impl Command {
             }
             Command::Log => {
                 let chat_guard = session.lock().await;
-                match chat_guard.get_last_assistant_message().await {
-                    Some(ctx) => {
-                        println!(
-                            "\n=== TOOL CALLS ===\n{:#?}\n====================",
-                            ctx.tools
-                        );
-                    }
-                    None => println!("No logs available"),
-                }
+                dump_message_block(chat_guard.get_all_messages().await)?;
             }
             Command::Tool { names } => {
                 let chat_guard = session.lock().await;
@@ -416,6 +408,60 @@ async fn process_message(
     println!();
 
     Ok(true)
+}
+
+/// Display the last message block (from last user message to end)
+fn dump_message_block(messages: Vec<ChatMessage>) -> Result<()> {
+    // Find start of last block (last user message)
+    let start_idx = messages
+        .iter()
+        .rposition(|msg| msg.sender == SenderType::User)
+        .unwrap_or(0);
+
+    let last_block = &messages[start_idx..];
+
+    if last_block.is_empty() {
+        println!("No recent messages to display");
+        return Ok(());
+    }
+
+    println!("\n=== LAST MESSAGE BLOCK ===");
+    for (i, msg) in last_block.iter().enumerate() {
+        // Format sender with type-specific style
+        let sender_tag = match msg.sender {
+            SenderType::User => "USER:".to_string(),
+            SenderType::Assistant => "ASSISTANT:".to_string(),
+            SenderType::Tool => "TOOL:".to_string(),
+            SenderType::System => "SYSTEM:".to_string(),
+        };
+
+        // Truncate long messages
+        let max_length = 500;
+        let mut content = msg.text.clone();
+        let is_truncated = content.len() > max_length;
+
+        if is_truncated {
+            content.truncate(max_length);
+            content.push_str("\n... [truncated]");
+        }
+
+        println!("{} {}", sender_tag, content);
+
+        // Show tool calls if any
+        if !msg.tools.is_empty() {
+            println!("  Tools:");
+            for tool in &msg.tools {
+                println!("    - {}: {}", tool.name, tool.arguments);
+            }
+        }
+
+        if i < last_block.len() - 1 {
+            println!("------");
+        }
+    }
+    println!("========================");
+
+    Ok(())
 }
 
 /// Returns set of tool results as messages

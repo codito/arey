@@ -124,6 +124,12 @@ impl<'a> Chat<'a> {
         let session = self.session.lock().await;
         session.last_assistant_message().cloned()
     }
+
+    /// Get all messages from the session
+    pub async fn get_all_messages(&self) -> Vec<ChatMessage> {
+        let session = self.session.lock().await;
+        session.all_messages()
+    }
 }
 
 #[cfg(test)]

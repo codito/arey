@@ -4,14 +4,13 @@ use arey_core::{
     provider::gguf::GgufBaseModel,
 };
 use futures::stream::StreamExt;
-use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
     env, fs,
     io::copy,
     path::{Path, PathBuf},
 };
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::OnceCell;
 
 const MODEL_URL: &str =
     "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-UD-Q4_K_XL.gguf";
