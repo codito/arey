@@ -368,7 +368,7 @@ mod tests {
             tools: vec![],
         }];
 
-        let template_with_format = r#"{% strftime_now("%Y-%m-%d %H:%M:%S") %}"#;
+        let template_with_format = r#"{{ strftime_now("%Y-%m-%d %H:%M:%S") }}"#;
         let result = apply_chat_template(template_with_format, &messages, None);
         assert!(
             result.is_ok(),
@@ -389,7 +389,7 @@ mod tests {
         );
 
         // Test with another format
-        let template_with_month_day = r#"{% strftime_now("%B %d") %}"#;
+        let template_with_month_day = r#"{{ strftime_now("%B %d") }}"#;
         let result = apply_chat_template(template_with_month_day, &messages, None);
         assert!(
             result.is_ok(),
