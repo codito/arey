@@ -357,6 +357,47 @@ mod tests {
     }
 
     #[test]
+    fn test_strftime_now_filter() {
+        // This test verifies the strftime_now filter produces the expected format
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Test".into(),
+            tools: vec![],
+        }];
+
+        let template_with_format = r#"{{ "%Y-%m-%d %H:%M:%S" | strftime_now }}"#;
+        let result = apply_chat_template(template_with_format, &messages, None);
+        assert!(result.is_ok(), "Template rendering failed");
+
+        let output = result.unwrap();
+        println!("Formatted time: {}", output);
+
+        // Use regex to match the formatted time pattern: YYYY-MM-DD HH:MM:SS
+        let re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$").unwrap();
+        assert!(
+            re.is_match(&output),
+            "Output '{}' doesn't match expected time format",
+            output
+        );
+
+        // Test with another format
+        let template_with_month_day = r#"{{ "%B %d" | strftime_now }}"#;
+        let result = apply_chat_template(template_with_month_day, &messages, None);
+        assert!(result.is_ok(), "Template rendering failed");
+
+        let output = result.unwrap();
+        println!("Formatted month/day: {}", output);
+
+        // Should produce something like "August 12"
+        let re = regex::Regex::new(r"^\w+ \d{1,2}$").unwrap();
+        assert!(
+            re.is_match(&output),
+            "Output '{}' doesn't match month/day format",
+            output
+        );
+    }
+
+    #[test]
     fn test_tool_call_parser_split_across_chunks() {
         let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk1 = "Thinking...<tool_call>{\"name\": \"search\",";
