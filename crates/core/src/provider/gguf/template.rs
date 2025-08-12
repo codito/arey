@@ -3,6 +3,7 @@ use crate::{
     tools::{ToolCall, ToolSpec},
 };
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use minijinja::{Environment, Error, ErrorKind, context, value::Value};
 use minijinja_contrib::pycompat::unknown_method_callback;
 use once_cell::sync::Lazy;
@@ -33,6 +34,11 @@ pub fn apply_chat_template(
         serde_json::to_string(&v).map_err(|e| {
             Error::new(ErrorKind::InvalidOperation, "failed to convert to JSON").with_source(e)
         })
+    });
+
+    env.add_filter("strftime_now", |format: String| -> String {
+        let now: DateTime<Utc> = Utc::now();
+        now.format(&format).to_string()
     });
 
     let template = if template_str.is_empty() {
