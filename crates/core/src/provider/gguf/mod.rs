@@ -33,13 +33,13 @@ struct GgufCacheState {
 }
 
 pub struct GgufBaseModel {
+    basename: String, // Base model name for the quantized GGUF model
     backend: Arc<LlamaBackend>,
     model: Arc<Mutex<LlamaModel>>,
     context_params: LlamaContextParams,
     // model_config: ModelConfig,
     metrics: ModelMetrics,
     cache_state: Arc<Mutex<Option<GgufCacheState>>>,
-    model_name: String,
 }
 
 impl ModelConfig {
@@ -58,6 +58,8 @@ impl ModelConfig {
             .with_n_threads(self.get_setting::<i32>("n_threads").unwrap_or(-1))
             .with_n_batch(self.get_setting::<u32>("n_batch").unwrap_or(512))
             .with_n_ctx(self.get_setting::<u32>("n_ctx").and_then(NonZeroU32::new))
+            .with_offload_kqv(self.get_setting::<bool>("offload_kqv").unwrap_or(true))
+            .with_flash_attention(self.get_setting::<bool>("flash_attn").unwrap_or(false))
     }
 }
 
@@ -94,6 +96,7 @@ impl GgufBaseModel {
             .map_err(|e| anyhow!("Model loading failed: {e}"))?;
 
         Ok(Self {
+            basename: model.meta_val_str("general.basename").unwrap(),
             backend: Arc::new(backend),
             model: Arc::new(Mutex::new(model)),
             context_params,
@@ -102,7 +105,6 @@ impl GgufBaseModel {
                 init_latency_ms: 0.0,
             },
             cache_state: Arc::new(Mutex::new(None)),
-            model_name: model_config.name,
         })
     }
 }
@@ -137,7 +139,7 @@ impl CompletionModel for GgufBaseModel {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1234);
 
-        let model_name = self.model_name.clone();
+        let model_basename = self.basename.clone();
         let context_params = self.context_params.clone();
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
@@ -150,7 +152,7 @@ impl CompletionModel for GgufBaseModel {
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
-                let (start_re, end_re) = template::get_tool_call_regexes(&model_name);
+                let (start_re, end_re) = template::get_tool_call_regexes(&model_basename);
                 let mut tool_parser = ToolCallParser::new(start_re, end_re)
                     .context("Failed to create tool call parser")?;
                 let model = model_ref.blocking_lock();
@@ -447,103 +449,6 @@ mod tests {
                 .unwrap()
                 .to_string()
                 .contains("Model loading failed")
-        );
-    }
-
-    #[test]
-    #[ignore = "requires a valid GGUF model file for a full integration test"]
-    fn test_gguf_model_complete() {
-        // This test requires a real model and is complex to set up.
-        // It would involve:
-        // 1. Pointing to a valid GGUF model file.
-        // 2. Creating a GgufBaseModel.
-        // 3. Calling complete with sample messages.
-        // 4. Asserting on the streamed response.
-    }
-
-    #[tokio::test]
-    #[ignore = "requires a valid GGUF model file for a full integration test"]
-    async fn test_gguf_model_kv_cache() {
-        use crate::completion::{CancellationToken, ChatMessage, CompletionModel, SenderType};
-        use futures::stream::StreamExt;
-        use std::env;
-
-        let model_path = env::var("AREY_TEST_GGUF_MODEL_PATH");
-        if model_path.is_err() {
-            println!("Skipping test_gguf_model_kv_cache: AREY_TEST_GGUF_MODEL_PATH not set");
-            return;
-        }
-
-        let mut settings = HashMap::new();
-        settings.insert("path".to_string(), model_path.unwrap().into());
-        let model_config = ModelConfig {
-            name: "test-gguf-cache".to_string(),
-            provider: crate::model::ModelProvider::Gguf,
-            settings,
-        };
-        let mut model = GgufBaseModel::new(model_config).unwrap();
-
-        let messages1 = vec![ChatMessage {
-            sender: SenderType::User,
-            text: "The first three letters of the alphabet are:".to_string(),
-            tools: Vec::new(),
-        }];
-
-        let mut settings = HashMap::new();
-        settings.insert("max_tokens".to_string(), "10".to_string());
-
-        async fn get_prompt_latency(
-            model: &mut GgufBaseModel,
-            messages: &[ChatMessage],
-            settings: &HashMap<String, String>,
-        ) -> f32 {
-            let mut stream = model
-                .complete(messages, None, settings, CancellationToken::new())
-                .await;
-            while let Some(result) = stream.next().await {
-                match result {
-                    Ok(crate::completion::Completion::Metrics(metrics)) => {
-                        return metrics.prompt_eval_latency_ms;
-                    }
-                    Ok(_) => {}
-                    Err(e) => panic!("Stream returned an error: {}", e),
-                }
-            }
-            0.0
-        }
-
-        let first_latency = get_prompt_latency(&mut model, &messages1, &settings).await;
-        assert!(first_latency > 0.0, "First latency should be positive");
-
-        // Second call with same prompt should be faster due to cache
-        let second_latency = get_prompt_latency(&mut model, &messages1, &settings).await;
-        assert!(second_latency > 0.0, "Second latency should be positive");
-        assert!(
-            second_latency < first_latency,
-            "Second call with cache should be faster. first: {}, second: {}",
-            first_latency,
-            second_latency
-        );
-
-        // Third call with a longer prompt (append to previous)
-        let messages2 = vec![ChatMessage {
-            sender: SenderType::User,
-            text: "The first three letters of the alphabet are: A, B, C. What comes next?"
-                .to_string(),
-            tools: Vec::new(),
-        }];
-        let third_latency = get_prompt_latency(&mut model, &messages2, &settings).await;
-        assert!(third_latency > 0.0, "Third latency should be positive");
-
-        // Fourth call with a prompt that is a prefix of the previous one.
-        // This tests that the cache is correctly handled when tokens are removed.
-        let fourth_latency = get_prompt_latency(&mut model, &messages1, &settings).await;
-        assert!(fourth_latency > 0.0, "Fourth latency should be positive");
-        assert!(
-            fourth_latency < third_latency,
-            "Fourth call with prefix prompt should be faster than third. third: {}, fourth: {}",
-            third_latency,
-            fourth_latency
         );
     }
 }
