@@ -243,18 +243,6 @@ impl CompletionModel for GgufBaseModel {
                         .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
                 }
 
-                // If the entire prompt was from cache, we still need to decode the last token to
-                // generate logits for the next token.
-                if tokens_to_process.is_empty() && !prompt_tokens.is_empty() {
-                    batch.clear();
-                    // We need to re-evaluate the last token of the prompt to have logits to sample from
-                    let last_token_pos = (prompt_tokens.len() - 1) as i32;
-                    let last_token = prompt_tokens[last_token_pos as usize];
-                    batch.add(last_token, last_token_pos, &[0], true)?;
-                    ctx.decode(&mut batch)
-                        .map_err(|e| anyhow!("Final prompt token decoding failed: {e}"))?;
-                }
-
                 // Capture prompt metrics
                 let prompt_token_count = prompt_tokens.len() as u32;
                 let prompt_eval_end = std::time::Instant::now();
