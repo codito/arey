@@ -110,7 +110,7 @@ const DEFAULT_TOOL_CALL_END_TAG: &str = "</tool_call>";
 static MODEL_SPECIFIC_TAGS: Lazy<HashMap<&'static str, (&'static str, &'static str)>> =
     Lazy::new(|| {
         let mut m: HashMap<&'static str, (&'static str, &'static str)> = HashMap::new();
-        m.insert("granite", ("<|tool_call|>", "$"));
+        m.insert("granite", ("<|tool_call|>", r"$"));
         m
     });
 
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn test_tool_call_parser_granite_array_of_calls() {
         let mut parser = ToolCallParser::new("<|tool_call|>", "$").unwrap();
-        let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]$"#;
+        let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]"#;
         let (text, calls) = parser.parse(chunk);
 
         assert!(text.is_empty());
@@ -582,7 +582,7 @@ mod tests {
         assert_eq!(text, "");
         assert_eq!(calls.len(), 0);
 
-        let chunk2 = r#"{"name": "weather", "arguments": {"location": "moon"}}]$"#;
+        let chunk2 = r#"{"name": "weather", "arguments": {"location": "moon"}}]"#;
         let (text, calls) = parser.parse(chunk2);
         assert_eq!(text, "");
         assert_eq!(calls.len(), 2);
