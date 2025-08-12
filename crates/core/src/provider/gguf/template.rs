@@ -128,6 +128,7 @@ pub struct ToolCallParser {
     next_id: usize,
     complete_call_re: Regex,
     start_tag_re: Regex,
+    expects_array: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -150,6 +151,8 @@ impl ToolCallParser {
                 .context("Invalid regex for complete tool call")?,
             start_tag_re: Regex::new(&escape(start_tag_pattern))
                 .context("Invalid regex for tool call start tag")?,
+            // Heuristic: Granite uses a different start tag and its content is a JSON array of tool calls.
+            expects_array: start_tag_pattern == "<|tool_call|>",
         })
     }
 
@@ -165,14 +168,22 @@ impl ToolCallParser {
                 plain_text.push_str(&self.buffer[last_end..outer_match.start()]);
 
                 let tool_content = inner_match.as_str().trim();
-                match parse_raw_tool_call(tool_content) {
-                    Some(raw_tool_call) => {
-                        tool_calls.push(ToolCall {
-                            id: format!("call_{}", self.next_id),
-                            name: raw_tool_call.name,
-                            arguments: raw_tool_call.arguments.to_string(),
-                        });
-                        self.next_id += 1;
+                let parsed_calls = if self.expects_array {
+                    parse_tool_call_array(tool_content)
+                } else {
+                    parse_single_tool_call(tool_content).map(|c| vec![c])
+                };
+
+                match parsed_calls {
+                    Some(raw_tool_calls) => {
+                        for raw_tool_call in raw_tool_calls {
+                            tool_calls.push(ToolCall {
+                                id: format!("call_{}", self.next_id),
+                                name: raw_tool_call.name,
+                                arguments: raw_tool_call.arguments.to_string(),
+                            });
+                            self.next_id += 1;
+                        }
                     }
                     None => {
                         error!("Failed to parse tool call JSON. Content: '{tool_content}'");
@@ -202,7 +213,7 @@ impl ToolCallParser {
     }
 }
 
-fn parse_raw_tool_call(content: &str) -> Option<RawToolCall> {
+fn parse_single_tool_call(content: &str) -> Option<RawToolCall> {
     // First try parsing as direct RawToolCall
     if let Ok(raw) = serde_json::from_str::<RawToolCall>(content) {
         return Some(raw);
@@ -217,6 +228,10 @@ fn parse_raw_tool_call(content: &str) -> Option<RawToolCall> {
     }
 
     None
+}
+
+fn parse_tool_call_array(content: &str) -> Option<Vec<RawToolCall>> {
+    serde_json::from_str(content).ok()
 }
 
 #[cfg(test)]
@@ -539,5 +554,39 @@ mod tests {
         assert_eq!(calls.len(), 0);
         assert!(text.contains("<tool_call>"));
         assert!(text.contains("</tool_call>"));
+    }
+
+    #[test]
+    fn test_tool_call_parser_granite_array_of_calls() {
+        let mut parser = ToolCallParser::new("<|tool_call|>", "$").unwrap();
+        let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]$"#;
+        let (text, calls) = parser.parse(chunk);
+
+        assert!(text.is_empty());
+        assert_eq!(calls.len(), 2);
+
+        assert_eq!(calls[0].name, "search");
+        assert_eq!(calls[0].arguments, "{\"query\":\"rust\"}");
+        assert_eq!(calls[1].name, "weather");
+        assert_eq!(calls[1].arguments, "{\"location\":\"moon\"}");
+
+        let final_text = parser.flush();
+        assert!(final_text.is_empty());
+    }
+
+    #[test]
+    fn test_tool_call_parser_granite_array_streaming() {
+        let mut parser = ToolCallParser::new("<|tool_call|>", "$").unwrap();
+        let chunk1 = r#"<|tool_call|>[{"name": "search", "arguments": {"query": "rust"}}, "#;
+        let (text, calls) = parser.parse(chunk1);
+        assert_eq!(text, "");
+        assert_eq!(calls.len(), 0);
+
+        let chunk2 = r#"{"name": "weather", "arguments": {"location": "moon"}}]$"#;
+        let (text, calls) = parser.parse(chunk2);
+        assert_eq!(text, "");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "search");
+        assert_eq!(calls[1].name, "weather");
     }
 }
