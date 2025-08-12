@@ -20,8 +20,20 @@ const MODEL_FILENAME: &str = "Qwen3-0.6B-UD-Q4_K_XL.gguf";
 static DOWNLOAD_ONCE: OnceCell<()> = OnceCell::const_new();
 
 fn get_test_data_dir() -> PathBuf {
+    // If environment variable is set, use that
+    if let Ok(dir) = env::var("AREY_TEST_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    // Otherwise, use target/arey-test-data in the project root (workspace)
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    PathBuf::from(manifest_dir).join("data")
+    let mut path = PathBuf::from(manifest_dir);
+    // Go up two levels to get workspace root (since we're in crates/core/tests)
+    path.pop();
+    path.pop();
+    path.push("target");
+    path.push("arey-test-data");
+    path
 }
 
 async fn get_model_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
