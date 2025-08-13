@@ -13,6 +13,7 @@ use rustyline::completion::{Candidate, Completer};
 use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::{CompletionType, Editor, Helper, Highlighter, Validator};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -57,15 +58,9 @@ impl Command {
             }
             Command::Log => {
                 let chat_guard = session.lock().await;
-                match chat_guard.get_last_assistant_message().await {
-                    Some(ctx) => {
-                        println!(
-                            "\n=== TOOL CALLS ===\n{:#?}\n====================",
-                            ctx.tools
-                        );
-                    }
-                    None => println!("No logs available"),
-                }
+                let messages = chat_guard.get_all_messages().await;
+                let block = format_message_block(&messages)?;
+                println!("{}", block);
             }
             Command::Tool { names } => {
                 let chat_guard = session.lock().await;
@@ -418,6 +413,61 @@ async fn process_message(
     Ok(true)
 }
 
+/// Format the last message block (from last user message to end) into a string.
+fn format_message_block(messages: &[ChatMessage]) -> Result<String> {
+    // Find start of last block (last user message)
+    let start_idx = messages
+        .iter()
+        .rposition(|msg| msg.sender == SenderType::User)
+        .unwrap_or(0);
+
+    let last_block = &messages[start_idx..];
+
+    if last_block.is_empty() {
+        return Ok("No recent messages to display".to_string());
+    }
+
+    let mut out = String::new();
+
+    out.push_str("\n=== LAST MESSAGE BLOCK ===\n");
+    for (i, msg) in last_block.iter().enumerate() {
+        // Format sender with type-specific style
+        let sender_tag = match msg.sender {
+            SenderType::User => "USER:".to_string(),
+            SenderType::Assistant => "ASSISTANT:".to_string(),
+            SenderType::Tool => "TOOL:".to_string(),
+            SenderType::System => "SYSTEM:".to_string(),
+        };
+
+        // Truncate long messages
+        let max_length = 500;
+        let mut content = msg.text.clone();
+        let is_truncated = content.len() > max_length;
+
+        if is_truncated {
+            content.truncate(max_length);
+            content.push_str("\n... [truncated]");
+        }
+
+        out.push_str(&format!("{} {}\n", sender_tag, content));
+
+        // Show tool calls if any
+        if !msg.tools.is_empty() {
+            out.push_str("  Tools:\n");
+            for tool in &msg.tools {
+                out.push_str(&format!("    - {}: {}\n", tool.name, tool.arguments));
+            }
+        }
+
+        if i < last_block.len() - 1 {
+            out.push_str("------\n");
+        }
+    }
+    out.push_str("========================\n");
+
+    Ok(out)
+}
+
 /// Returns set of tool results as messages
 async fn process_tools(
     available_tools: &HashMap<&str, Arc<dyn Tool>>,
@@ -443,13 +493,54 @@ async fn process_tools(
             }
         };
 
-        let args = serde_json::from_str(&call.arguments).unwrap_or_else(|e| {
-            debug!(
-                "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
-                e, call.arguments
-            );
-            serde_json::Value::Null
-        });
+        // Normalize tool call arguments - could be direct JSON, escaped JSON, or plain string
+        debug!("Raw tool call arguments: '{}'", call.arguments);
+
+        let args = match serde_json::from_str(&call.arguments) {
+            Ok(value) => {
+                debug!("Parsed as direct JSON: {}", value);
+                value
+            }
+            Err(first_error) => {
+                debug!(
+                    "First parse failed: {}. Trying raw string parse",
+                    first_error
+                );
+                match serde_json::from_str::<Value>(&call.arguments) {
+                    Ok(value) => {
+                        debug!("Parsed as raw JSON string: {}", value);
+                        value
+                    }
+                    Err(second_error) => {
+                        debug!(
+                            "Second parse failed: {}. Falling back to input wrapper",
+                            second_error
+                        );
+                        serde_json::json!({ "input": call.arguments })
+                    }
+                }
+            }
+        };
+
+        // If we got a string, try to parse that string as JSON to see if it's really a structured value.
+        let args = match &args {
+            Value::String(s) => match serde_json::from_str(s) {
+                Ok(parsed_value) => {
+                    debug!("Unescaped inner JSON string successfully: {}", parsed_value);
+                    parsed_value
+                }
+                Err(inner_error) => {
+                    debug!(
+                        "Failed to unescape inner JSON: {}. Keeping as string.",
+                        inner_error
+                    );
+                    args
+                }
+            },
+            _ => args,
+        };
+
+        debug!("Final tool arguments: {}", args);
         let output = match tool.execute(&args).await {
             Ok(out) => out,
             Err(e) => {
@@ -496,12 +587,13 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use arey_core::{
-        completion::SenderType,
+        completion::{ChatMessage, SenderType},
         tools::{Tool, ToolError, ToolResult},
     };
     use async_trait::async_trait;
     use rustyline::history::DefaultHistory;
     use serde_json::{Value, json};
+    use std::vec;
 
     #[derive(Debug)]
     struct MockTool;
@@ -563,5 +655,185 @@ mod tests {
         assert_eq!(tool_result.output, json!("mock tool output"));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_tools_with_stringified_json_argument() -> Result<()> {
+        struct ArgRecorder;
+        #[async_trait]
+        impl Tool for ArgRecorder {
+            fn name(&self) -> String {
+                "arg_recorder".to_string()
+            }
+
+            fn description(&self) -> String {
+                "Records arguments".to_string()
+            }
+
+            fn parameters(&self) -> Value {
+                json!({})
+            }
+
+            async fn execute(&self, args: &Value) -> std::result::Result<Value, ToolError> {
+                Ok(args.clone())
+            }
+        }
+
+        let tool: Arc<dyn Tool> = Arc::new(ArgRecorder);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("arg_recorder", tool.clone())]);
+        // The arguments are a string that itself is a JSON object
+        let tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "arg_recorder".to_string(),
+            arguments: r#""{\"arg\":42}""#.to_string(),
+        }];
+
+        let messages = process_tools(&available_tools, &tool_calls).await?;
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+
+        // The tool should have received the parsed JSON object: {"arg":42}
+        assert_eq!(tool_result.output, json!({"arg":42}));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_tools_with_non_json_string() -> Result<()> {
+        struct ArgRecorder;
+        #[async_trait]
+        impl Tool for ArgRecorder {
+            fn name(&self) -> String {
+                "arg_recorder".to_string()
+            }
+
+            fn description(&self) -> String {
+                "Records arguments".to_string()
+            }
+
+            fn parameters(&self) -> Value {
+                json!({})
+            }
+
+            async fn execute(&self, args: &Value) -> std::result::Result<Value, ToolError> {
+                Ok(args.clone())
+            }
+        }
+
+        let tool: Arc<dyn Tool> = Arc::new(ArgRecorder);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("arg_recorder", tool.clone())]);
+        let tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "arg_recorder".to_string(),
+            arguments: "plain string".to_string(),
+        }];
+
+        let messages = process_tools(&available_tools, &tool_calls).await?;
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+
+        // We expect the tool to have received: {"input": "plain string"}
+        assert_eq!(tool_result.output, json!({ "input": "plain string" }));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_message_block_empty() {
+        let messages = vec![];
+        let result = format_message_block(&messages).unwrap();
+        assert_eq!(result, "No recent messages to display");
+    }
+
+    #[test]
+    fn test_format_message_block_single_user() {
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Test".to_string(),
+            tools: vec![],
+        }];
+        let result = format_message_block(&messages).unwrap();
+        let expected = r#"
+=== LAST MESSAGE BLOCK ===
+USER: Test
+========================
+"#;
+        assert!(result.contains(expected.trim()));
+    }
+
+    #[test]
+    fn test_format_message_block_multiple_turns() {
+        let messages = vec![
+            ChatMessage {
+                sender: SenderType::User,
+                text: "First".to_string(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "First Response".to_string(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::User,
+                text: "Second".to_string(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "Second Response".to_string(),
+                tools: vec![],
+            },
+        ];
+        let result = format_message_block(&messages).unwrap();
+        let expected = r#"
+=== LAST MESSAGE BLOCK ===
+USER: Second
+------
+ASSISTANT: Second Response
+========================
+"#;
+        assert!(result.contains(expected.trim()));
+    }
+
+    #[test]
+    fn test_format_message_block_truncation() {
+        let long_text = "a".repeat(600);
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: long_text,
+            tools: vec![],
+        }];
+        let result = format_message_block(&messages).unwrap();
+        let truncated_part = "a".repeat(500) + "\n... [truncated]";
+        assert!(result.contains(&truncated_part));
+        assert!(result.contains("[truncated]"));
+    }
+
+    #[test]
+    fn test_format_message_block_tools() {
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Run tool".to_string(),
+            tools: vec![ToolCall {
+                id: "id1".to_string(),
+                name: "tool1".to_string(),
+                arguments: "{\"arg\":1}".to_string(),
+            }],
+        }];
+        let result = format_message_block(&messages).unwrap();
+        let expected = r#"
+=== LAST MESSAGE BLOCK ===
+USER: Run tool
+  Tools:
+    - tool1: {"arg":1}
+========================
+"#;
+        assert!(result.contains(expected.trim()));
     }
 }

@@ -99,6 +99,11 @@ impl Session {
         self.metrics.as_ref()
     }
 
+    /// Get all messages in the conversation
+    pub fn all_messages(&self) -> Vec<ChatMessage> {
+        self.messages.iter().map(|(msg, _)| msg.clone()).collect()
+    }
+
     /// Get the last message from the assistant
     pub fn last_assistant_message(&self) -> Option<&ChatMessage> {
         self.messages

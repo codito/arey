@@ -1,5 +1,5 @@
 mod assets;
-mod provider;
+pub mod provider;
 
 pub mod completion;
 pub mod config;

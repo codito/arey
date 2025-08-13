@@ -34,15 +34,16 @@ tokio-stream.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 notify.workspace = true
-minijinja = "2.11.0"
+minijinja = { version = "2.11.0", features = ["builtins", "json"] }
 minijinja-contrib = { version = "2.11.0", features = ["pycompat"] }
-llama-cpp-2 = "=0.1.113"
-llama-cpp-sys-2 = "=0.1.113"
+llama-cpp-2 = "=0.1.116"
+llama-cpp-sys-2 = "=0.1.116"
 
 [dev-dependencies]
 tempfile = { workspace = true, features = [] }
 wiremock = { workspace = true, features = [] }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+reqwest = { workspace = true, features = ["json"] }
 
 
 [features]

@@ -7,6 +7,7 @@ use crate::tools::{Tool, ToolSpec};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use llama_cpp_2::token::LlamaToken;
 use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -16,6 +17,7 @@ use llama_cpp_2::{
     model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::{num::NonZeroU32, path::PathBuf};
 use tokio::sync::Mutex;
@@ -26,13 +28,28 @@ use tracing::{debug, instrument};
 mod template;
 use crate::provider::gguf::template::{ToolCallParser, apply_chat_template};
 
+static GGUF_BACKEND: OnceCell<Arc<LlamaBackend>> = OnceCell::new();
+
+fn get_backend() -> Result<&'static Arc<LlamaBackend>> {
+    GGUF_BACKEND.get_or_try_init(|| -> Result<Arc<LlamaBackend>> {
+        let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
+        Ok(Arc::new(backend))
+    })
+}
+
+struct GgufCacheState {
+    tokens: Vec<LlamaToken>,
+    raw_state: Vec<u8>,
+}
+
 pub struct GgufBaseModel {
+    basename: String, // Base model name for the quantized GGUF model
     backend: Arc<LlamaBackend>,
     model: Arc<Mutex<LlamaModel>>,
     context_params: LlamaContextParams,
     // model_config: ModelConfig,
     metrics: ModelMetrics,
-    model_name: String,
+    cache_state: Arc<Mutex<Option<GgufCacheState>>>,
 }
 
 impl ModelConfig {
@@ -51,6 +68,8 @@ impl ModelConfig {
             .with_n_threads(self.get_setting::<i32>("n_threads").unwrap_or(-1))
             .with_n_batch(self.get_setting::<u32>("n_batch").unwrap_or(512))
             .with_n_ctx(self.get_setting::<u32>("n_ctx").and_then(NonZeroU32::new))
+            .with_offload_kqv(self.get_setting::<bool>("offload_kqv").unwrap_or(true))
+            .with_flash_attention(self.get_setting::<bool>("flash_attn").unwrap_or(false))
     }
 }
 
@@ -75,7 +94,7 @@ impl GgufBaseModel {
             ));
         }
 
-        let backend = LlamaBackend::init().map_err(|e| anyhow!("Backend init failed: {e}"))?;
+        let backend = get_backend()?.clone();
 
         let model_params = model_config.to_model_params();
         let context_params = model_config.to_context_params();
@@ -87,14 +106,15 @@ impl GgufBaseModel {
             .map_err(|e| anyhow!("Model loading failed: {e}"))?;
 
         Ok(Self {
-            backend: Arc::new(backend),
+            basename: model.meta_val_str("general.basename").unwrap(),
+            backend,
             model: Arc::new(Mutex::new(model)),
             context_params,
             // model_config,
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
             },
-            model_name: model_config.name,
+            cache_state: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -129,11 +149,12 @@ impl CompletionModel for GgufBaseModel {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1234);
 
-        let model_name = self.model_name.clone();
+        let model_basename = self.basename.clone();
         let context_params = self.context_params.clone();
         let model_ref = self.model.clone();
         let cancel_token = cancel_token.clone();
         let shared_backend = self.backend.clone();
+        let cache_state = self.cache_state.clone();
         // Clone messages to capture owned copies to move into the closure
         let messages: Vec<ChatMessage> = messages.to_vec();
         let tool_specs: Option<Vec<ToolSpec>> =
@@ -141,7 +162,7 @@ impl CompletionModel for GgufBaseModel {
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
-                let (start_re, end_re) = template::get_tool_call_regexes(&model_name);
+                let (start_re, end_re) = template::get_tool_call_regexes(&model_basename);
                 let mut tool_parser = ToolCallParser::new(start_re, end_re)
                     .context("Failed to create tool call parser")?;
                 let model = model_ref.blocking_lock();
@@ -160,35 +181,64 @@ impl CompletionModel for GgufBaseModel {
                     .context("Failed to retrieve default chat template")?
                     .to_string()?;
                 let prompt = apply_chat_template(&template_str, &messages, tool_specs.as_deref())?;
-                let prompt_tokens = model
-                    .str_to_token(&prompt, AddBos::Always)
-                    .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
 
-                // Try to match already evaluated prompt in context from previous calls and only evaluate the new tokens
-                // TODO
+                // Lock the shared cache state
+                let cache_guard = cache_state.blocking_lock();
+
+                let (prompt_tokens, common_prefix_len) = {
+                    let all_tokens = model
+                        .str_to_token(&prompt, AddBos::Always)
+                        .map_err(|e| anyhow!("Tokenization failed: {e}"))?;
+
+                    if let Some(cached) = &*cache_guard {
+                        // Deserialize previous state into the new context
+                        unsafe {
+                            ctx.set_state_data(&cached.raw_state);
+                        }
+
+                        // Find the common prefix between the old and new prompt
+                        let common_len = all_tokens
+                            .iter()
+                            .zip(cached.tokens.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+
+                        // If the prompt has changed, remove the divergent part of the KV cache
+                        if common_len < cached.tokens.len() {
+                            // Seq ID 0, remove from common_len to the end of the cached sequence.
+                            ctx.clear_kv_cache_seq(
+                                Some(0),
+                                Some(common_len as u32),
+                                Some(cached.tokens.len() as u32),
+                            )?;
+                        }
+                        (all_tokens, common_len)
+                    } else {
+                        (all_tokens, 0)
+                    }
+                };
+
+                // We are done reading the cache, so we can release the lock
+                drop(cache_guard);
 
                 // Add the prompt tokens to context in batches
+                let tokens_to_process = &prompt_tokens[common_prefix_len..];
                 debug!(
-                    "Evaluating prompt with {} tokens in batches of {}",
-                    prompt_tokens.len(),
-                    n_batch
+                    "Evaluating prompt with {} tokens in batches of {} ({} from cache)",
+                    tokens_to_process.len(),
+                    n_batch,
+                    common_prefix_len,
                 );
                 let mut batch = LlamaBatch::new(n_batch, 1);
-                let mut in_token_count = 0i32; // Number of tokens in the current context
-                for chunk in prompt_tokens.chunks(n_batch) {
+                let mut in_token_count = common_prefix_len as i32;
+                for chunk in tokens_to_process.chunks(n_batch) {
                     batch.clear();
                     for token in chunk.iter() {
+                        // Logits are computed only for the last token in the prompt.
+                        let is_last = in_token_count as usize == prompt_tokens.len() - 1;
+                        batch.add(*token, in_token_count, &[0], is_last)?;
                         in_token_count += 1;
-
-                        // Token position in context memory (KV cache) must be sequential
-                        // (`token_pos`).
-                        // Logits are computed only for the last token in the prompt. We set
-                        // `is_last` accordingly.
-                        let token_pos = in_token_count - 1;
-                        let is_last = in_token_count == prompt_tokens.len() as i32;
-                        batch.add(*token, token_pos, &[0], is_last)?;
                     }
-
                     ctx.decode(&mut batch)
                         .map_err(|e| anyhow!("Prompt decoding failed: {e}"))?;
                 }
@@ -208,12 +258,23 @@ impl CompletionModel for GgufBaseModel {
                     LlamaSampler::chain_simple([LlamaSampler::dist(seed), LlamaSampler::greedy()]);
 
                 let mut out_token_count = 0;
+                let mut generated_tokens = Vec::new();
                 let mut decoder = encoding_rs::UTF_8.new_decoder();
 
                 // Generation loop
                 debug!("Starting generation loop");
-                // Use the token pos to sample in the last batch
-                let mut sample_pos = (in_token_count - 1) % n_batch as i32;
+                // Use the token pos to sample in the last batch. The position is relative to the
+                // last batch decoded.
+                let mut sample_pos = if !prompt_tokens.is_empty() {
+                    if !tokens_to_process.is_empty() {
+                        ((tokens_to_process.len() - 1) % n_batch) as i32
+                    } else {
+                        // The last token was re-decoded in a batch of 1
+                        0
+                    }
+                } else {
+                    0
+                };
                 while out_token_count < max_tokens {
                     if cancel_token.is_cancelled() {
                         break;
@@ -221,6 +282,7 @@ impl CompletionModel for GgufBaseModel {
 
                     let token = sampler.sample(&ctx, sample_pos);
                     sampler.accept(token);
+                    generated_tokens.push(token);
 
                     // Skip special tokens: break on end of stream
                     if model.is_eog_token(token) {
@@ -295,6 +357,25 @@ impl CompletionModel for GgufBaseModel {
                 let completion_latency_ms =
                     completion_end.duration_since(prompt_eval_end).as_millis() as f32;
 
+                // After the loop, before the task ends, save the new state.
+                let state_size = ctx.get_state_size();
+                let mut new_raw_state = vec![0u8; state_size];
+                unsafe {
+                    ctx.copy_state_data(new_raw_state.as_mut_ptr());
+                }
+
+                // Re-acquire lock to write the new state
+                let mut cache_guard = cache_state.blocking_lock();
+                *cache_guard = Some(GgufCacheState {
+                    // Save the full context including the generated tokens for the next turn
+                    tokens: prompt_tokens
+                        .iter()
+                        .chain(generated_tokens.iter())
+                        .copied()
+                        .collect(),
+                    raw_state: new_raw_state,
+                });
+
                 let _ = tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
                     prompt_tokens: prompt_token_count,
                     prompt_eval_latency_ms,
@@ -367,16 +448,5 @@ mod tests {
                 .to_string()
                 .contains("Model loading failed")
         );
-    }
-
-    #[test]
-    #[ignore = "requires a valid GGUF model file for a full integration test"]
-    fn test_gguf_model_complete() {
-        // This test requires a real model and is complex to set up.
-        // It would involve:
-        // 极速1. Pointing to a valid GGUF model file.
-        // 2. Creating a GgufBaseModel.
-        // 3. Calling complete with sample messages.
-        // 4. Asserting on the streamed response.
     }
 }
