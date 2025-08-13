@@ -244,11 +244,9 @@ impl ToolCallParser {
         }
 
         let remainder = &self.buffer[last_end..];
-
-        if let Some(mat) = self.start_tag_re.find_iter(remainder).last() {
-            let split_point = mat.start();
-            plain_text.push_str(&remainder[..split_point]);
-            self.buffer.drain(..last_end + split_point);
+        if let Some(first_start) = self.start_tag_re.find(remainder) {
+            plain_text.push_str(&remainder[..first_start.start()]);
+            self.buffer.drain(..last_end + first_start.start());
         } else {
             plain_text.push_str(remainder);
             self.buffer.clear();
