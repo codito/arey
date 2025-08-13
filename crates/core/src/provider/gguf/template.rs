@@ -638,4 +638,70 @@ mod tests {
         assert_eq!(calls[0].name, "search");
         assert_eq!(calls[1].name, "weather");
     }
+
+    #[test]
+    fn test_tool_call_parser_malformed_json() {
+        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let chunk = "<tool_call>{invalid json}</tool_call>";
+        let (text, calls) = parser.parse(chunk);
+        assert_eq!(text, "<tool_call>{invalid json}</tool_call>");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_flush_returns_partial_buffer() {
+        let mut parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
+        parser.parse("<|tool_call|>[{\"name\":\"test");
+        let flushed = parser.flush();
+        assert_eq!(flushed, "<|tool_call|>[{\"name\":\"test");
+    }
+
+    #[test]
+    fn test_tool_call_parser_multiple_start_tags_without_end() {
+        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let chunk = "<tool_call>start<tool_call>middle";
+        let (text, calls) = parser.parse(chunk);
+        assert_eq!(text, "");
+        assert!(calls.is_empty());
+        assert_eq!(parser.buffer, "<tool_call>start<tool_call>middle");
+    }
+
+    #[test]
+    fn test_assistant_message_with_content_text() {
+        let messages = vec![
+            ChatMessage {
+                sender: SenderType::User,
+                text: "How are you?".into(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "I'm doing well!".into(),
+                tools: vec![],
+            },
+        ];
+
+        let result = apply_chat_template("", &messages, None);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("I'm doing well!"));
+    }
+
+    #[test]
+    fn test_tool_call_parser_repeated_calls() {
+        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let chunk = r#"
+            <tool_call>{"name":"search","arguments":{"query":"python"}}</tool_call>
+            <tool_call>{"name":"search","arguments":{"query":"rust"}}</tool_call>
+            <tool_call>{"name":"search","arguments":{"query":"ai"}}</tool_call>
+        "#;
+        let (_, calls) = parser.parse(chunk);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].name, "search");
+        assert_eq!(calls[0].arguments, r#"{"query":"python"}"#);
+        assert_eq!(calls[1].name, "search");
+        assert_eq!(calls[1].arguments, r#"{"query":"rust"}"#);
+        assert_eq!(calls[2].name, "search");
+        assert_eq!(calls[2].arguments, r#"{"query":"ai"}"#);
+    }
 }
