@@ -656,15 +656,18 @@ USER: Test
                 text: "Second".to_string(),
                 tools: vec![],
             },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "Second Response".to_string(),
+                tools: vec![],
+            },
         ];
         let result = format_message_block(&messages).unwrap();
         let expected = r#"
 === LAST MESSAGE BLOCK ===
 USER: Second
 ------
-ASSISTANT: First Response
-------
-USER: First
+ASSISTANT: Second Response
 ========================
 "#;
         assert!(result.contains(expected.trim()));
