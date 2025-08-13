@@ -13,6 +13,7 @@ use rustyline::completion::{Candidate, Completer};
 use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::{CompletionType, Editor, Helper, Highlighter, Validator};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -492,13 +493,19 @@ async fn process_tools(
             }
         };
 
-        let args = serde_json::from_str(&call.arguments).unwrap_or_else(|e| {
-            debug!(
-                "Failed to parse tool arguments, defaulting to null. Error: {}, Args: '{}'",
-                e, call.arguments
-            );
-            serde_json::Value::Null
-        });
+        // Normalize tool call arguments - could be direct JSON, escaped JSON, or plain string
+        let args = serde_json::from_str(&call.arguments)
+            .or_else(|_| serde_json::from_str::<Value>(&call.arguments))
+            .unwrap_or_else(|_| {
+                // Both attempts failed, create a JSON object with the raw input
+                serde_json::json!({ "input": call.arguments })
+            });
+
+        // If we got a string, try to parse that string as JSON to see if it's really a structured value.
+        let args = match args {
+            Value::String(s) => serde_json::from_str(&s).unwrap_or(Value::String(s)),
+            _ => args,
+        };
         let output = match tool.execute(&args).await {
             Ok(out) => out,
             Err(e) => {
@@ -611,6 +618,92 @@ mod tests {
         let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
         assert_eq!(tool_result.call.id, "call_1");
         assert_eq!(tool_result.output, json!("mock tool output"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_tools_with_stringified_json_argument() -> Result<()> {
+        struct ArgRecorder;
+        #[async_trait]
+        impl Tool for ArgRecorder {
+            fn name(&self) -> String {
+                "arg_recorder".to_string()
+            }
+
+            fn description(&self) -> String {
+                "Records arguments".to_string()
+            }
+
+            fn parameters(&self) -> Value {
+                json!({})
+            }
+
+            async fn execute(&self, args: &Value) -> std::result::Result<Value, ToolError> {
+                Ok(args.clone())
+            }
+        }
+
+        let tool: Arc<dyn Tool> = Arc::new(ArgRecorder);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("arg_recorder", tool.clone())]);
+        // The arguments are a string that itself is a JSON object
+        let tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "arg_recorder".to_string(),
+            arguments: r#""{\"arg\":42}""#.to_string(),
+        }];
+
+        let messages = process_tools(&available_tools, &tool_calls).await?;
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+
+        // The tool should have received the parsed JSON object: {"arg":42}
+        assert_eq!(tool_result.output, json!({"arg":42}));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_process_tools_with_non_json_string() -> Result<()> {
+        struct ArgRecorder;
+        #[async_trait]
+        impl Tool for ArgRecorder {
+            fn name(&self) -> String {
+                "arg_recorder".to_string()
+            }
+
+            fn description(&self) -> String {
+                "Records arguments".to_string()
+            }
+
+            fn parameters(&self) -> Value {
+                json!({})
+            }
+
+            async fn execute(&self, args: &Value) -> std::result::Result<Value, ToolError> {
+                Ok(args.clone())
+            }
+        }
+
+        let tool: Arc<dyn Tool> = Arc::new(ArgRecorder);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("arg_recorder", tool.clone())]);
+        let tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "arg_recorder".to_string(),
+            arguments: "plain string".to_string(),
+        }];
+
+        let messages = process_tools(&available_tools, &tool_calls).await?;
+
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+
+        // We expect the tool to have received: {"input": "plain string"}
+        assert_eq!(tool_result.output, json!({ "input": "plain string" }));
 
         Ok(())
     }
