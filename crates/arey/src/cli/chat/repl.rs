@@ -494,18 +494,53 @@ async fn process_tools(
         };
 
         // Normalize tool call arguments - could be direct JSON, escaped JSON, or plain string
-        let args = serde_json::from_str(&call.arguments)
-            .or_else(|_| serde_json::from_str::<Value>(&call.arguments))
-            .unwrap_or_else(|_| {
-                // Both attempts failed, create a JSON object with the raw input
-                serde_json::json!({ "input": call.arguments })
-            });
+        debug!("Raw tool call arguments: '{}'", call.arguments);
+
+        let args = match serde_json::from_str(&call.arguments) {
+            Ok(value) => {
+                debug!("Parsed as direct JSON: {}", value);
+                value
+            }
+            Err(first_error) => {
+                debug!(
+                    "First parse failed: {}. Trying raw string parse",
+                    first_error
+                );
+                match serde_json::from_str::<Value>(&call.arguments) {
+                    Ok(value) => {
+                        debug!("Parsed as raw JSON string: {}", value);
+                        value
+                    }
+                    Err(second_error) => {
+                        debug!(
+                            "Second parse failed: {}. Falling back to input wrapper",
+                            second_error
+                        );
+                        serde_json::json!({ "input": call.arguments })
+                    }
+                }
+            }
+        };
 
         // If we got a string, try to parse that string as JSON to see if it's really a structured value.
-        let args = match args {
-            Value::String(s) => serde_json::from_str(&s).unwrap_or(Value::String(s)),
+        let args = match &args {
+            Value::String(s) => match serde_json::from_str(s) {
+                Ok(parsed_value) => {
+                    debug!("Unescaped inner JSON string successfully: {}", parsed_value);
+                    parsed_value
+                }
+                Err(inner_error) => {
+                    debug!(
+                        "Failed to unescape inner JSON: {}. Keeping as string.",
+                        inner_error
+                    );
+                    args
+                }
+            },
             _ => args,
         };
+
+        debug!("Final tool arguments: {}", args);
         let output = match tool.execute(&args).await {
             Ok(out) => out,
             Err(e) => {
