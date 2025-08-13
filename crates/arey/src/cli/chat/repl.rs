@@ -57,7 +57,9 @@ impl Command {
             }
             Command::Log => {
                 let chat_guard = session.lock().await;
-                dump_message_block(chat_guard.get_all_messages().await)?;
+                let messages = chat_guard.get_all_messages().await;
+                let block = format_message_block(&messages)?;
+                println!("{}", block);
             }
             Command::Tool { names } => {
                 let chat_guard = session.lock().await;
@@ -410,8 +412,8 @@ async fn process_message(
     Ok(true)
 }
 
-/// Display the last message block (from last user message to end)
-fn dump_message_block(messages: Vec<ChatMessage>) -> Result<()> {
+/// Format the last message block (from last user message to end) into a string.
+fn format_message_block(messages: &[ChatMessage]) -> Result<String> {
     // Find start of last block (last user message)
     let start_idx = messages
         .iter()
@@ -421,11 +423,12 @@ fn dump_message_block(messages: Vec<ChatMessage>) -> Result<()> {
     let last_block = &messages[start_idx..];
 
     if last_block.is_empty() {
-        println!("No recent messages to display");
-        return Ok(());
+        return Ok("No recent messages to display".to_string());
     }
 
-    println!("\n=== LAST MESSAGE BLOCK ===");
+    let mut out = String::new();
+
+    out.push_str("\n=== LAST MESSAGE BLOCK ===\n");
     for (i, msg) in last_block.iter().enumerate() {
         // Format sender with type-specific style
         let sender_tag = match msg.sender {
@@ -445,23 +448,23 @@ fn dump_message_block(messages: Vec<ChatMessage>) -> Result<()> {
             content.push_str("\n... [truncated]");
         }
 
-        println!("{} {}", sender_tag, content);
+        out.push_str(&format!("{} {}\n", sender_tag, content));
 
         // Show tool calls if any
         if !msg.tools.is_empty() {
-            println!("  Tools:");
+            out.push_str("  Tools:\n");
             for tool in &msg.tools {
-                println!("    - {}: {}", tool.name, tool.arguments);
+                out.push_str(&format!("    - {}: {}\n", tool.name, tool.arguments));
             }
         }
 
         if i < last_block.len() - 1 {
-            println!("------");
+            out.push_str("------\n");
         }
     }
-    println!("========================");
+    out.push_str("========================\n");
 
-    Ok(())
+    Ok(out)
 }
 
 /// Returns set of tool results as messages
@@ -542,12 +545,13 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use arey_core::{
-        completion::SenderType,
+        completion::{ChatMessage, SenderType},
         tools::{Tool, ToolError, ToolResult},
     };
     use async_trait::async_trait;
     use rustyline::history::DefaultHistory;
     use serde_json::{Value, json};
+    use std::vec;
 
     #[derive(Debug)]
     struct MockTool;
@@ -609,5 +613,96 @@ mod tests {
         assert_eq!(tool_result.output, json!("mock tool output"));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_format_message_block_empty() {
+        let messages = vec![];
+        let result = format_message_block(&messages).unwrap();
+        assert_eq!(result, "No recent messages to display");
+    }
+
+    #[test]
+    fn test_format_message_block_single_user() {
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Test".to_string(),
+            tools: vec![],
+        }];
+        let result = format_message_block(&messages).unwrap();
+        let expected = r#"
+=== LAST MESSAGE BLOCK ===
+USER: Test
+========================
+"#;
+        assert!(result.contains(expected.trim()));
+    }
+
+    #[test]
+    fn test_format_message_block_multiple_turns() {
+        let messages = vec![
+            ChatMessage {
+                sender: SenderType::User,
+                text: "First".to_string(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "First Response".to_string(),
+                tools: vec![],
+            },
+            ChatMessage {
+                sender: SenderType::User,
+                text: "Second".to_string(),
+                tools: vec![],
+            },
+        ];
+        let result = format_message_block(&messages).unwrap();
+        let expected = r#"
+=== LAST MESSAGE BLOCK ===
+USER: Second
+------
+ASSISTANT: First Response
+------
+USER: First
+========================
+"#;
+        assert!(result.contains(expected.trim()));
+    }
+
+    #[test]
+    fn test_format_message_block_truncation() {
+        let long_text = "a".repeat(600);
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: long_text,
+            tools: vec![],
+        }];
+        let result = format_message_block(&messages).unwrap();
+        let truncated_part = "a".repeat(500) + "\n... [truncated]";
+        assert!(result.contains(&truncated_part));
+        assert!(result.contains("[truncated]"));
+    }
+
+    #[test]
+    fn test_format_message_block_tools() {
+        let messages = vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Run tool".to_string(),
+            tools: vec![ToolCall {
+                id: "id1".to_string(),
+                name: "tool1".to_string(),
+                arguments: "{\"arg\":1}".to_string(),
+            }],
+        }];
+        let result = format_message_block(&messages).unwrap();
+        let expected = r#"
+=== LAST MESSAGE BLOCK ===
+USER: Run tool
+  Tools:
+    - tool1: {"arg":1}
+========================
+"#;
+        assert!(result.contains(expected.trim()));
     }
 }
