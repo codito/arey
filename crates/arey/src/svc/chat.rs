@@ -22,7 +22,6 @@ pub struct Chat<'a> {
 impl<'a> Chat<'a> {
     /// Switch to a different model
     pub async fn set_model(&mut self, model_name: &str) -> Result<()> {
-        self.profile_name = None;
         let model_config = self
             .config
             .models
