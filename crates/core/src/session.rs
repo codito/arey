@@ -48,6 +48,19 @@ impl Session {
         })
     }
 
+    /// Get system prompt
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    /// Transfer existing message history to session
+    pub fn set_messages(&mut self, messages: Vec<ChatMessage>) {
+        self.messages = messages
+            .into_iter()
+            .map(|msg| (msg, None)) // Reset token counts for new model
+            .collect();
+    }
+
     /// Add a new message to the conversation history
     pub fn add_message(&mut self, sender: SenderType, text: &str) {
         self.messages.push((
@@ -63,6 +76,11 @@ impl Session {
     /// Set the tools available for this session
     pub fn set_tools(&mut self, tools: Vec<Arc<dyn Tool>>) {
         self.tools = tools;
+    }
+
+    /// Returns a clone of the tools available in the session.
+    pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.clone()
     }
 
     /// Generate a response stream for the current conversation

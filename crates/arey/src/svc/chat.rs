@@ -15,6 +15,40 @@ use tokio::sync::Mutex;
 pub struct Chat<'a> {
     session: Arc<Mutex<Session>>,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
+    config: &'a Config,
+}
+
+impl<'a> Chat<'a> {
+    /// Switch to a different model
+    pub async fn set_model(&mut self, model_name: &str) -> Result<()> {
+        let model_config = self
+            .config
+            .models
+            .get(model_name)
+            .cloned()
+            .context(format!("Model '{model_name}' not found in config."))?;
+
+        let mut session_lock = self.session.lock().await;
+        // Preserve existing conversation state
+        let messages = session_lock.all_messages();
+        let tools = session_lock.tools();
+        let system_prompt = session_lock.system_prompt().to_string();
+
+        let mut new_session = Session::new(model_config, &system_prompt)
+            .await
+            .context("Failed to initialize new session")?;
+
+        new_session.set_tools(tools);
+        new_session.set_messages(messages);
+        *session_lock = new_session;
+
+        Ok(())
+    }
+
+    /// Get available model names
+    pub fn available_model_names(&self) -> Vec<&str> {
+        self.config.models.keys().map(|s| s.as_str()).collect()
+    }
 }
 
 impl<'a> fmt::Debug for Chat<'a> {
@@ -33,7 +67,7 @@ impl<'a> Chat<'a> {
     ///
     /// It uses the specified model from the configuration, or the default chat model if `None`.
     pub async fn new(
-        config: &Config,
+        config: &'a Config,
         model: Option<String>,
         available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     ) -> Result<Self> {
@@ -54,6 +88,7 @@ impl<'a> Chat<'a> {
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
             available_tools,
+            config,
         })
     }
 
@@ -363,6 +398,40 @@ task:
 
         assert_eq!(response_text, "Hello world!");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_model() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        // Add second model to config
+        config.models.insert(
+            "test-model-2".to_string(),
+            arey_core::model::ModelConfig {
+                name: "test-model-2".to_string(),
+                provider: arey_core::model::ModelProvider::Openai,
+                settings: HashMap::from([
+                    ("base_url".to_string(), server.uri().into()),
+                    ("api_key".to_string(), "MOCK_OPENAI_API_KEY_2".into()),
+                ]),
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Switch to second model
+        chat.set_model("test-model-2").await?;
+
+        // Verify model changed
+        let models = chat.available_model_names();
+        assert_eq!(models.len(), 2);
+        assert!(models.contains(&"test-model"));
+        assert!(models.contains(&"test-model-2"));
         Ok(())
     }
 }

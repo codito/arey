@@ -29,12 +29,44 @@ struct CliCommand {
     pub command: Command,
 }
 
+#[test]
+fn test_model_command_completion() {
+    use rustyline::history::DefaultHistory;
+
+    let history = DefaultHistory::new();
+
+    // Test command-line completion for the model command
+    let repl = Repl {
+        command_names: vec![],
+        tool_names: vec![],
+        model_names: vec!["model1".to_string(), "model2".to_string()],
+    };
+
+    // Simulate user typing "/model mod"
+    let line = "/model mod";
+    let (start, candidates) = repl
+        .complete(line, line.len(), &rustyline::Context::new(&history))
+        .unwrap();
+
+    // Expecting completion to start at the model prefix (after the space)
+    assert_eq!(start, 7); // "/model ".len() is 7
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].replacement(), "model1");
+    assert_eq!(candidates[1].replacement(), "model2");
+}
+
 #[derive(Subcommand, Debug, Hash, PartialEq, Eq)]
 enum Command {
     /// Clear chat history
     Clear,
     /// Show detailed logs for the last assistant message
     Log,
+    /// Switch to a different chat model
+    #[command(alias = "m", alias = "mod")]
+    Model {
+        /// Name of the model to switch to
+        name: String,
+    },
     /// Set tools for the chat session. E.g. /tool search
     #[command(alias = "t")]
     Tool {
@@ -77,6 +109,23 @@ impl Command {
                     }
                 }
             }
+            Command::Model { name } => {
+                let mut chat_guard = session.lock().await;
+                match chat_guard.set_model(&name).await {
+                    Ok(()) => {
+                        let success_msg = format!("Model switched to: {}", name);
+                        println!(
+                            "{} {}",
+                            style_chat_text("INFO:", ChatMessageType::Footer),
+                            style_chat_text(&success_msg, ChatMessageType::Prompt)
+                        );
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Error switching model: {}", e);
+                        eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                    }
+                }
+            }
             Command::Exit => {
                 println!("Bye!");
                 return Ok(false);
@@ -86,6 +135,28 @@ impl Command {
     }
 }
 
+// Model command completion
+fn model_compl(
+    line: &str,
+    pos: usize,
+    model_names: &[String],
+) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
+    let line_to_pos = &line[..pos];
+    if let Some(space_pos) = line_to_pos.rfind(' ') {
+        let model_prefix_start = space_pos + 1;
+        if model_prefix_start <= line_to_pos.len() {
+            let model_prefix = &line_to_pos[model_prefix_start..];
+            let candidates = model_names
+                .iter()
+                .filter(|name| name.starts_with(model_prefix))
+                .map(|name| CompletionCandidate::new(name))
+                .collect();
+            return Ok((model_prefix_start, candidates));
+        }
+    }
+    Ok((0, Vec::new()))
+}
+
 // -------------
 // REPL completion
 // -------------
@@ -93,6 +164,7 @@ impl Command {
 struct Repl {
     pub command_names: Vec<String>,
     pub tool_names: Vec<String>,
+    pub model_names: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -139,6 +211,7 @@ impl Completer for Repl {
         if let Ok(cli_command) = CliCommand::try_parse_from(&args) {
             return match cli_command.command {
                 Command::Tool { .. } => tool_compl(line, pos, &self.tool_names),
+                Command::Model { .. } => model_compl(line, pos, &self.model_names),
                 _ => Ok((0, Vec::new())),
             };
         }
@@ -220,11 +293,22 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
             .map(|s| s.to_string())
             .collect()
     };
+    let model_names = {
+        let chat_guard = chat.clone();
+        chat_guard
+            .lock()
+            .await
+            .available_model_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    };
 
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(Repl {
         command_names,
         tool_names,
+        model_names,
     }));
 
     let prompt = (style_chat_text("> ", ChatMessageType::Prompt)).to_string();
@@ -622,6 +706,7 @@ mod tests {
         let repl = Repl {
             command_names: vec!["/help".to_string(), "/clear".to_string()],
             tool_names: vec![],
+            model_names: vec![],
         };
         let line = "/c";
         let history = DefaultHistory::new();
