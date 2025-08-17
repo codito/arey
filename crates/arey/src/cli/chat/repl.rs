@@ -525,6 +525,7 @@ async fn process_message(
     // Child tool messages are created if LLM requires a set of tools to be invoked for responding
     // to a user message.
     let mut child_tool_messages: Vec<ChatMessage> = vec![];
+    let mut stream_error = false;
     let was_cancelled = {
         // Get stream response
         let chat_guard = chat_clone.lock().await;
@@ -585,7 +586,7 @@ async fn process_message(
                                 }
                                 Err(e) => {
                                     eprintln!("Error: {e}");
-                                    was_cancelled_internal = true;
+                                    stream_error = true;
                                     break;
                                 }
                             }
@@ -606,6 +607,10 @@ async fn process_message(
     // After the stream finishes, clear the markdown renderer's internal buffer
     // and reset its state for the next message. This does not clear the screen.
     renderer.clear();
+
+    if stream_error {
+        return Ok(true);
+    }
 
     if !child_tool_messages.is_empty() {
         return Box::pin(process_message(
