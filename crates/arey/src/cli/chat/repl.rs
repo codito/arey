@@ -164,7 +164,6 @@ impl Command {
                     } else {
                         let mut chat_guard = session.lock().await;
                         match chat_guard.set_profile(&name) {
-                            // <-- REMOVE .await
                             Ok(()) => {
                                 let success_msg = format!("Profile switched to: {}", name);
                                 println!(
@@ -831,6 +830,7 @@ profiles:
     top_p: 0.9
 chat:
   model: test-model-1
+  profile: test-profile
 task:
   model: test-model-1
 "#,
@@ -1146,7 +1146,7 @@ USER: Run tool
 
         // 2. Create Chat instance
         let chat = Chat::new(&config, Some("test-model-2".to_string()), HashMap::new()).await?;
-        assert!(chat.profile_name().is_none());
+        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
         let chat_session = Arc::new(Mutex::new(chat));
 
         // 3. Test successful profile switch
