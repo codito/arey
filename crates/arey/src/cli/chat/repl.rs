@@ -607,14 +607,15 @@ async fn process_message(
     // Ensure spinner is cleared after stream processing
     spinner.clear();
 
+    // If the stream produced an error, we're done. The error has already been printed.
     if stream_error {
         return Ok(true);
     }
 
-    // After the stream finishes, render a newline to flush any partial lines
-    // from the renderer's internal buffer to the output.
+    // After a successful stream, flush any remaining partial lines from the renderer.
     renderer.render_markdown("\n")?;
 
+    // If the model produced tool calls, recursively call this function to process them.
     if !child_tool_messages.is_empty() {
         return Box::pin(process_message(
             chat_clone,
@@ -625,7 +626,7 @@ async fn process_message(
         .await;
     }
 
-    // Print footer with metrics
+    // If we've reached this point, the response is complete. Print the footer.
     let (metrics, finish_reason_option) = match was_cancelled {
         true => (CompletionMetrics::default(), None),
         false => (metrics, finish_reason),
