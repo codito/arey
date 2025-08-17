@@ -111,13 +111,16 @@ impl<'a> Chat<'a> {
             config.chat.model.clone()
         };
 
-        let session = Session::new(model_config, "")
+        let profile_name = config.chat.profile_name.clone();
+        let system_prompt = ""; // Profiles do not manage the system prompt.
+
+        let session = Session::new(model_config, system_prompt)
             .await
             .context("Failed to create chat session")?;
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
-            profile_name: None,
+            profile_name,
             available_tools,
             config,
         })
@@ -137,6 +140,11 @@ impl<'a> Chat<'a> {
         let mut session = self.session.lock().await;
         session.set_tools(tools);
         Ok(())
+    }
+
+    /// Gets the tools available for the current chat session.
+    pub async fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.session.lock().await.tools()
     }
 
     /// Adds messages to the conversation history.
@@ -276,6 +284,7 @@ models:
     api_key: "MOCK_OPENAI_API_KEY"
 chat:
   model: test-model
+  profile: test-profile
 task:
   model: test-model
 profiles:
@@ -356,6 +365,31 @@ profiles:
 
         // Test with a tool that is not available
         assert!(chat.set_tools(&["bad_tool".to_string()]).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_tools() -> Result<()> {
+        let server = MockServer::start().await;
+        let config = get_test_config(&server).await?;
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+
+        let chat = Chat::new(&config, None, available_tools).await?;
+
+        // Initially, no tools are set
+        let tools = chat.tools().await;
+        assert!(tools.is_empty());
+
+        // Set a tool
+        chat.set_tools(&["mock_tool".to_string()]).await?;
+
+        // Get the tools and verify
+        let tools = chat.tools().await;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "mock_tool");
 
         Ok(())
     }
@@ -497,8 +531,8 @@ profiles:
         let config = get_test_config(&server).await?;
         let mut chat = Chat::new(&config, None, HashMap::new()).await?;
 
-        // 1. Initially, no profile is set
-        assert!(chat.profile_name().is_none());
+        // 1. Initially, the default profile from config is set
+        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
 
         // 2. Set a valid profile
         chat.set_profile("test-profile")?;

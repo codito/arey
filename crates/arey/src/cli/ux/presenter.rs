@@ -8,6 +8,8 @@ pub enum ChatMessageType {
     Prompt,
     // User,
     // AI,
+    /// Prompt metadata line
+    PromptMeta,
     /// Footer information, like metrics or status.
     Footer,
     /// An error message.
@@ -20,6 +22,7 @@ pub fn style_chat_text(text: &str, style: ChatMessageType) -> StyledObject<&str>
         ChatMessageType::Prompt => Style::new().blue().bold(),
         // ChatMessageType::User => Style::new().blue(),
         // ChatMessageType::AI => Style::new().white().bright(),
+        ChatMessageType::PromptMeta => Style::new().cyan(),
         ChatMessageType::Footer => Style::new().white().dim(),
         ChatMessageType::Error => Style::new().red().bold(),
     };

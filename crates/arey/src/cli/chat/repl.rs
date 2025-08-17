@@ -368,6 +368,7 @@ fn tool_compl(
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
     println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
+    println!();
 
     let config = rustyline::Config::builder()
         .history_ignore_dups(true)?
@@ -428,10 +429,18 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                 .map(|p| format!(" | profile: {}", p))
                 .unwrap_or_default();
 
-            let prompt_meta = format!("[model: {}{}]", model_name, profile_str);
+            let tools = chat_guard.tools().await;
+            let tools_str = if !tools.is_empty() {
+                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+                format!(" | tools: {}", tool_names.join(", "))
+            } else {
+                String::new()
+            };
+
+            let prompt_meta = format!("[model: {}{}{}]", model_name, profile_str, tools_str);
             format!(
                 "{}\n{}",
-                style_chat_text(&prompt_meta, ChatMessageType::Footer),
+                style_chat_text(&prompt_meta, ChatMessageType::PromptMeta),
                 style_chat_text("> ", ChatMessageType::Prompt)
             )
         };
@@ -1185,6 +1194,87 @@ USER: Run tool
         // 6. Test /profile (ensure it shows current profile)
         let current_profile = Command::Profile { name: None };
         assert!(current_profile.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_command_and_prompt() -> Result<()> {
+        // 1. Setup mock server and config
+        let server = MockServer::start().await;
+        let config = get_test_config_for_repl_tests(&server).await?;
+
+        // 2. Create Chat instance with a mock tool
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("mock_tool", mock_tool)]);
+
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // 3. Test setting a tool
+        let set_tool_cmd = Command::Tool {
+            names: vec!["mock_tool".to_string()],
+        };
+        let result = set_tool_cmd.execute(chat_session.clone()).await?;
+        assert!(result, "execute should return true to continue REPL");
+
+        // Check that the tool is actually set
+        {
+            let chat_guard = chat_session.lock().await;
+            let tools = chat_guard.tools().await;
+            assert_eq!(tools.len(), 1);
+            assert_eq!(tools[0].name(), "mock_tool");
+        }
+
+        // 4. Test prompt generation
+        let prompt_meta = {
+            let chat_guard = chat_session.lock().await;
+            let model_name = chat_guard.model_name().await;
+            let profile_str = chat_guard
+                .profile_name()
+                .map(|p| format!(" | profile: {}", p))
+                .unwrap_or_default();
+            let tools = chat_guard.tools().await;
+            let tools_str = if !tools.is_empty() {
+                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+                format!(" | tools: {}", tool_names.join(", "))
+            } else {
+                String::new()
+            };
+            format!("[model: {}{}{}]", model_name, profile_str, tools_str)
+        };
+
+        assert_eq!(
+            prompt_meta,
+            "[model: test-model-1 | profile: test-profile | tools: mock_tool]"
+        );
+
+        // 5. Test clearing tools
+        let clear_tools_cmd = Command::Tool { names: vec![] };
+        clear_tools_cmd.execute(chat_session.clone()).await?;
+
+        let prompt_meta_after_clear = {
+            let chat_guard = chat_session.lock().await;
+            let model_name = chat_guard.model_name().await;
+            let profile_str = chat_guard
+                .profile_name()
+                .map(|p| format!(" | profile: {}", p))
+                .unwrap_or_default();
+            let tools = chat_guard.tools().await;
+            let tools_str = if !tools.is_empty() {
+                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+                format!(" | tools: {}", tool_names.join(", "))
+            } else {
+                String::new()
+            };
+            format!("[model: {}{}{}]", model_name, profile_str, tools_str)
+        };
+
+        assert_eq!(
+            prompt_meta_after_clear,
+            "[model: test-model-1 | profile: test-profile]"
+        );
 
         Ok(())
     }

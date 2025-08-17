@@ -53,6 +53,18 @@ impl Session {
         })
     }
 
+    /// Set a new system prompt for the session.
+    /// This reloads the model and clears the message history.
+    pub async fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
+        self.system_prompt = prompt.to_string();
+        self.model
+            .load(prompt)
+            .await
+            .context("Failed to load model with new system prompt")?;
+        self.messages.clear();
+        Ok(())
+    }
+
     /// Get model name
     pub fn model_name(&self) -> &str {
         &self.model_name
