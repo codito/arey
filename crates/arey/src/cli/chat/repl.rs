@@ -823,24 +823,13 @@ mod tests {
     use std::vec;
     use tempfile::NamedTempFile;
     use tokio::sync::Mutex;
-    use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{method, path},
-    };
 
-    fn create_temp_config_file_for_repl_tests(server_uri: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        let config_content = format!(
-            r#"
+    const BASE_TEST_CONFIG: &str = r#"
 models:
   test-model-1:
-    provider: openai
-    base_url: "{server_uri}"
-    api_key: "MOCK_KEY_1"
+    provider: test
   test-model-2:
-    provider: openai
-    base_url: "{server_uri}"
-    api_key: "MOCK_KEY_2"
+    provider: test
 profiles:
   test-profile:
     temperature: 0.8
@@ -852,15 +841,12 @@ chat:
   profile: test-profile
 task:
   model: test-model-1
-"#,
-        );
-        std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
-        file
-    }
+"#;
 
-    async fn get_test_config_for_repl_tests(server: &MockServer) -> Result<Config> {
-        let config_file = create_temp_config_file_for_repl_tests(&server.uri());
-        get_config(Some(config_file.path().to_path_buf()))
+    fn get_test_config_from_str(content: &str) -> Result<Config> {
+        let mut file = NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, content.as_bytes()).unwrap();
+        get_config(Some(file.path().to_path_buf()))
             .map_err(|e| anyhow::anyhow!("Failed to create temp config file. Error {}", e))
     }
 
@@ -1197,14 +1183,8 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_model_command_execute() -> Result<()> {
-        // 1. Setup mock server and config
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200))
-            .mount(&server)
-            .await;
-        let config = get_test_config_for_repl_tests(&server).await?;
+        // 1. Setup config
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
 
         // 2. Create Chat instance
         let available_tools = HashMap::new();
@@ -1246,9 +1226,8 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_profile_command_execute() -> Result<()> {
-        // 1. Setup mock server and config
-        let server = MockServer::start().await;
-        let config = get_test_config_for_repl_tests(&server).await?;
+        // 1. Setup config
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
 
         // 2. Create Chat instance
         let chat = Chat::new(&config, Some("test-model-2".to_string()), HashMap::new()).await?;
@@ -1297,9 +1276,8 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_tool_command_and_prompt() -> Result<()> {
-        // 1. Setup mock server and config
-        let server = MockServer::start().await;
-        let config = get_test_config_for_repl_tests(&server).await?;
+        // 1. Setup config
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
 
         // 2. Create Chat instance with a mock tool
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
@@ -1378,8 +1356,7 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_command_execute_various() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config_for_repl_tests(&server).await?;
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
         let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
@@ -1447,28 +1424,15 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_process_message_simple_response() -> Result<()> {
-        // 1. Setup mock server for streaming response
-        let server = MockServer::start().await;
-        let sse_body = "data: {\"choices\": [{\"delta\": {\"content\": \"Hello\"}}]}\n\ndata: {\"choices\": [{\"delta\": {\"content\": \" world\"}}]}\n\ndata: [DONE]\n\n";
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("Content-Type", "text/event-stream")
-                    .set_body_string(sse_body),
-            )
-            .mount(&server)
-            .await;
-
-        // 2. Setup Chat and Renderer
-        let config = get_test_config_for_repl_tests(&server).await?;
+        // 1. Setup Chat and Renderer
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
         let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
         let theme = get_theme("ansi");
         let mut renderer = TerminalRenderer::new(&mut buffer, &theme);
 
-        // 3. Call process_message
+        // 2. Call process_message
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
@@ -1476,7 +1440,7 @@ USER: Run tool
         };
         process_message(chat_session, &mut renderer, vec![user_message], vec![]).await?;
 
-        // 4. Assert rendered output
+        // 3. Assert rendered output
         let output = String::from_utf8(buffer).unwrap();
         assert!(output.contains("Hello world"));
         Ok(())
@@ -1484,37 +1448,25 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_process_message_with_tool_call() -> Result<()> {
-        let server = MockServer::start().await;
-        // 1. First response: tool call
-        let sse_tool_call = "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"c1\", \"type\": \"function\", \"function\": {\"name\": \"mock_tool\", \"arguments\": \"{}\"}}]}}]}\n\ndata: [DONE]\n\n";
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .and(wiremock::matchers::body_string_contains("Hi"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("Content-Type", "text/event-stream")
-                    .set_body_string(sse_tool_call),
-            )
-            .mount(&server)
-            .await;
-        // 2. Second response: final answer
-        let sse_final_answer = "data: {\"choices\": [{\"delta\": {\"content\": \"Tool output is mock tool output\"}}]}\n\ndata: [DONE]\n\n";
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .and(wiremock::matchers::body_string_contains("tool")) // Second request contains tool result
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("Content-Type", "text/event-stream")
-                    .set_body_string(sse_final_answer),
-            )
-            .mount(&server)
-            .await;
-
+        let tool_call_config = r#"
+models:
+  tool-call-model:
+    provider: test
+    settings:
+      response_mode: "tool_call"
+chat:
+  model: tool-call-model
+"#;
+        let config = get_test_config_from_str(tool_call_config)?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools: HashMap<&str, Arc<dyn Tool>> =
             HashMap::from([("mock_tool", mock_tool)]);
-        let config = get_test_config_for_repl_tests(&server).await?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let chat = Chat::new(
+            &config,
+            Some("tool-call-model".to_string()),
+            available_tools,
+        )
+        .await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         let mut buffer = Vec::new();
@@ -1535,15 +1487,17 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_process_message_stream_error() -> Result<()> {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-
-        let config = get_test_config_for_repl_tests(&server).await?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let error_config = r#"
+models:
+  error-model:
+    provider: test
+    settings:
+      response_mode: "error"
+chat:
+  model: error-model
+"#;
+        let config = get_test_config_from_str(error_config)?;
+        let chat = Chat::new(&config, Some("error-model".to_string()), HashMap::new()).await?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
         let theme = get_theme("ansi");
