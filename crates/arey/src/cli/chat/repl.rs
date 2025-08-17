@@ -166,7 +166,7 @@ impl Command {
                         match chat_guard.set_profile(&name) {
                             // <-- REMOVE .await
                             Ok(()) => {
-                                let success_msg = format!("Active profile set to: {}", name); // <-- UPDATE message
+                                let success_msg = format!("Profile switched to: {}", name);
                                 println!(
                                     "{} {}",
                                     style_chat_text("INFO:", ChatMessageType::Footer),
@@ -420,9 +420,22 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
         profile_names,
     }));
 
-    let prompt = (style_chat_text("> ", ChatMessageType::Prompt)).to_string();
-
     loop {
+        let prompt = {
+            let chat_guard = chat.lock().await;
+            let model_name = chat_guard.model_name().await;
+            let profile_str = chat_guard
+                .profile_name()
+                .map(|p| format!(" | profile: {}", p))
+                .unwrap_or_default();
+
+            let prompt_meta = format!("[model: {}{}]", model_name, profile_str);
+            format!(
+                "{}\n{}",
+                style_chat_text(&prompt_meta, ChatMessageType::Footer),
+                style_chat_text("> ", ChatMessageType::Prompt)
+            )
+        };
         let readline = rl.readline(&prompt);
         match readline {
             Ok(line) => {
