@@ -40,6 +40,7 @@ fn test_model_command_completion() {
         command_names: vec![],
         tool_names: vec![],
         model_names: vec!["model1".to_string(), "model2".to_string()],
+        profile_names: vec![],
     };
 
     // Simulate user typing "/model mod"
@@ -68,6 +69,15 @@ enum Command {
     #[command(alias = "m", alias = "mod")]
     Model {
         /// Model name to switch to, or "list"
+        name: Option<String>,
+    },
+    /// Manage chat profiles.
+    ///
+    /// With no arguments, shows the current profile.
+    /// Use "list" to see available profiles.
+    #[command(alias = "p")]
+    Profile {
+        /// Profile name to switch to, or "list"
         name: Option<String>,
     },
     /// Set tools for the chat session. E.g. /tool search
@@ -145,6 +155,43 @@ impl Command {
                     println!("Current model: {}", model_name);
                 }
             },
+            Command::Profile { name } => match name {
+                Some(name) => {
+                    if name == "list" {
+                        let chat_guard = session.lock().await;
+                        let profile_names = chat_guard.available_profile_names();
+                        println!("Available profiles: {}", profile_names.join(", "));
+                    } else {
+                        let mut chat_guard = session.lock().await;
+                        match chat_guard.set_profile(&name) {
+                            // <-- REMOVE .await
+                            Ok(()) => {
+                                let success_msg = format!("Active profile set to: {}", name); // <-- UPDATE message
+                                println!(
+                                    "{} {}",
+                                    style_chat_text("INFO:", ChatMessageType::Footer),
+                                    style_chat_text(&success_msg, ChatMessageType::Prompt)
+                                );
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Error switching profile: {}", e);
+                                eprintln!(
+                                    "{}",
+                                    style_chat_text(&error_msg, ChatMessageType::Error)
+                                );
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let chat_guard = session.lock().await;
+                    if let Some(profile_name) = chat_guard.profile_name() {
+                        println!("Current profile: {}", profile_name);
+                    } else {
+                        println!("No profile is active.");
+                    }
+                }
+            },
             Command::Exit => {
                 println!("Bye!");
                 return Ok(false);
@@ -180,6 +227,32 @@ fn model_compl(
     Ok((0, Vec::new()))
 }
 
+// Profile command completion
+fn profile_compl(
+    line: &str,
+    pos: usize,
+    profile_names: &[String],
+) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
+    let line_to_pos = &line[..pos];
+    if let Some(space_pos) = line_to_pos.rfind(' ') {
+        let profile_prefix_start = space_pos + 1;
+        if profile_prefix_start <= line_to_pos.len() {
+            let profile_prefix = &line_to_pos[profile_prefix_start..];
+            let mut candidates = profile_names
+                .iter()
+                .filter(|name| name.starts_with(profile_prefix))
+                .map(|name| CompletionCandidate::new(name))
+                .collect::<Vec<_>>();
+
+            if "list".starts_with(profile_prefix) && !profile_names.contains(&"list".to_string()) {
+                candidates.push(CompletionCandidate::new("list"));
+            }
+            return Ok((profile_prefix_start, candidates));
+        }
+    }
+    Ok((0, Vec::new()))
+}
+
 // -------------
 // REPL completion
 // -------------
@@ -188,6 +261,7 @@ struct Repl {
     pub command_names: Vec<String>,
     pub tool_names: Vec<String>,
     pub model_names: Vec<String>,
+    pub profile_names: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -235,6 +309,7 @@ impl Completer for Repl {
             return match cli_command.command {
                 Command::Tool { .. } => tool_compl(line, pos, &self.tool_names),
                 Command::Model { .. } => model_compl(line, pos, &self.model_names),
+                Command::Profile { .. } => profile_compl(line, pos, &self.profile_names),
                 _ => Ok((0, Vec::new())),
             };
         }
@@ -326,12 +401,23 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
             .map(|s| s.to_string())
             .collect()
     };
+    let profile_names = {
+        let chat_guard = chat.clone();
+        chat_guard
+            .lock()
+            .await
+            .available_profile_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    };
 
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(Repl {
         command_names,
         tool_names,
         model_names,
+        profile_names,
     }));
 
     let prompt = (style_chat_text("> ", ChatMessageType::Prompt)).to_string();
@@ -724,7 +810,9 @@ models:
     provider: openai
     base_url: "{server_uri}"
     api_key: "MOCK_KEY_2"
-profiles: {{}}
+profiles:
+  test-profile:
+    temperature: 0.8
 chat:
   model: test-model-1
 task:
@@ -769,6 +857,7 @@ task:
             command_names: vec!["/help".to_string(), "/clear".to_string()],
             tool_names: vec![],
             model_names: vec![],
+            profile_names: vec![],
         };
         let line = "/c";
         let history = DefaultHistory::new();
@@ -1029,6 +1118,57 @@ USER: Run tool
         // 7. Test /model (just ensure it runs without panic)
         let current_model = Command::Model { name: None };
         assert!(current_model.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_profile_command_execute() -> Result<()> {
+        // 1. Setup mock server and config
+        let server = MockServer::start().await;
+        let config = get_test_config_for_repl_tests(&server).await?;
+
+        // 2. Create Chat instance
+        let chat = Chat::new(&config, Some("test-model-2".to_string()), HashMap::new()).await?;
+        assert!(chat.profile_name().is_none());
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // 3. Test successful profile switch
+        let switch_to_prof = Command::Profile {
+            name: Some("test-profile".to_string()),
+        };
+        assert!(switch_to_prof.execute(chat_session.clone()).await?);
+        let chat_guard = chat_session.lock().await;
+        assert_eq!(chat_guard.profile_name(), Some("test-profile".to_string()));
+        assert_eq!(
+            chat_guard.model_name().await,
+            "test-model-2",
+            "Model should not change when setting a profile"
+        );
+        drop(chat_guard);
+
+        // 4. Test switching to a non-existent profile
+        let switch_to_bad = Command::Profile {
+            name: Some("bad-profile".to_string()),
+        };
+        assert!(switch_to_bad.execute(chat_session.clone()).await?);
+        let chat_guard = chat_session.lock().await;
+        assert_eq!(
+            chat_guard.profile_name(),
+            Some("test-profile".to_string()),
+            "Profile should not have changed after a failed attempt"
+        );
+        drop(chat_guard);
+
+        // 5. Test /profile list (ensure it runs)
+        let list_profiles = Command::Profile {
+            name: Some("list".to_string()),
+        };
+        assert!(list_profiles.execute(chat_session.clone()).await?);
+
+        // 6. Test /profile (ensure it shows current profile)
+        let current_profile = Command::Profile { name: None };
+        assert!(current_profile.execute(chat_session.clone()).await?);
 
         Ok(())
     }
