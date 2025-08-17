@@ -515,6 +515,9 @@ async fn process_message(
     let mut metrics = CompletionMetrics::default();
     let mut finish_reason: Option<String> = None;
 
+    // Clear renderer state for this new message processing cycle.
+    renderer.clear();
+
     // Create spinner
     let spinner = GenerationSpinner::new("Generating...".to_string());
     let cancel_token = CancellationToken::new();
@@ -604,13 +607,13 @@ async fn process_message(
     // Ensure spinner is cleared after stream processing
     spinner.clear();
 
-    // After the stream finishes, clear the markdown renderer's internal buffer
-    // and reset its state for the next message. This does not clear the screen.
-    renderer.clear();
-
     if stream_error {
         return Ok(true);
     }
+
+    // After the stream finishes, render a newline to flush any partial lines
+    // from the renderer's internal buffer to the output.
+    renderer.render_markdown("\n")?;
 
     if !child_tool_messages.is_empty() {
         return Box::pin(process_message(
@@ -630,10 +633,7 @@ async fn process_message(
 
     let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
 
-    // Ensure the footer starts on a newline after the markdown output.
-    // The `render` function leaves the cursor at the end of the last line it drew.
-    // `println!()` will handle adding a newline before printing.
-    println!();
+    // The `render_markdown("\n")` above ensures we start on a fresh line.
     println!();
     println!("{}", style_chat_text(&footer, ChatMessageType::Footer));
     println!();
