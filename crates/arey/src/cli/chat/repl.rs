@@ -727,6 +727,8 @@ models:
 profiles: {{}}
 chat:
   model: test-model-1
+task:
+  model: test-model-1
 "#,
         );
         std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
