@@ -283,6 +283,8 @@ profiles:
   test-profile:
     temperature: 0.5
     top_p: 0.9
+    repeat_penalty: 1.1
+    top_k: 40
 "#,
         );
         std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();

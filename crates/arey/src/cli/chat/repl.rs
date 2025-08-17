@@ -813,6 +813,9 @@ models:
 profiles:
   test-profile:
     temperature: 0.8
+    repeat_penalty: 1.1
+    top_k: 40
+    top_p: 0.9
 chat:
   model: test-model-1
 task:
