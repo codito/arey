@@ -1490,7 +1490,11 @@ USER: Run tool
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(wiremock::matchers::body_string_contains("Hi"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(sse_tool_call))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "text/event-stream")
+                    .set_body_string(sse_tool_call),
+            )
             .mount(&server)
             .await;
         // 2. Second response: final answer
@@ -1498,7 +1502,11 @@ USER: Run tool
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(wiremock::matchers::body_string_contains("tool")) // Second request contains tool result
-            .respond_with(ResponseTemplate::new(200).set_body_string(sse_final_answer))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "text/event-stream")
+                    .set_body_string(sse_final_answer),
+            )
             .mount(&server)
             .await;
 
