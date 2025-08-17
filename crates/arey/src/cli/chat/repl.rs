@@ -142,11 +142,7 @@ impl Command {
                         match chat_guard.set_model(&name).await {
                             Ok(()) => {
                                 let success_msg = format!("Model switched to: {}", name);
-                                println!(
-                                    "{} {}",
-                                    style_chat_text("INFO:", ChatMessageType::Footer),
-                                    style_chat_text(&success_msg, ChatMessageType::Prompt)
-                                );
+                                println!("{success_msg}",);
                             }
                             Err(e) => {
                                 let error_msg = format!("Error switching model: {}", e);
@@ -175,11 +171,7 @@ impl Command {
                         match chat_guard.set_profile(&name) {
                             Ok(()) => {
                                 let success_msg = format!("Profile switched to: {}", name);
-                                println!(
-                                    "{} {}",
-                                    style_chat_text("INFO:", ChatMessageType::Footer),
-                                    style_chat_text(&success_msg, ChatMessageType::Prompt)
-                                );
+                                println!("{success_msg}");
                             }
                             Err(e) => {
                                 let error_msg = format!("Error switching profile: {}", e);
@@ -377,7 +369,6 @@ fn tool_compl(
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
     println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
-    println!();
 
     let config = rustyline::Config::builder()
         .history_ignore_dups(true)?
@@ -448,8 +439,8 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
 
             let prompt_meta = format!("[model: {}{}{}]", model_name, profile_str, tools_str);
             format!(
-                "{}\n{}",
-                style_chat_text(&prompt_meta, ChatMessageType::PromptMeta),
+                "\n{}\n{}",
+                style_chat_text(&prompt_meta, ChatMessageType::Prompt),
                 style_chat_text("> ", ChatMessageType::Prompt)
             )
         };
@@ -637,7 +628,6 @@ async fn process_message(
     // The `render_markdown("\n")` above ensures we start on a fresh line.
     println!();
     println!("{}", style_chat_text(&footer, ChatMessageType::Footer));
-    println!();
 
     Ok(true)
 }
@@ -1458,8 +1448,7 @@ USER: Run tool
 models:
   tool-call-model:
     provider: test
-    settings:
-      response_mode: "tool_call"
+    response_mode: "tool_call"
 profiles: {}
 chat:
   model: tool-call-model
@@ -1500,8 +1489,7 @@ task:
 models:
   error-model:
     provider: test
-    settings:
-      response_mode: "error"
+    response_mode: "error"
 profiles: {}
 chat:
   model: error-model
@@ -1523,7 +1511,12 @@ task:
         process_message(chat_session, &mut renderer, vec![user_message], vec![]).await?;
 
         // Expect no output to renderer, error is printed to stderr
-        assert!(String::from_utf8(buffer).unwrap().is_empty());
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.is_empty(),
+            "Output should be empty. Output: {}",
+            output
+        );
         Ok(())
     }
 }

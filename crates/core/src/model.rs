@@ -30,6 +30,7 @@ impl ModelConfig {
 pub enum ModelProvider {
     Gguf,
     Openai,
+    Test,
 }
 
 impl From<ModelProvider> for String {
@@ -43,6 +44,7 @@ impl ModelProvider {
         match &self {
             ModelProvider::Gguf => "gguf",
             ModelProvider::Openai => "openai",
+            ModelProvider::Test => "test",
         }
     }
 }
@@ -69,11 +71,14 @@ mod tests {
     fn test_model_provider_strings() {
         assert_eq!(ModelProvider::Gguf.as_str(), "gguf");
         assert_eq!(ModelProvider::Openai.as_str(), "openai");
+        assert_eq!(ModelProvider::Test.as_str(), "test");
 
         let s: String = ModelProvider::Gguf.into();
         assert_eq!(s, "gguf");
         let s: String = ModelProvider::Openai.into();
         assert_eq!(s, "openai");
+        let s: String = ModelProvider::Test.into();
+        assert_eq!(s, "test");
     }
 
     #[test]

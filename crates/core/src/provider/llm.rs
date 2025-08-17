@@ -1,6 +1,6 @@
 use crate::completion::CompletionModel;
 use crate::model::ModelProvider;
-use crate::provider::{gguf, openai};
+use crate::provider::{gguf, openai, test_provider};
 use anyhow::Result;
 use tracing::instrument;
 
@@ -15,6 +15,10 @@ pub fn get_completion_llm(
         }
         ModelProvider::Openai => {
             let model = openai::OpenAIBaseModel::new(model_config)?;
+            Ok(Box::new(model))
+        }
+        ModelProvider::Test => {
+            let model = test_provider::TestProviderModel::new(model_config)?;
             Ok(Box::new(model))
         }
     }
@@ -57,5 +61,16 @@ mod tests {
                 .to_string()
                 .contains("'path' setting is required for gguf model")
         );
+    }
+
+    #[test]
+    fn test_get_completion_llm_test_provider() {
+        let model_config = ModelConfig {
+            name: "test-test".to_string(),
+            provider: ModelProvider::Test,
+            settings: HashMap::new(),
+        };
+        let model = get_completion_llm(model_config);
+        assert!(model.is_ok());
     }
 }
