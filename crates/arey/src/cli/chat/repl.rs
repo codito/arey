@@ -1454,7 +1454,10 @@ models:
     provider: test
     settings:
       response_mode: "tool_call"
+profiles: {}
 chat:
+  model: tool-call-model
+task:
   model: tool-call-model
 "#;
         let config = get_test_config_from_str(tool_call_config)?;
@@ -1493,7 +1496,10 @@ models:
     provider: test
     settings:
       response_mode: "error"
+profiles: {}
 chat:
+  model: error-model
+task:
   model: error-model
 "#;
         let config = get_test_config_from_str(error_config)?;
