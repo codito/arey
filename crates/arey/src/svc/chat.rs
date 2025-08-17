@@ -49,6 +49,11 @@ impl<'a> Chat<'a> {
     pub fn available_model_names(&self) -> Vec<&str> {
         self.config.models.keys().map(|s| s.as_str()).collect()
     }
+
+    /// Get current model name
+    pub async fn model_name(&self) -> String {
+        self.session.lock().await.model_name().to_string()
+    }
 }
 
 impl<'a> fmt::Debug for Chat<'a> {

@@ -61,11 +61,14 @@ enum Command {
     Clear,
     /// Show detailed logs for the last assistant message
     Log,
-    /// Switch to a different chat model
+    /// Manage chat models.
+    ///
+    /// With no arguments, shows the current model.
+    /// Use "list" to see available models.
     #[command(alias = "m", alias = "mod")]
     Model {
-        /// Name of the model to switch to
-        name: String,
+        /// Model name to switch to, or "list"
+        name: Option<String>,
     },
     /// Set tools for the chat session. E.g. /tool search
     #[command(alias = "t")]
@@ -109,23 +112,39 @@ impl Command {
                     }
                 }
             }
-            Command::Model { name } => {
-                let mut chat_guard = session.lock().await;
-                match chat_guard.set_model(&name).await {
-                    Ok(()) => {
-                        let success_msg = format!("Model switched to: {}", name);
-                        println!(
-                            "{} {}",
-                            style_chat_text("INFO:", ChatMessageType::Footer),
-                            style_chat_text(&success_msg, ChatMessageType::Prompt)
-                        );
-                    }
-                    Err(e) => {
-                        let error_msg = format!("Error switching model: {}", e);
-                        eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+            Command::Model { name } => match name {
+                Some(name) => {
+                    if name == "list" {
+                        let chat_guard = session.lock().await;
+                        let model_names = chat_guard.available_model_names();
+                        println!("Available models: {}", model_names.join(", "));
+                    } else {
+                        let mut chat_guard = session.lock().await;
+                        match chat_guard.set_model(&name).await {
+                            Ok(()) => {
+                                let success_msg = format!("Model switched to: {}", name);
+                                println!(
+                                    "{} {}",
+                                    style_chat_text("INFO:", ChatMessageType::Footer),
+                                    style_chat_text(&success_msg, ChatMessageType::Prompt)
+                                );
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Error switching model: {}", e);
+                                eprintln!(
+                                    "{}",
+                                    style_chat_text(&error_msg, ChatMessageType::Error)
+                                );
+                            }
+                        }
                     }
                 }
-            }
+                None => {
+                    let chat_guard = session.lock().await;
+                    let model_name = chat_guard.model_name().await;
+                    println!("Current model: {}", model_name);
+                }
+            },
             Command::Exit => {
                 println!("Bye!");
                 return Ok(false);
@@ -146,11 +165,15 @@ fn model_compl(
         let model_prefix_start = space_pos + 1;
         if model_prefix_start <= line_to_pos.len() {
             let model_prefix = &line_to_pos[model_prefix_start..];
-            let candidates = model_names
+            let mut candidates = model_names
                 .iter()
                 .filter(|name| name.starts_with(model_prefix))
                 .map(|name| CompletionCandidate::new(name))
-                .collect();
+                .collect::<Vec<_>>();
+
+            if "list".starts_with(model_prefix) && !model_names.contains(&"list".to_string()) {
+                candidates.push(CompletionCandidate::new("list"));
+            }
             return Ok((model_prefix_start, candidates));
         }
     }
