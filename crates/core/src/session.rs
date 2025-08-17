@@ -1,10 +1,12 @@
 //! A session is a shared context between a human and the AI assistant.
 //! Context includes the conversation, shared artifacts, and tools.
+use crate::model::ModelConfig;
+
 use crate::{
     completion::{
         CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
     },
-    model::{ModelConfig, ModelMetrics},
+    model::ModelMetrics,
     tools::Tool,
 };
 use anyhow::{Context, Result};
