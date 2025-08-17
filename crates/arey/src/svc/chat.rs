@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use arey_core::completion::{CancellationToken, ChatMessage, Completion};
-use arey_core::config::Config;
+use arey_core::config::{Config, ProfileConfig};
 use arey_core::session::Session;
 use arey_core::tools::Tool;
 use futures::{StreamExt, stream::BoxStream};
@@ -69,6 +69,14 @@ impl<'a> Chat<'a> {
     /// Get current profile name
     pub fn profile_name(&self) -> Option<String> {
         self.profile_name.clone()
+    }
+
+    /// Get current profile name and data
+    /// Get current profile name and data
+    pub fn current_profile(&self) -> Option<(&String, &ProfileConfig)> {
+        self.profile_name
+            .as_ref()
+            .and_then(|name| self.config.profiles.get(name).map(|data| (name, data)))
     }
 
     /// Switch to a different profile

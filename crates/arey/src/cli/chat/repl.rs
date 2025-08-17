@@ -14,6 +14,7 @@ use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::{CompletionType, Editor, Helper, Highlighter, Validator};
 use serde_json::Value;
+use serde_yaml;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -185,8 +186,24 @@ impl Command {
                 }
                 None => {
                     let chat_guard = session.lock().await;
-                    if let Some(profile_name) = chat_guard.profile_name() {
-                        println!("Current profile: {}", profile_name);
+                    if let Some((profile_name, profile_data)) = chat_guard.current_profile() {
+                        println!("Current profile: {profile_name}");
+                        match serde_yaml::to_string(profile_data) {
+                            Ok(yaml) => {
+                                // Trim to avoid printing empty "{}" for empty-but-not-null data.
+                                let trimmed = yaml.trim();
+                                if !trimmed.is_empty() && trimmed != "{}" {
+                                    print!("{yaml}"); // `to_string` includes a newline
+                                }
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Error formatting profile data: {e}");
+                                eprintln!(
+                                    "{}",
+                                    style_chat_text(&error_msg, ChatMessageType::Error)
+                                );
+                            }
+                        }
                     } else {
                         println!("No profile is active.");
                     }
