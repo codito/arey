@@ -692,15 +692,52 @@ async fn process_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::svc::chat::Chat;
     use anyhow::Result;
     use arey_core::{
         completion::{ChatMessage, SenderType},
+        config::{Config, get_config},
         tools::{Tool, ToolError, ToolResult},
     };
     use async_trait::async_trait;
     use rustyline::history::DefaultHistory;
     use serde_json::{Value, json};
+    use std::sync::Arc;
     use std::vec;
+    use tempfile::NamedTempFile;
+    use tokio::sync::Mutex;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    fn create_temp_config_file_for_repl_tests(server_uri: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        let config_content = format!(
+            r#"
+models:
+  test-model-1:
+    provider: openai
+    base_url: "{server_uri}"
+    api_key: "MOCK_KEY_1"
+  test-model-2:
+    provider: openai
+    base_url: "{server_uri}"
+    api_key: "MOCK_KEY_2"
+profiles: {{}}
+chat:
+  model: test-model-1
+"#,
+        );
+        std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
+        file
+    }
+
+    async fn get_test_config_for_repl_tests(server: &MockServer) -> Result<Config> {
+        let config_file = create_temp_config_file_for_repl_tests(&server.uri());
+        get_config(Some(config_file.path().to_path_buf()))
+            .map_err(|e| anyhow::anyhow!("Failed to create temp config file. Error {}", e))
+    }
 
     #[derive(Debug)]
     struct MockTool;
@@ -943,5 +980,54 @@ USER: Run tool
 ========================
 "#;
         assert!(result.contains(expected.trim()));
+    }
+
+    #[tokio::test]
+    async fn test_model_command_execute() -> Result<()> {
+        // 1. Setup mock server and config
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let config = get_test_config_for_repl_tests(&server).await?;
+
+        // 2. Create Chat instance
+        let available_tools = HashMap::new();
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // 3. Check initial model
+        assert_eq!(chat_session.lock().await.model_name().await, "test-model-1");
+
+        // 4. Test successful model switch
+        let switch_to_2 = Command::Model {
+            name: Some("test-model-2".to_string()),
+        };
+        let result = switch_to_2.execute(chat_session.clone()).await?;
+        assert!(result, "execute should return true to continue REPL");
+        assert_eq!(chat_session.lock().await.model_name().await, "test-model-2");
+
+        // 5. Test switching to a non-existent model
+        let switch_to_bad = Command::Model {
+            name: Some("bad-model".to_string()),
+        };
+        let result = switch_to_bad.execute(chat_session.clone()).await?;
+        assert!(result, "execute should return true even on error");
+        // Model should not have changed
+        assert_eq!(chat_session.lock().await.model_name().await, "test-model-2");
+
+        // 6. Test /model list (just ensure it runs without panic)
+        let list_models = Command::Model {
+            name: Some("list".to_string()),
+        };
+        assert!(list_models.execute(chat_session.clone()).await?);
+
+        // 7. Test /model (just ensure it runs without panic)
+        let current_model = Command::Model { name: None };
+        assert!(current_model.execute(chat_session.clone()).await?);
+
+        Ok(())
     }
 }
