@@ -20,6 +20,19 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::debug;
 
+/// Recursively removes control characters from JSON values
+fn clean_value(value: &mut serde_json::Value) {
+    match value {
+        Value::String(s) => {
+            let cleaned = s.replace(|c: char| c.is_control(), "");
+            *s = cleaned;
+        }
+        Value::Array(a) => a.iter_mut().for_each(clean_value),
+        Value::Object(m) => m.values_mut().for_each(clean_value),
+        _ => {}
+    }
+}
+
 // -------------
 // REPL commands
 // -------------
@@ -777,7 +790,7 @@ async fn process_tools(
         };
 
         debug!("Final tool arguments: {}", args);
-        let output = match tool.execute(&args).await {
+        let mut output = match tool.execute(&args).await {
             Ok(out) => out,
             Err(e) => {
                 eprintln!(
@@ -790,6 +803,9 @@ async fn process_tools(
                 continue;
             }
         };
+
+        // Clean control characters from tool output
+        clean_value(&mut output);
 
         spinner.clear();
         eprintln!("✓ {tool_msg}");
@@ -1192,6 +1208,52 @@ USER: Run tool
 ========================
 "#;
         assert!(result.contains(expected.trim()));
+    }
+
+    #[tokio::test]
+    async fn test_process_tools_cleans_control_characters() -> Result<()> {
+        #[derive(Debug)]
+        struct ControlCharTool;
+        #[async_trait]
+        impl Tool for ControlCharTool {
+            fn name(&self) -> String {
+                "control_tool".to_string()
+            }
+
+            fn description(&self) -> String {
+                "Tool with control characters".to_string()
+            }
+
+            fn parameters(&self) -> Value {
+                json!({})
+            }
+
+            async fn execute(&self, _args: &Value) -> std::result::Result<Value, ToolError> {
+                // Return value containing control characters
+                Ok(json!({
+                    "key": "value with \u{0001} control \u{001F} characters"
+                }))
+            }
+        }
+
+        let tool: Arc<dyn Tool> = Arc::new(ControlCharTool);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("control_tool", tool.clone())]);
+        let tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "control_tool".to_string(),
+            arguments: "{}".to_string(),
+        }];
+
+        let messages = process_tools(&available_tools, &tool_calls).await?;
+        assert_eq!(messages.len(), 1);
+        let msg = &messages[0];
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+
+        // Check that control characters were removed
+        let output_str = tool_result.output.get("key").unwrap().as_str().unwrap();
+        assert_eq!(output_str, "value with   control   characters");
+        Ok(())
     }
 
     #[tokio::test]
