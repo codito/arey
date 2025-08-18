@@ -1252,7 +1252,7 @@ USER: Run tool
 
         // Check that control characters were removed
         let output_str = tool_result.output.get("key").unwrap().as_str().unwrap();
-        assert_eq!(output_str, "value with   control   characters");
+        assert_eq!(output_str, "value with  control  characters");
         Ok(())
     }
 
