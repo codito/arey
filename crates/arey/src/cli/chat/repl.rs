@@ -153,12 +153,20 @@ impl Command {
                         println!("Available models: {}", model_names.join(", "));
                     } else {
                         let mut chat_guard = session.lock().await;
+                        let spinner =
+                            GenerationSpinner::new(format!("Loading model '{}'...", &name));
+
                         match chat_guard.set_model(&name).await {
                             Ok(()) => {
+                                spinner.clear();
                                 let success_msg = format!("Model switched to: {}", name);
-                                println!("{success_msg}",);
+                                println!(
+                                    "{}",
+                                    style_chat_text(&success_msg, ChatMessageType::Footer)
+                                );
                             }
                             Err(e) => {
+                                spinner.clear();
                                 let error_msg = format!("Error switching model: {}", e);
                                 eprintln!(
                                     "{}",
