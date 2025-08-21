@@ -2,6 +2,7 @@
 //! Context includes the conversation, shared artifacts, and tools.
 use crate::model::ModelConfig;
 
+use crate::tools::ToolResult;
 use crate::{
     completion::{
         CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
@@ -12,7 +13,7 @@ use crate::{
 use anyhow::{Context, Result};
 use futures::stream::BoxStream;
 use std::{collections::HashMap, sync::Arc};
-use tracing::debug;
+use tracing::{debug, error};
 
 /// A session with shared context between Human and AI model.
 pub struct Session {
@@ -357,8 +358,27 @@ impl Session {
                     && msg.sender == SenderType::Tool
                     && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
                 {
-                    msg.text.truncate(MAX_TOOL_RESPONSE_CHARS);
-                    msg.text.push_str(TRUNCATION_MARKER);
+                    // Truncate the output fragment and add a marker.
+                    let tool_output: ToolResult = serde_json::from_str(msg.text.as_str())
+                        .unwrap_or_else(|e| {
+                            error!("Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}", msg.text, e);
+                            panic!("Token trimming: Failed to deserialize ToolResult from message text. Error: {}", e)
+                        });
+                    let mut content = serde_json::to_string(&tool_output.output).unwrap_or_else(|e| {
+                        error!(
+                            "Token trimming: Failed to serialize ToolResult output: {}. Error: {}",
+                            tool_output.output, e
+                        );
+                        String::new()
+                    });
+
+                    content.truncate(MAX_TOOL_RESPONSE_CHARS);
+                    content.push_str(TRUNCATION_MARKER);
+                    msg.text = serde_json::to_string(&ToolResult {
+                        output: serde_json::Value::String(content),
+                        ..tool_output
+                    })
+                    .unwrap();
                 }
             }
         }
