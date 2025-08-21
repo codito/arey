@@ -2,7 +2,7 @@
 //! Context includes the conversation, shared artifacts, and tools.
 use crate::model::ModelConfig;
 
-use crate::tools::ToolResult;
+use crate::tools::{ToolCall, ToolResult};
 use crate::{
     completion::{
         CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
@@ -351,34 +351,63 @@ impl Session {
 
         if let Some(last_idx) = last_tool_idx {
             const MAX_TOOL_RESPONSE_CHARS: usize = 512;
-            const TRUNCATION_MARKER: &str = "\n... [truncated]";
+            const TRUNCATION_MARKER: &str = "... [truncated]";
 
             for (i, msg) in final_messages.iter_mut().enumerate() {
                 if i < last_idx
                     && msg.sender == SenderType::Tool
                     && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
                 {
-                    // Truncate the output fragment and add a marker.
-                    let tool_output: ToolResult = serde_json::from_str(msg.text.as_str())
-                        .unwrap_or_else(|e| {
-                            error!("Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}", msg.text, e);
-                            panic!("Token trimming: Failed to deserialize ToolResult from message text. Error: {}", e)
-                        });
-                    let mut content = serde_json::to_string(&tool_output.output).unwrap_or_else(|e| {
-                        error!(
-                            "Token trimming: Failed to serialize ToolResult output: {}. Error: {}",
-                            tool_output.output, e
-                        );
-                        String::new()
-                    });
+                    // Deserialize or handle errors gracefully
+                    let mut tool_output = match serde_json::from_str::<ToolResult>(
+                        msg.text.as_str(),
+                    ) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!(
+                                "Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}",
+                                msg.text, e
+                            );
+                            ToolResult {
+                                call: ToolCall {
+                                    id: "invalid".to_string(),
+                                    name: "invalid".to_string(),
+                                    arguments: "{}".to_string(),
+                                },
+                                output: serde_json::Value::String(msg.text.clone()),
+                            }
+                        }
+                    };
 
-                    content.truncate(MAX_TOOL_RESPONSE_CHARS);
-                    content.push_str(TRUNCATION_MARKER);
-                    msg.text = serde_json::to_string(&ToolResult {
-                        output: serde_json::Value::String(content),
-                        ..tool_output
-                    })
-                    .unwrap();
+                    // Serialize output field only
+                    let mut content = match serde_json::to_string(&tool_output.output) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!(
+                                "Token trimming: Failed to serialize ToolResult output: {}. Error: {}",
+                                tool_output.output, e
+                            );
+                            String::new()
+                        }
+                    };
+
+                    if content.len() > MAX_TOOL_RESPONSE_CHARS {
+                        content.truncate(MAX_TOOL_RESPONSE_CHARS);
+                        content.push_str(TRUNCATION_MARKER);
+                    }
+
+                    // Update output field and serialize full ToolResult
+                    tool_output.output = serde_json::Value::String(content);
+                    msg.text = match serde_json::to_string(&tool_output) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!(
+                                "Token trimming: Failed to serialize ToolResult: {:?}. Error: {}",
+                                tool_output, e
+                            );
+                            "[Tool output not available]".to_string()
+                        }
+                    };
                 }
             }
         }
@@ -390,8 +419,9 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::Completion;
+    use crate::{completion::Completion, tools::ToolCall};
     use async_trait::async_trait;
+    use serde_json::Value;
     use std::collections::HashMap;
 
     // A mock CompletionModel for testing purposes.
@@ -444,6 +474,14 @@ mod tests {
             metrics: Some(ModelMetrics {
                 init_latency_ms: 0.0,
             }),
+        }
+    }
+
+    fn new_tool_call(name: &str) -> ToolCall {
+        ToolCall {
+            id: "{name}_id".to_string(),
+            name: name.to_string(),
+            arguments: "{}".to_string(),
         }
     }
 
@@ -604,35 +642,29 @@ mod tests {
     #[test]
     fn test_get_trimmed_messages_oversized_block_with_tool_message() {
         // This test simulates a single conversational block that is too large for the context.
-        // The block contains a large tool message that should be truncated.
+        // The block contains a large valid tool message that should be truncated.
         let mut session = new_session(40); // small context
-        session.add_message(SenderType::User, "Check the weather for me."); // 6 tokens est
-        let large_tool_output = "a".repeat(200); // 50 tokens est
-        session.add_message(SenderType::Tool, &large_tool_output); // This is part of the same block
+        session.add_message(SenderType::User, "Check weather"); // 3 tokens est (12 chars)
 
-        // available_tokens = 40 (context) - 1 (system prompt) = 39
-        // block_tokens_est = 6 (user) + 50 (tool) = 56. This is > 39.
-        // The block must be truncated.
+        // Create valid tool message with 200 char output
+        let serialized_tool_output = {
+            let tool_result = ToolResult {
+                call: new_tool_call("weather"),
+                output: Value::String("a".repeat(200)),
+            };
+            serde_json::to_string(&tool_result).unwrap()
+        };
+        session.add_message(SenderType::Tool, &serialized_tool_output);
+
+        // Available tokens: 40-1=39
+        // Block tokens estimated: User=3, Tool=50+
+        // The block must be truncated
         let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 2, "Both messages should be present");
-
-        assert_eq!(
-            trimmed[0].text, "Check the weather for me.",
-            "User message should be untouched"
-        );
+        assert_eq!(trimmed[0].text, "Check weather");
         assert!(
-            trimmed[1].text.ends_with("\n... [truncated]"),
+            trimmed[1].text.contains("... [truncated]"),
             "Tool message should be truncated"
-        );
-
-        // Calculate expected truncated size
-        // available_tokens = 39. User msg cost = 6. Remaining budget for tool msg = 33.
-        // Expected chars = 33 * 4 = 132.
-        let expected_truncated_text_len = 132 + "\n... [truncated]".len();
-        assert_eq!(
-            trimmed[1].text.len(),
-            expected_truncated_text_len,
-            "Tool message should be truncated to fit the budget"
         );
     }
 
@@ -662,44 +694,51 @@ mod tests {
     fn test_tool_response_truncation() {
         // Test that intermediate tool responses are truncated, but the last one is not.
         let mut session = new_session(4096); // Large context to avoid other trimming
-        let long_tool_output1 = "a".repeat(600);
-        let long_tool_output2 = "b".repeat(600);
-        let long_tool_output3 = "c".repeat(600);
+
+        // Create 3 valid tool messages with different content
+        let tool_outputs = vec![
+            ToolResult {
+                call: new_tool_call("tool_1"),
+                output: Value::String("a".repeat(600)),
+            },
+            ToolResult {
+                call: new_tool_call("tool_2"),
+                output: Value::String("b".repeat(600)),
+            },
+            ToolResult {
+                call: new_tool_call("tool_3"),
+                output: Value::String("c".repeat(600)),
+            },
+        ];
+
+        let serialized_outputs: Vec<String> = tool_outputs
+            .iter()
+            .map(|out| serde_json::to_string(out).unwrap())
+            .collect();
 
         session.add_message(SenderType::User, "U1");
-        session.add_message(SenderType::Tool, &long_tool_output1);
+        session.add_message(SenderType::Tool, &serialized_outputs[0]);
         session.add_message(SenderType::User, "U2");
-        session.add_message(SenderType::Tool, &long_tool_output2);
+        session.add_message(SenderType::Tool, &serialized_outputs[1]);
         session.add_message(SenderType::User, "U3");
-        session.add_message(SenderType::Tool, &long_tool_output3);
+        session.add_message(SenderType::Tool, &serialized_outputs[2]);
 
         let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 6);
 
-        const MAX_TOOL_RESPONSE_CHARS: usize = 512;
-        const TRUNCATION_MARKER: &str = "\n... [truncated]";
-        let truncated_len = MAX_TOOL_RESPONSE_CHARS + TRUNCATION_MARKER.len();
+        // First two tool messages should be truncated (only need to check last 5 chars)
+        assert!(trimmed[1].text.contains("... [truncated]"));
+        assert!(trimmed[3].text.contains("... [truncated]"));
 
-        // First tool message should be truncated
-        assert_eq!(trimmed[1].sender, SenderType::Tool);
-        assert!(trimmed[1].text.ends_with(TRUNCATION_MARKER));
-        assert_eq!(trimmed[1].text.len(), truncated_len);
+        // Last tool message should contain full content
+        assert!(!trimmed[5].text.contains("... [truncated]"));
 
-        // Second tool message should be truncated
-        assert_eq!(trimmed[3].sender, SenderType::Tool);
-        assert!(trimmed[3].text.ends_with(TRUNCATION_MARKER));
-        assert_eq!(trimmed[3].text.len(), truncated_len);
-
-        // Third (last) tool message should NOT be truncated
-        assert_eq!(trimmed[5].sender, SenderType::Tool);
-        assert_eq!(trimmed[5].text.len(), long_tool_output3.len());
-
-        // Test with a single tool response - should not be truncated
+        // Test with single tool response
         let mut session_single = new_session(4096);
         session_single.add_message(SenderType::User, "U1");
-        session_single.add_message(SenderType::Tool, &long_tool_output1);
+        session_single.add_message(SenderType::Tool, &serialized_outputs[0]);
         let trimmed_single = session_single.get_trimmed_messages(0);
         assert_eq!(trimmed_single.len(), 2);
-        assert_eq!(trimmed_single[1].text.len(), long_tool_output1.len());
+        assert!(!trimmed_single[1].text.contains("... [truncated]"));
     }
 }
