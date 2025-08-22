@@ -759,9 +759,16 @@ mod tests {
         let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 4);
         assert_eq!(trimmed[0].text, "U1");
-        assert!(trimmed[1].text.starts_with(
-            r#"{"call":{"id":"invalid","name":"invalid","arguments":"{}"},"output":"invalid json""#
-        ), "Actual text: {}", trimmed[1].text);
+
+        // When deserializing invalid JSON fails, it creates a ToolResult with the text as output
+        // and then serializes it back, which escapes the string content
+        let expected_start =
+            r#"{"call":{"id":"invalid","name":"invalid","arguments":"{}"},"output":"invalid json"#;
+        assert!(
+            trimmed[1].text.starts_with(expected_start),
+            "Actual text: {}",
+            trimmed[1].text
+        );
         assert!(
             trimmed[1].text.ends_with(r#""... [truncated]"#),
             "Actual text: {}",
