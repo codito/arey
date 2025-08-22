@@ -48,6 +48,8 @@ pub struct ModeConfig {
     pub model: ModelConfig,
     #[serde(default)]
     pub profile: ProfileConfig,
+    #[serde(skip)]
+    pub profile_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -131,10 +133,20 @@ impl RawConfig {
             }
         };
 
+        let get_profile_name =
+            |profile_entry: &Option<StringOrObject<ProfileConfig>>| -> Option<String> {
+                match profile_entry {
+                    Some(StringOrObject::String(s)) => Some(s.clone()),
+                    _ => None,
+                }
+            };
+
         let chat_model = resolve_model(&self.chat.model)?;
         let chat_profile = resolve_profile(&self.chat.profile)?;
+        let chat_profile_name = get_profile_name(&self.chat.profile);
         let task_model = resolve_model(&self.task.model)?;
         let task_profile = resolve_profile(&self.task.profile)?;
+        let task_profile_name = get_profile_name(&self.task.profile);
 
         Ok(Config {
             models: models_with_names,
@@ -142,10 +154,12 @@ impl RawConfig {
             chat: ModeConfig {
                 model: chat_model,
                 profile: chat_profile,
+                profile_name: chat_profile_name,
             },
             task: ModeConfig {
                 model: task_model,
                 profile: task_profile,
+                profile_name: task_profile_name,
             },
             theme: self.theme.clone().unwrap_or_else(default_theme),
             tools: self.tools.clone(),

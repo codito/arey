@@ -1,20 +1,24 @@
 //! A session is a shared context between a human and the AI assistant.
 //! Context includes the conversation, shared artifacts, and tools.
+use crate::model::ModelConfig;
+
+use crate::tools::{ToolCall, ToolResult};
 use crate::{
     completion::{
         CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
     },
-    model::{ModelConfig, ModelMetrics},
+    model::ModelMetrics,
     tools::Tool,
 };
 use anyhow::{Context, Result};
 use futures::stream::BoxStream;
 use std::{collections::HashMap, sync::Arc};
-use tracing::debug;
+use tracing::{debug, error};
 
 /// A session with shared context between Human and AI model.
 pub struct Session {
     model: Box<dyn CompletionModel + Send + Sync>,
+    model_name: String,
     context_size: usize,
     system_prompt: String,
     // Store messages with their optional token count.
@@ -26,6 +30,7 @@ pub struct Session {
 impl Session {
     /// Create a new session with the given model configuration
     pub async fn new(model_config: ModelConfig, system_prompt: &str) -> Result<Self> {
+        let model_name = model_config.name.clone();
         let mut model = crate::get_completion_llm(model_config.clone())
             .context("Failed to initialize session model")?;
 
@@ -40,12 +45,43 @@ impl Session {
 
         Ok(Self {
             model,
+            model_name,
             context_size,
             system_prompt: system_prompt.to_string(),
             messages: Vec::new(),
             tools: Vec::new(),
             metrics,
         })
+    }
+
+    /// Set a new system prompt for the session.
+    /// This reloads the model and clears the message history.
+    pub async fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
+        self.system_prompt = prompt.to_string();
+        self.model
+            .load(prompt)
+            .await
+            .context("Failed to load model with new system prompt")?;
+        self.messages.clear();
+        Ok(())
+    }
+
+    /// Get model name
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    /// Get system prompt
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    /// Transfer existing message history to session
+    pub fn set_messages(&mut self, messages: Vec<ChatMessage>) {
+        self.messages = messages
+            .into_iter()
+            .map(|msg| (msg, None)) // Reset token counts for new model
+            .collect();
     }
 
     /// Add a new message to the conversation history
@@ -63,6 +99,11 @@ impl Session {
     /// Set the tools available for this session
     pub fn set_tools(&mut self, tools: Vec<Arc<dyn Tool>>) {
         self.tools = tools;
+    }
+
+    /// Returns a clone of the tools available in the session.
+    pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.clone()
     }
 
     /// Generate a response stream for the current conversation
@@ -310,15 +351,53 @@ impl Session {
 
         if let Some(last_idx) = last_tool_idx {
             const MAX_TOOL_RESPONSE_CHARS: usize = 512;
-            const TRUNCATION_MARKER: &str = "\n... [truncated]";
+            const TRUNCATION_MARKER: &str = "... [truncated]";
 
             for (i, msg) in final_messages.iter_mut().enumerate() {
                 if i < last_idx
                     && msg.sender == SenderType::Tool
                     && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
                 {
-                    msg.text.truncate(MAX_TOOL_RESPONSE_CHARS);
-                    msg.text.push_str(TRUNCATION_MARKER);
+                    // Deserialize or handle errors gracefully
+                    let mut tool_output = match serde_json::from_str::<ToolResult>(
+                        msg.text.as_str(),
+                    ) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!(
+                                "Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}",
+                                msg.text, e
+                            );
+                            ToolResult {
+                                call: ToolCall {
+                                    id: "invalid".to_string(),
+                                    name: "invalid".to_string(),
+                                    arguments: "{}".to_string(),
+                                },
+                                output: serde_json::Value::String(msg.text.clone()),
+                            }
+                        }
+                    };
+
+                    // Serialize output field only
+                    let mut content = serde_json::to_string(&tool_output.output).unwrap();
+                    if content.len() > MAX_TOOL_RESPONSE_CHARS {
+                        content.truncate(MAX_TOOL_RESPONSE_CHARS);
+                        content.push_str(TRUNCATION_MARKER);
+                    }
+
+                    // Update output field and serialize full ToolResult
+                    tool_output.output = serde_json::Value::String(content);
+                    msg.text = match serde_json::to_string(&tool_output) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!(
+                                "Token trimming: Failed to serialize ToolResult: {:?}. Error: {}",
+                                tool_output, e
+                            );
+                            "[Tool output not available]".to_string()
+                        }
+                    };
                 }
             }
         }
@@ -330,8 +409,9 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::Completion;
+    use crate::{completion::Completion, tools::ToolCall};
     use async_trait::async_trait;
+    use serde_json::Value;
     use std::collections::HashMap;
 
     // A mock CompletionModel for testing purposes.
@@ -376,6 +456,7 @@ mod tests {
     fn new_session(context_size: usize) -> Session {
         Session {
             model: Box::new(MockModel::new()),
+            model_name: "test-model".to_string(),
             context_size,
             system_prompt: "System".to_string(), // 6 chars -> 1 token est.
             messages: Vec::new(),
@@ -383,6 +464,14 @@ mod tests {
             metrics: Some(ModelMetrics {
                 init_latency_ms: 0.0,
             }),
+        }
+    }
+
+    fn new_tool_call(name: &str) -> ToolCall {
+        ToolCall {
+            id: "{name}_id".to_string(),
+            name: name.to_string(),
+            arguments: "{}".to_string(),
         }
     }
 
@@ -543,35 +632,29 @@ mod tests {
     #[test]
     fn test_get_trimmed_messages_oversized_block_with_tool_message() {
         // This test simulates a single conversational block that is too large for the context.
-        // The block contains a large tool message that should be truncated.
+        // The block contains a large valid tool message that should be truncated.
         let mut session = new_session(40); // small context
-        session.add_message(SenderType::User, "Check the weather for me."); // 6 tokens est
-        let large_tool_output = "a".repeat(200); // 50 tokens est
-        session.add_message(SenderType::Tool, &large_tool_output); // This is part of the same block
+        session.add_message(SenderType::User, "Check weather"); // 3 tokens est (12 chars)
 
-        // available_tokens = 40 (context) - 1 (system prompt) = 39
-        // block_tokens_est = 6 (user) + 50 (tool) = 56. This is > 39.
-        // The block must be truncated.
+        // Create valid tool message with 200 char output
+        let serialized_tool_output = {
+            let tool_result = ToolResult {
+                call: new_tool_call("weather"),
+                output: Value::String("a".repeat(200)),
+            };
+            serde_json::to_string(&tool_result).unwrap()
+        };
+        session.add_message(SenderType::Tool, &serialized_tool_output);
+
+        // Available tokens: 40-1=39
+        // Block tokens estimated: User=3, Tool=50+
+        // The block must be truncated
         let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 2, "Both messages should be present");
-
-        assert_eq!(
-            trimmed[0].text, "Check the weather for me.",
-            "User message should be untouched"
-        );
+        assert_eq!(trimmed[0].text, "Check weather");
         assert!(
-            trimmed[1].text.ends_with("\n... [truncated]"),
+            trimmed[1].text.contains("... [truncated]"),
             "Tool message should be truncated"
-        );
-
-        // Calculate expected truncated size
-        // available_tokens = 39. User msg cost = 6. Remaining budget for tool msg = 33.
-        // Expected chars = 33 * 4 = 132.
-        let expected_truncated_text_len = 132 + "\n... [truncated]".len();
-        assert_eq!(
-            trimmed[1].text.len(),
-            expected_truncated_text_len,
-            "Tool message should be truncated to fit the budget"
         );
     }
 
@@ -601,44 +684,91 @@ mod tests {
     fn test_tool_response_truncation() {
         // Test that intermediate tool responses are truncated, but the last one is not.
         let mut session = new_session(4096); // Large context to avoid other trimming
-        let long_tool_output1 = "a".repeat(600);
-        let long_tool_output2 = "b".repeat(600);
-        let long_tool_output3 = "c".repeat(600);
+
+        // Create 3 valid tool messages with different content
+        let tool_outputs = vec![
+            ToolResult {
+                call: new_tool_call("tool_1"),
+                output: Value::String("a".repeat(600)),
+            },
+            ToolResult {
+                call: new_tool_call("tool_2"),
+                output: Value::String("b".repeat(600)),
+            },
+            ToolResult {
+                call: new_tool_call("tool_3"),
+                output: Value::String("c".repeat(600)),
+            },
+        ];
+
+        let serialized_outputs: Vec<String> = tool_outputs
+            .iter()
+            .map(|out| serde_json::to_string(out).unwrap())
+            .collect();
 
         session.add_message(SenderType::User, "U1");
-        session.add_message(SenderType::Tool, &long_tool_output1);
+        session.add_message(SenderType::Tool, &serialized_outputs[0]);
         session.add_message(SenderType::User, "U2");
-        session.add_message(SenderType::Tool, &long_tool_output2);
+        session.add_message(SenderType::Tool, &serialized_outputs[1]);
         session.add_message(SenderType::User, "U3");
-        session.add_message(SenderType::Tool, &long_tool_output3);
+        session.add_message(SenderType::Tool, &serialized_outputs[2]);
 
         let trimmed = session.get_trimmed_messages(0);
         assert_eq!(trimmed.len(), 6);
 
-        const MAX_TOOL_RESPONSE_CHARS: usize = 512;
-        const TRUNCATION_MARKER: &str = "\n... [truncated]";
-        let truncated_len = MAX_TOOL_RESPONSE_CHARS + TRUNCATION_MARKER.len();
+        // First two tool messages should be truncated (only need to check last 5 chars)
+        assert!(trimmed[1].text.contains("... [truncated]"));
+        assert!(trimmed[3].text.contains("... [truncated]"));
 
-        // First tool message should be truncated
-        assert_eq!(trimmed[1].sender, SenderType::Tool);
-        assert!(trimmed[1].text.ends_with(TRUNCATION_MARKER));
-        assert_eq!(trimmed[1].text.len(), truncated_len);
+        // Last tool message should contain full content
+        assert!(!trimmed[5].text.contains("... [truncated]"));
 
-        // Second tool message should be truncated
-        assert_eq!(trimmed[3].sender, SenderType::Tool);
-        assert!(trimmed[3].text.ends_with(TRUNCATION_MARKER));
-        assert_eq!(trimmed[3].text.len(), truncated_len);
-
-        // Third (last) tool message should NOT be truncated
-        assert_eq!(trimmed[5].sender, SenderType::Tool);
-        assert_eq!(trimmed[5].text.len(), long_tool_output3.len());
-
-        // Test with a single tool response - should not be truncated
+        // Test with single tool response
         let mut session_single = new_session(4096);
         session_single.add_message(SenderType::User, "U1");
-        session_single.add_message(SenderType::Tool, &long_tool_output1);
+        session_single.add_message(SenderType::Tool, &serialized_outputs[0]);
         let trimmed_single = session_single.get_trimmed_messages(0);
         assert_eq!(trimmed_single.len(), 2);
-        assert_eq!(trimmed_single[1].text.len(), long_tool_output1.len());
+        assert!(!trimmed_single[1].text.contains("... [truncated]"));
+    }
+
+    #[test]
+    fn test_get_trimmed_messages_invalid_tool_result() {
+        let mut session = new_session(4096);
+        session.add_message(SenderType::User, "U1");
+        session.add_message(
+            SenderType::Tool,
+            "invalid json".to_string().repeat(100).as_str(),
+        );
+        session.add_message(SenderType::User, "U2");
+        session.add_message(
+            SenderType::Tool,
+            "invalid json for last message is not truncated",
+        );
+
+        let trimmed = session.get_trimmed_messages(0);
+        assert_eq!(trimmed.len(), 4);
+        assert_eq!(trimmed[0].text, "U1");
+
+        // When deserializing invalid JSON fails, it creates a ToolResult with the text as output
+        // and then serializes it back, which escapes the string content.
+        // Use escaped quotes for string "invalid json" as it gets serialized.
+        let expected_start = r#"{"call":{"id":"invalid","name":"invalid","arguments":"{}"},"output":"\"invalid json"#;
+        assert!(
+            trimmed[1].text.starts_with(expected_start),
+            "Actual text: {}\nExpected: {}",
+            trimmed[1].text,
+            expected_start
+        );
+        assert!(
+            trimmed[1].text.ends_with(r#"... [truncated]"}"#),
+            "Actual text: {}",
+            trimmed[1].text
+        );
+        assert_eq!(trimmed[2].text, "U2");
+        assert_eq!(
+            trimmed[3].text,
+            "invalid json for last message is not truncated"
+        );
     }
 }

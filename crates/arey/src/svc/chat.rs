@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use arey_core::completion::{CancellationToken, ChatMessage, Completion};
-use arey_core::config::Config;
+use arey_core::config::{Config, ProfileConfig};
 use arey_core::session::Session;
 use arey_core::tools::Tool;
 use futures::{StreamExt, stream::BoxStream};
@@ -14,7 +14,79 @@ use tokio::sync::Mutex;
 /// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
     session: Arc<Mutex<Session>>,
+    profile_name: Option<String>,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
+    config: &'a Config,
+}
+
+impl<'a> Chat<'a> {
+    /// Switch to a different model
+    pub async fn set_model(&mut self, model_name: &str) -> Result<()> {
+        let model_config = self
+            .config
+            .models
+            .get(model_name)
+            .cloned()
+            .context(format!("Model '{model_name}' not found in config."))?;
+
+        let mut session_lock = self.session.lock().await;
+        // Preserve existing conversation state
+        let messages = session_lock.all_messages();
+        let tools = session_lock.tools();
+        let system_prompt = session_lock.system_prompt().to_string();
+
+        let mut new_session = Session::new(model_config, &system_prompt)
+            .await
+            .context("Failed to initialize new session")?;
+
+        new_session.set_tools(tools);
+        new_session.set_messages(messages);
+        *session_lock = new_session;
+
+        Ok(())
+    }
+
+    /// Get current system prompt
+    pub async fn system_prompt(&self) -> String {
+        self.session.lock().await.system_prompt().to_string()
+    }
+
+    /// Get available model names
+    pub fn available_model_names(&self) -> Vec<&str> {
+        self.config.models.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get current model name
+    pub async fn model_name(&self) -> String {
+        self.session.lock().await.model_name().to_string()
+    }
+
+    /// Get available profile names
+    pub fn available_profile_names(&self) -> Vec<&str> {
+        self.config.profiles.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get current profile name
+    pub fn profile_name(&self) -> Option<String> {
+        self.profile_name.clone()
+    }
+
+    /// Get current profile name and data
+    /// Get current profile name and data
+    pub fn current_profile(&self) -> Option<(&String, &ProfileConfig)> {
+        self.profile_name
+            .as_ref()
+            .and_then(|name| self.config.profiles.get(name).map(|data| (name, data)))
+    }
+
+    /// Switch to a different profile
+    pub fn set_profile(&mut self, profile_name: &str) -> Result<()> {
+        if !self.config.profiles.contains_key(profile_name) {
+            anyhow::bail!("Profile '{profile_name}' not found in config.");
+        }
+        self.profile_name = Some(profile_name.to_string());
+        Ok(())
+    }
 }
 
 impl<'a> fmt::Debug for Chat<'a> {
@@ -33,7 +105,7 @@ impl<'a> Chat<'a> {
     ///
     /// It uses the specified model from the configuration, or the default chat model if `None`.
     pub async fn new(
-        config: &Config,
+        config: &'a Config,
         model: Option<String>,
         available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     ) -> Result<Self> {
@@ -47,13 +119,18 @@ impl<'a> Chat<'a> {
             config.chat.model.clone()
         };
 
-        let session = Session::new(model_config, "")
+        let profile_name = config.chat.profile_name.clone();
+        let system_prompt = ""; // Profiles do not manage the system prompt.
+
+        let session = Session::new(model_config, system_prompt)
             .await
             .context("Failed to create chat session")?;
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
+            profile_name,
             available_tools,
+            config,
         })
     }
 
@@ -71,6 +148,11 @@ impl<'a> Chat<'a> {
         let mut session = self.session.lock().await;
         session.set_tools(tools);
         Ok(())
+    }
+
+    /// Gets the tools available for the current chat session.
+    pub async fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.session.lock().await.tools()
     }
 
     /// Adds messages to the conversation history.
@@ -95,9 +177,29 @@ impl<'a> Chat<'a> {
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'_, Result<Completion>>> {
         let session = self.session.clone();
+        let settings = self
+            .profile_name
+            .as_ref()
+            .and_then(|name| self.config.profiles.get(name))
+            .map(|profile| {
+                let mut settings = HashMap::new();
+
+                // Construct the settings map from the profile fields. When a profile
+                // is active, all its settings are applied.
+                settings.insert("temperature".to_string(), profile.temperature.to_string());
+                settings.insert(
+                    "repeat_penalty".to_string(),
+                    profile.repeat_penalty.to_string(),
+                );
+                settings.insert("top_k".to_string(), profile.top_k.to_string());
+                settings.insert("top_p".to_string(), profile.top_p.to_string());
+
+                settings
+            })
+            .unwrap_or_default();
         let stream = async_stream::stream! {
             let mut session_lock = session.lock().await;
-            let mut inner_stream = match session_lock.generate(HashMap::new(), cancel_token.clone()).await {
+            let mut inner_stream = match session_lock.generate(settings, cancel_token.clone()).await {
                 Ok(stream) => stream,
                 Err(e) => {
                     yield Err(e);
@@ -188,11 +290,17 @@ models:
     provider: openai
     base_url: "{server_uri}"
     api_key: "MOCK_OPENAI_API_KEY"
-profiles: {{}}
 chat:
   model: test-model
+  profile: test-profile
 task:
   model: test-model
+profiles:
+  test-profile:
+    temperature: 0.5
+    top_p: 0.9
+    repeat_penalty: 1.1
+    top_k: 40
 "#,
         );
         std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
@@ -265,6 +373,31 @@ task:
 
         // Test with a tool that is not available
         assert!(chat.set_tools(&["bad_tool".to_string()]).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_tools() -> Result<()> {
+        let server = MockServer::start().await;
+        let config = get_test_config(&server).await?;
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+
+        let chat = Chat::new(&config, None, available_tools).await?;
+
+        // Initially, no tools are set
+        let tools = chat.tools().await;
+        assert!(tools.is_empty());
+
+        // Set a tool
+        chat.set_tools(&["mock_tool".to_string()]).await?;
+
+        // Get the tools and verify
+        let tools = chat.tools().await;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "mock_tool");
 
         Ok(())
     }
@@ -362,6 +495,77 @@ task:
         }
 
         assert_eq!(response_text, "Hello world!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_model() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        // Add second model to config
+        config.models.insert(
+            "test-model-2".to_string(),
+            arey_core::model::ModelConfig {
+                name: "test-model-2".to_string(),
+                provider: arey_core::model::ModelProvider::Openai,
+                settings: HashMap::from([
+                    ("base_url".to_string(), server.uri().into()),
+                    ("api_key".to_string(), "MOCK_OPENAI_API_KEY_2".into()),
+                ]),
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Switch to second model
+        chat.set_model("test-model-2").await?;
+
+        // Verify model changed
+        let models = chat.available_model_names();
+        assert_eq!(models.len(), 2);
+        assert!(models.contains(&"test-model"));
+        assert!(models.contains(&"test-model-2"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_profile() -> Result<()> {
+        let server = MockServer::start().await;
+        let config = get_test_config(&server).await?;
+        let mut chat = Chat::new(&config, None, HashMap::new()).await?;
+
+        // 1. Initially, the default profile from config is set
+        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
+
+        // 2. Set a valid profile
+        chat.set_profile("test-profile")?;
+        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
+
+        // 3. Setting a model should NOT clear the profile
+        chat.set_model("test-model").await?;
+        assert_eq!(
+            chat.profile_name(),
+            Some("test-profile".to_string()),
+            "Setting a model should not clear the active profile"
+        );
+
+        // 4. Setting an invalid profile should fail
+        let result = chat.set_profile("non-existent-profile");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Profile 'non-existent-profile' not found in config.")
+        );
+
+        // 5. Profile should remain unchanged after error
+        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
 
         Ok(())
     }
