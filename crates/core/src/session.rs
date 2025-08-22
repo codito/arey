@@ -761,17 +761,17 @@ mod tests {
         assert_eq!(trimmed[0].text, "U1");
 
         // When deserializing invalid JSON fails, it creates a ToolResult with the text as output
-        // and then serializes it back, which escapes the string content
-        // The string "invalid json" repeated 100 times when serialized as JSON string value
-        // will have escaped quotes around it
+        // and then serializes it back, which escapes the string content.
+        // Use escaped quotes for string "invalid json" as it gets serialized.
         let expected_start = r#"{"call":{"id":"invalid","name":"invalid","arguments":"{}"},"output":"\"invalid json"#;
         assert!(
             trimmed[1].text.starts_with(expected_start),
-            "Actual text: {}",
-            trimmed[1].text
+            "Actual text: {}\nExpected: {}",
+            trimmed[1].text,
+            expected_start
         );
         assert!(
-            trimmed[1].text.ends_with(r#""... [truncated]"#),
+            trimmed[1].text.ends_with(r#"... [truncated]"}"#),
             "Actual text: {}",
             trimmed[1].text
         );
@@ -784,7 +784,7 @@ mod tests {
 
     #[test]
     fn test_get_trimmed_messages_tool_output_serialization_failure() {
-        // This test simulates a failure when serializing the tool output
+        // This test simulates a failure when serializing the tool output.
         // We create a ToolResult that contains a huge output that cannot be serialized
         // due to some reason (though in practice serde_json usually succeeds, but we want to test the error path)
         let tool_result = ToolResult {

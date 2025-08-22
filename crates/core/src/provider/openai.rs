@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OpenAISettings {
@@ -109,11 +109,14 @@ impl OpenAIBaseModel {
             SenderType::Tool => {
                 let tool_output: ToolResult = serde_json::from_str(msg.text.as_str())
                     .unwrap_or_else(|e| {
-                        trace!("Failed to deserialize ToolResult from message text: {}", e);
+                        error!(
+                            "Failed to deserialize ToolResult from message text: {}. Error: {}",
+                            msg.text, e
+                        );
                         panic!("Failed to deserialize ToolResult from message text: {e}");
                     });
                 let content = serde_json::to_string(&tool_output.output).unwrap_or_else(|e| {
-                    trace!("Failed to serialize tool output content: {e}");
+                    error!("Failed to serialize tool output content: {e}");
                     panic!("Failed to serialize tool output content: {e}");
                 });
                 // println!("{tool_output:?}");

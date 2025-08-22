@@ -43,42 +43,6 @@ struct CliCommand {
     pub command: Command,
 }
 
-#[test]
-fn test_model_command_completion() {
-    use rustyline::history::DefaultHistory;
-
-    let history = DefaultHistory::new();
-
-    // Test command-line completion for the model command
-    let repl = Repl {
-        command_names: vec![],
-        tool_names: vec![],
-        model_names: vec!["model1".to_string(), "model2".to_string()],
-        profile_names: vec![],
-    };
-
-    // Simulate user typing "/model mod"
-    let line = "/model mod";
-    let (start, candidates) = repl
-        .complete(line, line.len(), &rustyline::Context::new(&history))
-        .unwrap();
-
-    // Expecting completion to start at the model prefix (after the space)
-    assert_eq!(start, 7); // "/model ".len() is 7
-    assert_eq!(candidates.len(), 2);
-    assert_eq!(candidates[0].replacement(), "model1");
-    assert_eq!(candidates[1].replacement(), "model2");
-
-    // Simulate user typing "/model l"
-    let line = "/model l";
-    let (start, candidates) = repl
-        .complete(line, line.len(), &rustyline::Context::new(&history))
-        .unwrap();
-    assert_eq!(start, 7);
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].replacement(), "list");
-}
-
 #[derive(Subcommand, Debug, Hash, PartialEq, Eq)]
 enum Command {
     /// Clear chat history
@@ -160,10 +124,7 @@ impl Command {
                             Ok(()) => {
                                 spinner.clear();
                                 let success_msg = format!("Model switched to: {}", name);
-                                println!(
-                                    "{}",
-                                    style_chat_text(&success_msg, ChatMessageType::Footer)
-                                );
+                                println!("{success_msg}",);
                             }
                             Err(e) => {
                                 spinner.clear();
@@ -733,6 +694,7 @@ async fn process_tools(
     let mut tool_messages: Vec<ChatMessage> = vec![];
 
     for call in tool_calls {
+        eprintln!(); // Add a newline before tool output
         let tool_fmt = format!("Tool: {}({})", call.name, call.arguments);
         let tool_msg = style_chat_text(&tool_fmt, ChatMessageType::Footer);
         let spinner = GenerationSpinner::new(tool_msg.to_string());
@@ -962,6 +924,42 @@ task:
         assert_eq!(start, 6); // "/tool ".len()
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].replacement(), "search");
+    }
+
+    #[test]
+    fn test_model_command_completion() {
+        use rustyline::history::DefaultHistory;
+
+        let history = DefaultHistory::new();
+
+        // Test command-line completion for the model command
+        let repl = Repl {
+            command_names: vec![],
+            tool_names: vec![],
+            model_names: vec!["model1".to_string(), "model2".to_string()],
+            profile_names: vec![],
+        };
+
+        // Simulate user typing "/model mod"
+        let line = "/model mod";
+        let (start, candidates) = repl
+            .complete(line, line.len(), &rustyline::Context::new(&history))
+            .unwrap();
+
+        // Expecting completion to start at the model prefix (after the space)
+        assert_eq!(start, 7); // "/model ".len() is 7
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].replacement(), "model1");
+        assert_eq!(candidates[1].replacement(), "model2");
+
+        // Simulate user typing "/model l"
+        let line = "/model l";
+        let (start, candidates) = repl
+            .complete(line, line.len(), &rustyline::Context::new(&history))
+            .unwrap();
+        assert_eq!(start, 7);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "list");
     }
 
     #[test]
