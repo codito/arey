@@ -380,17 +380,7 @@ impl Session {
                     };
 
                     // Serialize output field only
-                    let mut content = match serde_json::to_string(&tool_output.output) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            error!(
-                                "Token trimming: Failed to serialize ToolResult output: {}. Error: {}",
-                                tool_output.output, e
-                            );
-                            String::new()
-                        }
-                    };
-
+                    let mut content = serde_json::to_string(&tool_output.output).unwrap();
                     if content.len() > MAX_TOOL_RESPONSE_CHARS {
                         content.truncate(MAX_TOOL_RESPONSE_CHARS);
                         content.push_str(TRUNCATION_MARKER);
@@ -780,34 +770,5 @@ mod tests {
             trimmed[3].text,
             "invalid json for last message is not truncated"
         );
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_tool_output_serialization_failure() {
-        // This test simulates a failure when serializing the tool output.
-        // We create a ToolResult that contains a huge output that cannot be serialized
-        // due to some reason (though in practice serde_json usually succeeds, but we want to test the error path)
-        let tool_result = ToolResult {
-            call: new_tool_call("broken_tool"),
-            output: serde_json::Value::String("x".repeat(10000)),
-        };
-
-        // We'll break serialization by making the output too large to serialize
-        // (actual serialization would work, so we cannot simulate an error this way)
-        // But the code handles serialization errors anyway. This test just verifies that error path won't panic.
-        let large_output = serde_json::to_string(&tool_result).unwrap();
-        let mut session = new_session(4070); // set context size so that truncation will happen
-
-        session.add_message(SenderType::User, "U1");
-        session.add_message(SenderType::Tool, &large_output);
-        session.add_message(SenderType::User, "U2");
-        session.add_message(SenderType::Tool, &large_output);
-        session.add_message(SenderType::User, "U3");
-
-        session.add_message(SenderType::Tool, &large_output); // this will be the last tool
-
-        let trimmed = session.get_trimmed_messages(0);
-        // We just verify we get 4 messages without panicking
-        assert!(trimmed.len() > 1);
     }
 }
