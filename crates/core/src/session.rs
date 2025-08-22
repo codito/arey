@@ -762,8 +762,9 @@ mod tests {
 
         // When deserializing invalid JSON fails, it creates a ToolResult with the text as output
         // and then serializes it back, which escapes the string content
-        let expected_start =
-            r#"{"call":{"id":"invalid","name":"invalid","arguments":"{}"},"output":"invalid json"#;
+        // The string "invalid json" repeated 100 times when serialized as JSON string value
+        // will have escaped quotes around it
+        let expected_start = r#"{"call":{"id":"invalid","name":"invalid","arguments":"{}"},"output":"\"invalid json"#;
         assert!(
             trimmed[1].text.starts_with(expected_start),
             "Actual text: {}",
