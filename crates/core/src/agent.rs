@@ -1,8 +1,7 @@
 //! An agent is a combination of a system prompt, tools, and model parameters.
 //! This provides a way to create specialized assistants for specific tasks.
 
-use crate::tools::Tool;
-use serde_yaml::Value;
+use crate::{config::ProfileConfig, tools::Tool};
 use std::{collections::HashMap, sync::Arc};
 
 /// Represents a system prompt with pre-calculated token count for efficient trimming.
