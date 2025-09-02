@@ -382,7 +382,11 @@ impl Session {
                     // Serialize output field only
                     let mut content = serde_json::to_string(&tool_output.output).unwrap();
                     if content.len() > MAX_TOOL_RESPONSE_CHARS {
-                        content.truncate(MAX_TOOL_RESPONSE_CHARS);
+                        let mut new_len = MAX_TOOL_RESPONSE_CHARS;
+                        while !content.is_char_boundary(new_len) {
+                            new_len -= 1;
+                        }
+                        content.truncate(new_len);
                         content.push_str(TRUNCATION_MARKER);
                     }
 
@@ -770,5 +774,45 @@ mod tests {
             trimmed[3].text,
             "invalid json for last message is not truncated"
         );
+    }
+
+    #[test]
+    fn test_tool_response_truncation_with_multibyte_chars() {
+        // This test ensures that truncating a tool response with multi-byte characters
+        // does not panic by cutting a character in half.
+        let mut session = new_session(4096);
+
+        // Construct a string where the truncation boundary (512) falls within a multi-byte character.
+        // `content` will be `"` + `long_string` + `"`.
+        // The euro sign '€' is 3 bytes and starts at byte index 511 of `content`.
+        let long_string = "a".to_string().repeat(510) + "€"; // 513 bytes as a string slice.
+
+        let tool_outputs = vec![
+            ToolResult {
+                call: new_tool_call("tool_1"),
+                output: Value::String(long_string),
+            },
+            ToolResult {
+                call: new_tool_call("tool_2"),
+                output: Value::String("b".to_string().repeat(10)), // A dummy second tool call
+            },
+        ];
+
+        let serialized_outputs: Vec<String> = tool_outputs
+            .iter()
+            .map(|out| serde_json::to_string(out).unwrap())
+            .collect();
+
+        session.add_message(SenderType::User, "U1");
+        session.add_message(SenderType::Tool, &serialized_outputs[0]);
+        session.add_message(SenderType::User, "U2");
+        session.add_message(SenderType::Tool, &serialized_outputs[1]);
+
+        // This call would panic without the fix.
+        let trimmed = session.get_trimmed_messages(0);
+
+        // Check that it didn't panic and the first message was truncated correctly.
+        assert!(trimmed[1].text.contains("... [truncated]"));
+        assert!(!trimmed[3].text.contains("... [truncated]"));
     }
 }
