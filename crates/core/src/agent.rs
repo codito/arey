@@ -41,7 +41,7 @@ pub struct AgentConfig {
     name: String,
     system_prompt: SystemPrompt,
     tools: HashMap<String, Arc<dyn Tool>>,
-    parameters: HashMap<String, Value>, // Temperature, top_p, etc.
+    profile: ProfileConfig,
 }
 
 impl AgentConfig {
@@ -53,13 +53,13 @@ impl AgentConfig {
             name: name.to_string(),
             system_prompt: SystemPrompt::new(prompt),
             tools: tools_map,
-            parameters: HashMap::new(),
+            profile: ProfileConfig::default(),
         }
     }
 
-    /// Adds a parameter to the agent's configuration using a builder pattern.
-    pub fn with_parameter(mut self, key: &str, value: Value) -> Self {
-        self.parameters.insert(key.to_string(), value);
+    /// Sets the profile for the agent's configuration using a builder pattern.
+    pub fn with_profile(mut self, profile: ProfileConfig) -> Self {
+        self.profile = profile;
         self
     }
 }
