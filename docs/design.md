@@ -59,57 +59,71 @@ We implement a layered architecture with clear separation of concerns:
 
 ### Key Concepts
 
-- **Agents**: Specialized workers for focused tasks 
-  - Execute queries with access to tools/memory
-  - Can run in background during sessions
-  - Discovered via registry pattern
+- **Agent**: A stateless configuration that defines a persona and capabilities. It bundles a system prompt, a default set of tools, and model generation parameters (`ProfileConfig`). Agents are reusable templates for creating specialized conversational experiences.
 
-- **Workflows**: Predefined sequences of steps:
-  1. Agent invocations
-  2. Tool usage
-  3. Conditional operations
-  4. Memory operations
+- **Session**: A stateful, long-lived object that represents a single, continuous conversation. A session is instantiated from an `Agent` configuration and holds the complete message history. It is the primary entity that a user interacts with.
 
-- **Tools**: Extend functionality through:
-  - Web search (`/search`)
-  - File operations (`/file`) 
-  - Custom integrations
+- **Nested Execution**: A `Session` can delegate a sub-task to a different `Agent`. When this happens, a new, temporary child `Session` is created from the child `Agent`'s configuration. This isolates the sub-task's context. Only the final result from the child session is returned to the parent, keeping the primary conversation history clean and efficient.
 
-- **Memory**: Context-aware storage:
-  - Short-term: Session memory
-  - Long-term: Vector stores 
-  - Automatic retrieval augmentation
+- **Tools**: Extend agent functionality through integrations like web search or file operations. A session's toolset is initialized from its agent, but can be dynamically modified for the duration of the session.
+
+- **Workflows**: Predefined sequences of agent and tool invocations to automate complex, multi-step tasks.
 
 - **REPL Engine**: Interactive chat environment with:
   - Command history
   - Context-aware autocomplete
-  - Rich output formatting
+  - Rich output formatting for agent and tool responses.
 
 ### Execution Flows
 
-**Agent Invocation**
+**Session Initialization and Interaction**
 ```mermaid
 graph TD
-    User((User)) --> Run["run @agent: query"]
-    Run --> Registry[Agent Registry]
-    Registry --> Factory[Agent Factory]
-    Factory --> Executor[Agent Executor]
-    Executor --> Tools[Access Tools]
-    Tools --> Results[Return Results]
+    User((User)) -->|"arey chat --agent coder"| CLI
+    CLI --> AgentRepo[Agent Repository]
+    AgentRepo -->|Loads "coder" config| AgentConfig(AgentConfig)
+    CLI -->|Instantiates with config| Session(Session State)
+    User <-->|Interact| Session
+    Session -->|Uses| Tools
+    Session -->|Generates response via| Model[LLM]
 ```
 
-**Workflow Execution**
+**Nested Agent Invocation**
 ```mermaid
-graph LR
-    User((User)) --> Parse["!workflow_name arg"]
-    Parse --> Loader[Workflow Loader]
-    Loader --> Engine[Workflow Engine]
-    Engine --> Step1[Agent Step]
-    Engine --> Step2[Tool Step]
-    Step1 --> Agg[Aggregate Results]
-    Step2 --> Agg
-    Agg --> Output[Final Output]
+graph TD
+    subgraph "Parent Session"
+        User((User)) --> ParentSession(Session)
+        ParentSession --> |"Delegates to @researcher"| ChildAgent(Researcher AgentConfig)
+    end
+
+    subgraph "Child's Ephemeral Session"
+        ChildAgent --> ChildSession(New Session)
+        ChildSession -- "Uses" --> ChildTools[Tools]
+        ChildTools --> ChildSession
+        ChildSession -- "Computes final result" --> Result
+    end
+
+    Result --> ParentSession
+    ParentSession -- "Records result in history" --> ParentHistory(fa:fa-history)
+    ParentSession --> |"Final answer"| User
 ```
+
+### Design Considerations and Mitigations
+
+The introduction of nested agent execution introduces complexity. The following design choices are intended to mitigate these challenges while retaining power and flexibility.
+
+- **Complexity**: By strictly separating the stateless `Agent` configuration from the stateful `Session`, we keep the core concepts clean. The primary user-facing API will interact with `Session`, which provides a simple conversational interface. Nested execution is an advanced feature that builds on this stable foundation without complicating the basic use case.
+
+- **State Management**: The one-way dependency (`Agent` configures `Session`) prevents ambiguity. An agent definition can be safely reused to spawn multiple, independent sessions, ensuring predictable behavior and easier state management for the application.
+
+- **Context Propagation**: Passing context to child agents is a critical and non-trivial problem. Instead of a one-size-fits-all solution, the parent session will be responsible for explicitly crafting a concise, task-specific prompt for the child agent. This prevents token waste and ensures the child has the necessary information without being overloaded by irrelevant history.
+
+### Open Questions
+
+- [ ] **Context Propagation Strategy**: What is the most effective and efficient way to summarize and pass context from a parent session to a child? Should this be a configurable strategy (e.g., "last_n_turns", "summary", "manual_prompt")?
+- [ ] **Dynamic Tool Management**: How should the system prompt be updated when a tool is added or removed from a session mid-conversation? Does this require a full model reload, or can we manage it more gracefully?
+- [ ] **Error Handling in Nested Calls**: How should errors from a child session (e.g., tool failure, generation error) be propagated to the parent? Should the parent be able to retry or intervene?
+- [ ] **Circular Dependency Detection**: How do we prevent infinite loops where Agent A calls Agent B, which in turn calls Agent A? A maximum call depth is a simple first step, but more sophisticated cycle detection may be needed.
 
 ### Example Runs
 
