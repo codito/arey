@@ -59,7 +59,7 @@ We implement a layered architecture with clear separation of concerns:
 
 ### Key Concepts
 
-- **Agent**: A stateless configuration that defines a persona and capabilities. It bundles a system prompt, a default set of tools, and model generation parameters (`ProfileConfig`). Agents are reusable templates for creating specialized conversational experiences.
+- **Agent**: A stateless configuration that defines a persona and capabilities, configured in `arey.yml`. It bundles a system prompt, a list of default tool names, and model generation parameters (`ProfileConfig`). Agents are reusable templates for creating specialized conversational experiences.
 
 - **Session**: A stateful, long-lived object that represents a single, continuous conversation. A session is instantiated from an `Agent` configuration and holds the complete message history. It is the primary entity that a user interacts with.
 
@@ -74,18 +74,49 @@ We implement a layered architecture with clear separation of concerns:
   - Context-aware autocomplete
   - Rich output formatting for agent and tool responses.
 
+### Agent Configuration and Discovery
+
+Agents are defined declaratively in the `arey.yml` configuration file under a top-level `agents` map. This allows for easy creation and management of reusable agent personas.
+
+**Discovery**: At startup, the application parses the `agents` section and populates an internal Agent Repository. When a user requests an agent (e.g., via the `--agent` flag), the application retrieves the corresponding configuration from this repository to initialize a session.
+
+**Example `arey.yml`:**
+```yaml
+agents:
+  coder:
+    prompt: "You are an expert Rust programmer. You only write concise, idiomatic Rust code."
+    tools:
+      - search
+    profile: concise
+
+  researcher:
+    prompt: "You are a meticulous researcher who always cites sources."
+    tools:
+      - search
+    profile:
+      # An inline profile can also be used
+      temperature: 0.2
+      top_p: 0.1
+```
+
 ### Execution Flows
 
 **Session Initialization and Interaction**
 ```mermaid
 graph TD
-    User((User)) -->|"arey chat --agent coder"| CLI
-    CLI --> AgentRepo[Agent Repository]
-    AgentRepo -->|Loads "coder" config| AgentConfig(AgentConfig)
-    CLI -->|Instantiates with config| Session(Session State)
-    User <-->|Interact| Session
-    Session -->|Uses| Tools
-    Session -->|Generates response via| Model[LLM]
+    subgraph Startup
+        ConfigFile(arey.yml) --> AppInit[Application Startup]
+        AppInit -->|Parses configs| Config(Config Object)
+        Config -->|Populates| AgentRepo[Agent Repository]
+    end
+
+    subgraph "User Interaction"
+        User((User)) -->|"arey chat --agent coder"| CLI
+        CLI -->|Gets "coder" from| AgentRepo
+        AgentRepo -->|Returns| AgentConfig(AgentConfig)
+        CLI -->|Instantiates session with config| Session(Session State)
+        User <-->|Interact| Session
+    end
 ```
 
 
@@ -98,6 +129,8 @@ To maintain simplicity and deliver core value incrementally, the following desig
 - **Dynamic Tool Management**: Tools are not part of the system prompt. Instead, the available toolset for a given task will be sent with each completion request to the LLM. This provides maximum flexibility for dynamically adding or removing tools during a session without needing to reload the model or manage complex state.
 
 - **Clear Separation of Concerns**: The architecture maintains a strict separation between the stateless `Agent` configuration (the template) and the stateful `Session` (the conversation instance). This ensures that agent definitions are reusable and that session state is managed predictably.
+
+- **Startup Configuration Validation**: To prevent runtime errors from misconfiguration, the application will validate the `arey.yml` file on startup. This includes checks to ensure that all tools referenced by an agent (e.g., `search`) correspond to actual, registered tool implementations. This surfaces errors to the user early.
 
 ### Example Runs
 
