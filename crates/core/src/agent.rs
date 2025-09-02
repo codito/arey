@@ -36,7 +36,7 @@ impl SystemPrompt {
 }
 
 /// Configuration for an agent, bundling system prompt, tools, and conversation preferences.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AgentConfig {
     name: String,
     system_prompt: SystemPrompt,
