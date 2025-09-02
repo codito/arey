@@ -24,21 +24,38 @@ pub enum AreyConfigError {
     Config(String),
 }
 
+fn default_temperature() -> f32 {
+    0.7
+}
+fn default_repeat_penalty() -> f32 {
+    1.176
+}
+fn default_top_k() -> i32 {
+    40
+}
+fn default_top_p() -> f32 {
+    0.1
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ProfileConfig {
+    #[serde(default = "default_temperature")]
     pub temperature: f32,
+    #[serde(default = "default_repeat_penalty")]
     pub repeat_penalty: f32,
+    #[serde(default = "default_top_k")]
     pub top_k: i32,
+    #[serde(default = "default_top_p")]
     pub top_p: f32,
 }
 
 impl Default for ProfileConfig {
     fn default() -> Self {
         Self {
-            temperature: 0.7,
-            repeat_penalty: 1.176,
-            top_k: 40,
-            top_p: 0.1,
+            temperature: default_temperature(),
+            repeat_penalty: default_repeat_penalty(),
+            top_k: default_top_k(),
+            top_p: default_top_p(),
         }
     }
 }

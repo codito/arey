@@ -86,6 +86,7 @@ mod tests {
         assert_eq!(agent.profile.top_k, 50);
         // default values
         assert_eq!(agent.profile.repeat_penalty, 1.176);
+        assert_eq!(agent.profile.top_p, 0.1);
     }
 
     #[test]
