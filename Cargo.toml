@@ -41,7 +41,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["local-time"] }
 tempfile = "3.21.0"
 url = "2.5.0"
-wiremock = "0.6.3"
+wiremock = "0.6.5"
 
 # [workspace.dev-dependencies]
 # futures = { version = "0.3", features = ["async-await"] }
