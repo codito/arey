@@ -24,7 +24,7 @@ pub enum AreyConfigError {
     Config(String),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ProfileConfig {
     pub temperature: f32,
     pub repeat_penalty: f32,
