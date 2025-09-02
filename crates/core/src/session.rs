@@ -383,6 +383,8 @@ impl Session {
                     let mut content = serde_json::to_string(&tool_output.output).unwrap();
                     if content.len() > MAX_TOOL_RESPONSE_CHARS {
                         let mut new_len = MAX_TOOL_RESPONSE_CHARS;
+
+                        // Ensure we don't cut off in the middle of a UTF-8 character.
                         while !content.is_char_boundary(new_len) {
                             new_len -= 1;
                         }
