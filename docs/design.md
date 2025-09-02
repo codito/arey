@@ -63,7 +63,7 @@ We implement a layered architecture with clear separation of concerns:
 
 - **Session**: A stateful, long-lived object that represents a single, continuous conversation. A session is instantiated from an `Agent` configuration and holds the complete message history. It is the primary entity that a user interacts with.
 
-- **Nested Execution**: A `Session` can delegate a sub-task to a different `Agent`. When this happens, a new, temporary child `Session` is created from the child `Agent`'s configuration. This isolates the sub-task's context. Only the final result from the child session is returned to the parent, keeping the primary conversation history clean and efficient.
+- **Nested Execution (Future)**: The architecture is designed to support delegating sub-tasks to specialized agents in the future. In this model, a parent session would create a temporary, isolated child session for a sub-task. This capability is currently deferred to simplify the initial implementation.
 
 - **Tools**: Extend agent functionality through integrations like web search or file operations. A session's toolset is initialized from its agent, but can be dynamically modified for the duration of the session.
 
@@ -88,42 +88,16 @@ graph TD
     Session -->|Generates response via| Model[LLM]
 ```
 
-**Nested Agent Invocation**
-```mermaid
-graph TD
-    subgraph "Parent Session"
-        User((User)) --> ParentSession(Session)
-        ParentSession --> |"Delegates to @researcher"| ChildAgent(Researcher AgentConfig)
-    end
 
-    subgraph "Child's Ephemeral Session"
-        ChildAgent --> ChildSession(New Session)
-        ChildSession -- "Uses" --> ChildTools[Tools]
-        ChildTools --> ChildSession
-        ChildSession -- "Computes final result" --> Result
-    end
+### Design Decisions
 
-    Result --> ParentSession
-    ParentSession -- "Records result in history" --> ParentHistory(fa:fa-history)
-    ParentSession --> |"Final answer"| User
-```
+To maintain simplicity and deliver core value incrementally, the following design decisions have been made:
 
-### Design Considerations and Mitigations
+- **Agent-to-Agent Invocation is Deferred**: To avoid the complexity of nested execution (context propagation, error handling, circular dependencies), the initial implementation will **not** support agents invoking other agents. This powerful feature is deferred for a future release, allowing the core user-to-agent interaction to be solidified first.
 
-The introduction of nested agent execution introduces complexity. The following design choices are intended to mitigate these challenges while retaining power and flexibility.
+- **Dynamic Tool Management**: Tools are not part of the system prompt. Instead, the available toolset for a given task will be sent with each completion request to the LLM. This provides maximum flexibility for dynamically adding or removing tools during a session without needing to reload the model or manage complex state.
 
-- **Complexity**: By strictly separating the stateless `Agent` configuration from the stateful `Session`, we keep the core concepts clean. The primary user-facing API will interact with `Session`, which provides a simple conversational interface. Nested execution is an advanced feature that builds on this stable foundation without complicating the basic use case.
-
-- **State Management**: The one-way dependency (`Agent` configures `Session`) prevents ambiguity. An agent definition can be safely reused to spawn multiple, independent sessions, ensuring predictable behavior and easier state management for the application.
-
-- **Context Propagation**: Passing context to child agents is a critical and non-trivial problem. Instead of a one-size-fits-all solution, the parent session will be responsible for explicitly crafting a concise, task-specific prompt for the child agent. This prevents token waste and ensures the child has the necessary information without being overloaded by irrelevant history.
-
-### Open Questions
-
-- [ ] **Context Propagation Strategy**: What is the most effective and efficient way to summarize and pass context from a parent session to a child? Should this be a configurable strategy (e.g., "last_n_turns", "summary", "manual_prompt")?
-- [ ] **Dynamic Tool Management**: How should the system prompt be updated when a tool is added or removed from a session mid-conversation? Does this require a full model reload, or can we manage it more gracefully?
-- [ ] **Error Handling in Nested Calls**: How should errors from a child session (e.g., tool failure, generation error) be propagated to the parent? Should the parent be able to retry or intervene?
-- [ ] **Circular Dependency Detection**: How do we prevent infinite loops where Agent A calls Agent B, which in turn calls Agent A? A maximum call depth is a simple first step, but more sophisticated cycle detection may be needed.
+- **Clear Separation of Concerns**: The architecture maintains a strict separation between the stateless `Agent` configuration (the template) and the stateful `Session` (the conversation instance). This ensures that agent definitions are reusable and that session state is managed predictably.
 
 ### Example Runs
 
