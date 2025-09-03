@@ -969,9 +969,9 @@ checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 
 [[package]]
 name = "glob"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "h2"
@@ -1507,9 +1507,9 @@ dependencies = [
 
 [[package]]
 name = "llama-cpp-sys-2"
-version = "0.1.118"
+version = "0.1.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c070e35e0cb58e7b4dfb7cd04a1cc7686ab0f04355076f2d5cdc284a1d8a0cf"
+checksum = "a157689b63f1cb8a5bd61ecc4607311e55b3fcbf246676cd73679f8ccfa79d1f"
 dependencies = [
  "bindgen",
  "cc",
