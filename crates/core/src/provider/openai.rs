@@ -494,6 +494,7 @@ mod tests {
         ]);
 
         let config = ModelConfig {
+            key: "test-key".to_string(),
             name: "test-model".to_string(),
             provider: ModelProvider::Openai,
             settings,

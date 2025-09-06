@@ -69,6 +69,7 @@ fn get_model_config(model_path: &Path, name: &str) -> ModelConfig {
     settings.insert("n_ctx".to_string(), 1024.into());
 
     ModelConfig {
+        key: "test-gguf".to_string(),
         name: name.to_string(),
         provider: ModelProvider::Gguf,
         settings,

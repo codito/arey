@@ -27,7 +27,8 @@ pub async fn execute(
     } else {
         config.task.model.clone()
     };
-    let mut task = Task::new(instruction, ask_model_config);
+    let agent_name = config.task.agent_name.clone();
+    let mut task = Task::new(instruction, ask_model_config, config, agent_name);
 
     eprintln!(
         "{}",

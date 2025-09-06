@@ -412,6 +412,7 @@ mod tests {
     #[test]
     fn test_gguf_model_new_missing_path() {
         let model_config = ModelConfig {
+            key: "test-key".to_string(),
             name: "test-gguf".to_string(),
             provider: crate::model::ModelProvider::Gguf,
             settings: HashMap::new(),
@@ -435,6 +436,7 @@ mod tests {
             "/path/to/non/existent/model.gguf".into(),
         );
         let model_config = ModelConfig {
+            key: "test-key".to_string(),
             name: "test-gguf".to_string(),
             provider: crate::model::ModelProvider::Gguf,
             settings,

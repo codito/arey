@@ -18,7 +18,8 @@ use tracing::{debug, error};
 /// A session with shared context between Human and AI model.
 pub struct Session {
     model: Box<dyn CompletionModel + Send + Sync>,
-    model_name: String,
+    // Model key is used to identify the model in config.
+    model_key: String,
     context_size: usize,
     system_prompt: String,
     // Store messages with their optional token count.
@@ -30,7 +31,7 @@ pub struct Session {
 impl Session {
     /// Create a new session with the given model configuration
     pub async fn new(model_config: ModelConfig, system_prompt: &str) -> Result<Self> {
-        let model_name = model_config.name.clone();
+        let model_key = model_config.key.clone();
         let mut model = crate::get_completion_llm(model_config.clone())
             .context("Failed to initialize session model")?;
 
@@ -45,7 +46,7 @@ impl Session {
 
         Ok(Self {
             model,
-            model_name,
+            model_key,
             context_size,
             system_prompt: system_prompt.to_string(),
             messages: Vec::new(),
@@ -66,9 +67,9 @@ impl Session {
         Ok(())
     }
 
-    /// Get model name
-    pub fn model_name(&self) -> &str {
-        &self.model_name
+    /// Get model key for retrieving details from config
+    pub fn model_key(&self) -> &str {
+        &self.model_key
     }
 
     /// Get system prompt
@@ -462,7 +463,7 @@ mod tests {
     fn new_session(context_size: usize) -> Session {
         Session {
             model: Box::new(MockModel::new()),
-            model_name: "test-model".to_string(),
+            model_key: "test-model".to_string(),
             context_size,
             system_prompt: "System".to_string(), // 6 chars -> 1 token est.
             messages: Vec::new(),

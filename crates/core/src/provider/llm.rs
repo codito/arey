@@ -36,6 +36,7 @@ mod tests {
         settings.insert("base_url".to_string(), "http://localhost:1234".into());
         settings.insert("api_key".to_string(), "sk-dummy".into());
         let model_config = ModelConfig {
+            key: "test-key".to_string(),
             name: "test-openai".to_string(),
             provider: ModelProvider::Openai,
             settings,
@@ -48,7 +49,8 @@ mod tests {
     fn test_get_completion_llm_gguf_provider_error() {
         // Gguf model requires a 'path' setting, so this should fail.
         let model_config = ModelConfig {
-            name: "极速test-gguf".to_string(),
+            key: "test-key".to_string(),
+            name: "test-gguf".to_string(),
             provider: ModelProvider::Gguf,
             settings: HashMap::new(),
         };
@@ -66,6 +68,7 @@ mod tests {
     #[test]
     fn test_get_completion_llm_test_provider() {
         let model_config = ModelConfig {
+            key: "test-key".to_string(),
             name: "test-test".to_string(),
             provider: ModelProvider::Test,
             settings: HashMap::new(),
