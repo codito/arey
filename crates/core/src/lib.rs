@@ -1,6 +1,7 @@
 mod assets;
 pub mod provider;
 
+pub mod agent;
 pub mod completion;
 pub mod config;
 pub mod model;

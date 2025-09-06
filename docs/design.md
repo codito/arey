@@ -59,57 +59,78 @@ We implement a layered architecture with clear separation of concerns:
 
 ### Key Concepts
 
-- **Agents**: Specialized workers for focused tasks 
-  - Execute queries with access to tools/memory
-  - Can run in background during sessions
-  - Discovered via registry pattern
+- **Agent**: A stateless configuration that defines a persona and capabilities, configured in `arey.yml`. It bundles a system prompt, a list of default tool names, and model generation parameters (`ProfileConfig`). Agents are reusable templates for creating specialized conversational experiences.
 
-- **Workflows**: Predefined sequences of steps:
-  1. Agent invocations
-  2. Tool usage
-  3. Conditional operations
-  4. Memory operations
+- **Session**: A stateful, long-lived object that represents a single, continuous conversation. A session is instantiated from an `Agent` configuration and holds the complete message history. It is the primary entity that a user interacts with.
 
-- **Tools**: Extend functionality through:
-  - Web search (`/search`)
-  - File operations (`/file`) 
-  - Custom integrations
+- **Nested Execution (Future)**: The architecture is designed to support delegating sub-tasks to specialized agents in the future. In this model, a parent session would create a temporary, isolated child session for a sub-task. This capability is currently deferred to simplify the initial implementation.
 
-- **Memory**: Context-aware storage:
-  - Short-term: Session memory
-  - Long-term: Vector stores 
-  - Automatic retrieval augmentation
+- **Tools**: Extend agent functionality through integrations like web search or file operations. A session's toolset is initialized from its agent, but can be dynamically modified for the duration of the session.
+
+- **Workflows**: Predefined sequences of agent and tool invocations to automate complex, multi-step tasks.
 
 - **REPL Engine**: Interactive chat environment with:
   - Command history
   - Context-aware autocomplete
-  - Rich output formatting
+  - Rich output formatting for agent and tool responses.
+
+### Agent Configuration and Discovery
+
+Agents are defined declaratively in the `arey.yml` configuration file under a top-level `agents` map. This allows for easy creation and management of reusable agent personas.
+
+**Discovery**: At startup, the application parses the `agents` section and populates an internal Agent Repository. When a user requests an agent (e.g., via the `--agent` flag), the application retrieves the corresponding configuration from this repository to initialize a session.
+
+**Example `arey.yml`:**
+```yaml
+agents:
+  coder:
+    prompt: "You are an expert Rust programmer. You only write concise, idiomatic Rust code."
+    tools:
+      - search
+    profile: concise
+
+  researcher:
+    prompt: "You are a meticulous researcher who always cites sources."
+    tools:
+      - search
+    profile:
+      # An inline profile can also be used
+      temperature: 0.2
+      top_p: 0.1
+```
 
 ### Execution Flows
 
-**Agent Invocation**
+**Session Initialization and Interaction**
 ```mermaid
 graph TD
-    User((User)) --> Run["run @agent: query"]
-    Run --> Registry[Agent Registry]
-    Registry --> Factory[Agent Factory]
-    Factory --> Executor[Agent Executor]
-    Executor --> Tools[Access Tools]
-    Tools --> Results[Return Results]
+    subgraph Startup
+        ConfigFile(arey.yml) --> AppInit[Application Startup]
+        AppInit -->|Parses configs| Config(Config Object)
+        Config -->|Populates| AgentRepo[Agent Repository]
+    end
+
+    subgraph "User Interaction"
+        User((User)) -->|"arey chat --agent coder"| CLI
+        CLI -->|Gets "coder" from| AgentRepo
+        AgentRepo -->|Returns| AgentConfig(AgentConfig)
+        CLI -->|Instantiates session with config| Session(Session State)
+        User <-->|Interact| Session
+    end
 ```
 
-**Workflow Execution**
-```mermaid
-graph LR
-    User((User)) --> Parse["!workflow_name arg"]
-    Parse --> Loader[Workflow Loader]
-    Loader --> Engine[Workflow Engine]
-    Engine --> Step1[Agent Step]
-    Engine --> Step2[Tool Step]
-    Step1 --> Agg[Aggregate Results]
-    Step2 --> Agg
-    Agg --> Output[Final Output]
-```
+
+### Design Decisions
+
+To maintain simplicity and deliver core value incrementally, the following design decisions have been made:
+
+- **Agent-to-Agent Invocation is Deferred**: To avoid the complexity of nested execution (context propagation, error handling, circular dependencies), the initial implementation will **not** support agents invoking other agents. This powerful feature is deferred for a future release, allowing the core user-to-agent interaction to be solidified first.
+
+- **Dynamic Tool Management**: Tools are not part of the system prompt. Instead, the available toolset for a given task will be sent with each completion request to the LLM. This provides maximum flexibility for dynamically adding or removing tools during a session without needing to reload the model or manage complex state.
+
+- **Clear Separation of Concerns**: The architecture maintains a strict separation between the stateless `Agent` configuration (the template) and the stateful `Session` (the conversation instance). This ensures that agent definitions are reusable and that session state is managed predictably.
+
+- **Startup Configuration Validation**: To prevent runtime errors from misconfiguration, the application will validate the `arey.yml` file on startup. This includes checks to ensure that all tools referenced by an agent (e.g., `search`) correspond to actual, registered tool implementations. This surfaces errors to the user early.
 
 ### Example Runs
 

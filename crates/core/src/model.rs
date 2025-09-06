@@ -4,6 +4,10 @@ use std::collections::HashMap;
 /// Model configuration for the tool.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ModelConfig {
+    /// The original key from the config file's models HashMap (e.g., "dummy-7b").
+    /// Set during parsing; not part of YAML.
+    #[serde(default, skip)]
+    pub key: String,
     #[serde(default)]
     pub name: String,
     #[serde(alias = "type")]
@@ -21,6 +25,22 @@ impl ModelConfig {
         self.settings
             .get(key)
             .and_then(|v| T::deserialize(v.clone().into_deserializer()).ok())
+    }
+
+    /// Get the original config key.
+    pub fn get_key(&self) -> &str {
+        &self.key
+    }
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            key: String::new(),
+            provider: ModelProvider::Test,
+            settings: HashMap::new(),
+        }
     }
 }
 
@@ -56,10 +76,10 @@ pub struct ModelMetrics {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ModelInitError {
-    // #[error("Unsupported model type: {0}")]
-    // UnsupportedType(String),
-    // #[error("Initialization error: {0}")]
-    // InitError(String),
+    #[error("Unsupported model type: {0}")]
+    UnsupportedType(String),
+    #[error("Initialization error: {0}")]
+    InitError(String),
 }
 
 #[cfg(test)]
@@ -91,6 +111,7 @@ mod tests {
         let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.name, "test_model");
         assert_eq!(config.provider, ModelProvider::Openai);
+        assert_eq!(config.key, ""); // Empty after direct deserialization (pre-parsing)
         assert_eq!(
             config.settings.get("api_key").unwrap().as_str().unwrap(),
             "test_key"
@@ -102,6 +123,36 @@ mod tests {
         "#;
         let config_alias: ModelConfig = serde_yaml::from_str(yaml_alias).unwrap();
         assert_eq!(config_alias.provider, ModelProvider::Gguf);
+        assert_eq!(config_alias.key, ""); // Empty pre-parsing
+    }
+
+    #[test]
+    fn test_model_config_get_key() {
+        let config = ModelConfig {
+            name: "test".to_string(),
+            key: "config-key".to_string(),
+            provider: ModelProvider::Openai,
+            settings: HashMap::new(),
+        };
+        assert_eq!(config.get_key(), "config-key");
+
+        // Default case
+        let default_config: ModelConfig = Default::default();
+        assert_eq!(default_config.get_key(), "");
+    }
+
+    #[test]
+    fn test_model_config_with_explicit_key_simulation() {
+        // Simulate post-parsing where key is set separately from name
+        let config = ModelConfig {
+            name: "custom-name".to_string(),
+            key: "my-key".to_string(),
+            provider: ModelProvider::Gguf,
+            settings: HashMap::new(),
+        };
+        assert_eq!(config.name, "custom-name");
+        assert_eq!(config.key, "my-key");
+        assert_eq!(config.get_key(), "my-key");
     }
 
     #[test]

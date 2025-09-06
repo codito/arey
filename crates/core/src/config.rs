@@ -10,6 +10,7 @@ use thiserror::Error;
 use tracing::instrument;
 
 use crate::{
+    agent::AgentConfig,
     assets::{get_config_dir, get_default_config},
     model::ModelConfig,
 };
@@ -24,7 +25,8 @@ pub enum AreyConfigError {
     Config(String),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct ProfileConfig {
     pub temperature: f32,
     pub repeat_penalty: f32,
@@ -46,6 +48,7 @@ impl Default for ProfileConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModeConfig {
     pub model: ModelConfig,
+    pub agent_name: String,
     #[serde(default)]
     pub profile: ProfileConfig,
     #[serde(skip)]
@@ -56,6 +59,8 @@ pub struct ModeConfig {
 pub struct Config {
     pub models: HashMap<String, ModelConfig>,
     pub profiles: HashMap<String, ProfileConfig>,
+    #[serde(default)]
+    pub agents: HashMap<String, AgentConfig>,
     pub chat: ModeConfig,
     pub task: ModeConfig,
     #[serde(default = "default_theme")]
@@ -76,21 +81,34 @@ enum StringOrObject<T> {
 }
 
 #[derive(Deserialize, Debug)]
-struct RawConfig {
-    models: HashMap<String, ModelConfig>,
-    profiles: HashMap<String, ProfileConfig>,
-    chat: RawModeConfig,
-    task: RawModeConfig,
-    theme: Option<String>,
+struct RawAgentConfig {
+    prompt: String,
     #[serde(default)]
-    tools: HashMap<String, serde_yaml::Value>,
+    tools: Vec<String>,
+    #[serde(default)]
+    profile: Option<StringOrObject<ProfileConfig>>,
 }
 
 #[derive(Deserialize, Debug)]
 struct RawModeConfig {
     model: StringOrObject<ModelConfig>,
     #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
     profile: Option<StringOrObject<ProfileConfig>>,
+}
+
+#[derive(Deserialize, Debug)]
+struct RawConfig {
+    models: HashMap<String, ModelConfig>,
+    profiles: HashMap<String, ProfileConfig>,
+    #[serde(default)]
+    agents: HashMap<String, RawAgentConfig>,
+    chat: RawModeConfig,
+    task: RawModeConfig,
+    theme: Option<String>,
+    #[serde(default)]
+    tools: HashMap<String, serde_yaml::Value>,
 }
 
 impl RawConfig {
@@ -106,6 +124,7 @@ impl RawConfig {
             };
             let model = ModelConfig {
                 name: model_name,
+                key: k.clone(),
                 ..v.clone()
             };
             models_with_names.insert(k.clone(), model);
@@ -118,7 +137,13 @@ impl RawConfig {
                         .get(s)
                         .cloned()
                         .ok_or_else(|| AreyConfigError::Config(format!("Model '{s}' not found"))),
-                    StringOrObject::Object(m) => Ok(m.clone()),
+                    StringOrObject::Object(m) => {
+                        let mut resolved = m.clone();
+                        if resolved.key.is_empty() {
+                            resolved.key = resolved.name.clone();
+                        }
+                        Ok(resolved)
+                    }
                 }
             };
 
@@ -141,23 +166,71 @@ impl RawConfig {
                 }
             };
 
+        let mut agents = HashMap::new();
+        for (name, raw_agent) in &self.agents {
+            let profile = resolve_profile(&raw_agent.profile)?;
+            let agent_config = AgentConfig {
+                name: name.clone(),
+                prompt: raw_agent.prompt.clone(),
+                tools: raw_agent.tools.clone(),
+                profile,
+            };
+            agents.insert(name.clone(), agent_config);
+        }
+
+        const DEFAULT_AGENT_NAME: &str = "default";
+        if !agents.contains_key(DEFAULT_AGENT_NAME) {
+            agents.insert(
+                DEFAULT_AGENT_NAME.to_string(),
+                AgentConfig {
+                    name: DEFAULT_AGENT_NAME.to_string(),
+                    prompt: "You are a helpful assistant.".to_string(),
+                    tools: Vec::new(),
+                    profile: ProfileConfig::default(),
+                },
+            );
+        }
+
         let chat_model = resolve_model(&self.chat.model)?;
-        let chat_profile = resolve_profile(&self.chat.profile)?;
-        let chat_profile_name = get_profile_name(&self.chat.profile);
+        let chat_agent_name = self
+            .chat
+            .agent
+            .clone()
+            .unwrap_or_else(|| DEFAULT_AGENT_NAME.to_string());
+        if !agents.contains_key(&chat_agent_name) {
+            return Err(AreyConfigError::Config(format!(
+                "Agent '{chat_agent_name}' specified in chat mode not found"
+            )));
+        }
+
         let task_model = resolve_model(&self.task.model)?;
+        let task_agent_name = self
+            .task
+            .agent
+            .clone()
+            .unwrap_or_else(|| DEFAULT_AGENT_NAME.to_string());
+        if !agents.contains_key(&task_agent_name) {
+            return Err(AreyConfigError::Config(format!(
+                "Agent '{task_agent_name}' specified in task mode not found"
+            )));
+        }
+
         let task_profile = resolve_profile(&self.task.profile)?;
         let task_profile_name = get_profile_name(&self.task.profile);
 
         Ok(Config {
             models: models_with_names,
             profiles: self.profiles.clone(),
+            agents,
             chat: ModeConfig {
                 model: chat_model,
-                profile: chat_profile,
-                profile_name: chat_profile_name,
+                agent_name: chat_agent_name,
+                profile: ProfileConfig::default(),
+                profile_name: None,
             },
             task: ModeConfig {
                 model: task_model,
+                agent_name: task_agent_name,
                 profile: task_profile,
                 profile_name: task_profile_name,
             },
@@ -232,6 +305,7 @@ mod tests {
     fn dummy_model_config(name: &str) -> crate::model::ModelConfig {
         crate::model::ModelConfig {
             name: name.to_string(),
+            key: "".to_string(), // Default empty
             provider: crate::model::ModelProvider::Gguf,
             settings: HashMap::from([(
                 "n_ctx".to_string(),
@@ -271,7 +345,6 @@ profiles:
     top_p: 0.05
 chat:
   model: dummy-7b
-  profile: default
 task:
   model: dummy-13b
   profile: concise
@@ -305,7 +378,7 @@ theme: dark
         profiles.insert(
             "concise".to_string(),
             ProfileConfig {
-                temperature: 0.5,
+                temperature: 0.8,
                 ..Default::default()
             },
         );
@@ -313,12 +386,15 @@ theme: dark
         let raw_config = RawConfig {
             models: models.clone(),
             profiles: profiles.clone(),
-            chat: crate::config::RawModeConfig {
+            agents: HashMap::new(),
+            chat: RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
-                profile: Some(StringOrObject::String("default".to_string())),
+                agent: None,
+                profile: None,
             },
-            task: crate::config::RawModeConfig {
+            task: RawModeConfig {
                 model: StringOrObject::String("dummy-13b".to_string()),
+                agent: None,
                 profile: Some(StringOrObject::String("concise".to_string())),
             },
             theme: Some("dark".to_string()),
@@ -330,9 +406,11 @@ theme: dark
         assert_eq!(config.models.len(), 2);
         assert_eq!(config.profiles.len(), 3);
         assert_eq!(config.chat.model.name, "dummy-7b");
-        assert_eq!(config.chat.profile.temperature, 0.7);
+        assert_eq!(config.chat.agent_name, "default");
+        let chat_agent = config.agents.get(&config.chat.agent_name).unwrap();
+        assert_eq!(chat_agent.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "dummy-13b");
-        assert_eq!(config.task.profile.temperature, 0.5);
+        assert_eq!(config.task.profile.temperature, 0.8);
         assert_eq!(config.theme, "dark");
     }
 
@@ -344,12 +422,15 @@ theme: dark
         let raw_config = RawConfig {
             models,
             profiles: HashMap::new(),
-            chat: crate::config::RawModeConfig {
+            agents: HashMap::new(),
+            chat: RawModeConfig {
                 model: StringOrObject::String("non-existent-model".to_string()),
+                agent: None,
                 profile: None,
             },
-            task: crate::config::RawModeConfig {
+            task: RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
+                agent: None,
                 profile: None,
             },
             theme: None,
@@ -370,13 +451,16 @@ theme: dark
         let raw_config = RawConfig {
             models,
             profiles: HashMap::new(),
-            chat: crate::config::RawModeConfig {
+            agents: HashMap::new(),
+            chat: RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
-                profile: Some(StringOrObject::String("non-existent-profile".to_string())),
-            },
-            task: crate::config::RawModeConfig {
-                model: StringOrObject::String("dummy-7b".to_string()),
+                agent: None,
                 profile: None,
+            },
+            task: RawModeConfig {
+                model: StringOrObject::String("dummy-7b".to_string()),
+                agent: None,
+                profile: Some(StringOrObject::String("non-existent-profile".to_string())),
             },
             theme: None,
             tools: HashMap::new(),
@@ -393,15 +477,15 @@ theme: dark
         let raw_config = RawConfig {
             models: HashMap::new(),   // No named models
             profiles: HashMap::new(), // No named profiles
-            chat: crate::config::RawModeConfig {
+            agents: HashMap::new(),   // No named agents
+            chat: RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-chat-model")),
-                profile: Some(StringOrObject::Object(ProfileConfig {
-                    temperature: 0.8,
-                    ..Default::default()
-                })),
+                agent: None,
+                profile: None,
             },
-            task: crate::config::RawModeConfig {
+            task: RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-task-model")),
+                agent: None,
                 profile: None, // Should use default profile
             },
             theme: Some("light".to_string()),
@@ -411,10 +495,56 @@ theme: dark
         let config = raw_config.to_config().unwrap();
 
         assert_eq!(config.chat.model.name, "inline-chat-model");
-        assert_eq!(config.chat.profile.temperature, 0.8);
+        assert_eq!(config.chat.model.key, "inline-chat-model"); // Fallback set
+        let chat_agent = config.agents.get(&config.chat.agent_name).unwrap();
+        assert_eq!(chat_agent.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "inline-task-model");
+        assert_eq!(config.task.model.key, "inline-task-model"); // Fallback set
         assert_eq!(config.task.profile.temperature, 0.7); // Default temperature
         assert_eq!(config.theme, "light");
+    }
+
+    #[test]
+    fn test_model_key_separate_from_name() {
+        let yaml = r#"
+models:
+  my-key:
+    name: custom-name  # Explicit name
+    type: openai
+profiles: {}
+chat:
+  model: my-key
+task:
+  model:
+    name: dummy-task
+    type: test
+"#;
+        let config_file = create_temp_config(yaml);
+        let config = get_config(Some(config_file)).unwrap();
+        let model = config.models.get("my-key").unwrap();
+        assert_eq!(model.key, "my-key"); // Always the config key
+        assert_eq!(model.name, "custom-name"); // Explicit override
+        assert_eq!(config.chat.model.key, "my-key"); // Propagated
+    }
+
+    #[test]
+    fn test_inline_model_key_fallback() {
+        let yaml = r#"
+models: {}
+profiles: {}
+chat:
+  model:
+    name: inline-model
+    type: test
+task:
+  model:
+    name: dummy-task
+    type: test
+"#;
+        let config_file = create_temp_config(yaml);
+        let config = get_config(Some(config_file)).unwrap();
+        assert_eq!(config.chat.model.name, "inline-model");
+        assert_eq!(config.chat.model.key, "inline-model"); // Fallback to name
     }
 
     #[test]
@@ -449,13 +579,16 @@ theme: dark
         assert_eq!(config.models.len(), 2);
         assert_eq!(config.profiles.len(), 3);
         assert_eq!(config.chat.model.name, "dummy-7b");
-        assert_eq!(config.chat.profile.temperature, 0.7);
+        let chat_agent = config.agents.get(&config.chat.agent_name).unwrap();
+        assert_eq!(chat_agent.profile.temperature, 0.7);
         assert_eq!(config.task.model.name, "dummy-13b");
         assert_eq!(config.task.profile.temperature, 0.8);
         assert_eq!(config.theme, "dark");
 
         let dummy7b = config.models.get("dummy-7b").unwrap();
         assert_eq!(dummy7b.settings.len(), 2);
+        assert_eq!(dummy7b.key, "dummy-7b"); // New: Verify key is set
+        assert_eq!(dummy7b.name, "dummy-7b"); // Existing: name fallback
     }
 
     #[test]
@@ -473,10 +606,8 @@ models: {} # Empty models map
 profiles: {} # Empty profiles map
 chat:
   model: non-existent-model # References a model not in the map
-  profile: test
 task:
   model: non-existent-model
-  profile: test
 "#;
         let config_file = create_temp_config(invalid_config_content);
         let err = get_config(Some(config_file)).unwrap_err();
@@ -495,12 +626,14 @@ models:
     n_ctx: 4096
     path: /path/to/dummy_model.gguf
 profiles: {} # Empty profiles map
+agents:
+  bad-agent:
+    prompt: "..."
+    profile: non-existent-profile # References a profile not in the map
 chat:
   model: dummy-7b
-  profile: non-existent-profile # References a profile not in the map
 task:
   model: dummy-7b
-  profile: default # This one is fine, will use default if not found in map
 "#;
         let config_file = create_temp_config(invalid_config_content);
         let err = get_config(Some(config_file)).unwrap_err();
@@ -538,11 +671,8 @@ profiles:
 
 chat:
   model: model-a
-  profile: default
-
 task:
   model: model-b
-  profile: default
 "#;
         let config_file = create_temp_config(MERGE_KEY_CONFIG);
         let config = get_config(Some(config_file)).unwrap();
@@ -551,6 +681,7 @@ task:
 
         let gguf_base = config.models.get("gguf-base").unwrap();
         assert_eq!(gguf_base.name, "gguf-base");
+        assert_eq!(gguf_base.key, "gguf-base"); // New: Key set
         assert_eq!(gguf_base.settings.len(), 2);
         assert_eq!(
             gguf_base.settings.get("n_ctx").unwrap(),
@@ -563,6 +694,7 @@ task:
 
         let model_a = config.models.get("model-a").unwrap();
         assert_eq!(model_a.name, "model-a");
+        assert_eq!(model_a.key, "model-a"); // New: Key set
         let model_a_settings = &model_a.settings;
         assert_eq!(model_a_settings.len(), 3);
         assert_eq!(
@@ -580,6 +712,7 @@ task:
 
         let model_b = config.models.get("model-b").unwrap();
         assert_eq!(model_b.name, "model-b");
+        assert_eq!(model_b.key, "model-b"); // New: Key set
         let model_b_settings = &model_b.settings;
         assert_eq!(model_b_settings.len(), 3);
         assert_eq!(
@@ -594,5 +727,126 @@ task:
             model_b_settings.get("path").unwrap(),
             &serde_yaml::Value::String("/path/to/model-b.gguf".to_string())
         );
+    }
+
+    #[test]
+    fn test_get_config_with_agents() {
+        const DUMMY_CONFIG_WITH_AGENTS: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+profiles:
+  concise:
+    temperature: 0.1
+agents:
+  coder:
+    prompt: "You are a Rust programmer."
+    tools:
+      - search
+    profile: concise
+  researcher:
+    prompt: "You are a researcher."
+    profile:
+      temperature: 0.2
+chat:
+  model: dummy-7b
+  agent: coder
+task:
+  model: dummy-7b
+  agent: researcher
+"#;
+        let config_file = create_temp_config(DUMMY_CONFIG_WITH_AGENTS);
+        let config = get_config(Some(config_file)).unwrap();
+
+        assert_eq!(config.agents.len(), 3);
+
+        let coder = config.agents.get("coder").unwrap();
+        assert_eq!(coder.name, "coder");
+        assert_eq!(coder.prompt, "You are a Rust programmer.");
+        assert_eq!(coder.tools, vec!["search".to_string()]);
+        assert_eq!(coder.profile.temperature, 0.1);
+
+        let researcher = config.agents.get("researcher").unwrap();
+        assert_eq!(researcher.name, "researcher");
+        assert_eq!(researcher.prompt, "You are a researcher.");
+        assert!(researcher.tools.is_empty());
+        assert_eq!(researcher.profile.temperature, 0.2);
+
+        assert_eq!(config.chat.agent_name, "coder");
+        assert_eq!(config.task.agent_name, "researcher");
+    }
+
+    #[test]
+    fn test_get_config_with_chat_agent() {
+        const DUMMY_CONFIG_WITH_CHAT_AGENT: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+profiles: {}
+agents:
+  chat-agent:
+    prompt: "You are a chat assistant."
+chat:
+  model: dummy-7b
+  agent: chat-agent
+task:
+  model: dummy-7b
+"#;
+        let config_file = create_temp_config(DUMMY_CONFIG_WITH_CHAT_AGENT);
+        let config = get_config(Some(config_file)).unwrap();
+
+        assert_eq!(config.agents.len(), 2); // default + chat-agent
+        assert_eq!(config.chat.agent_name, "chat-agent");
+        let chat_agent = config.agents.get("chat-agent").unwrap();
+        assert_eq!(chat_agent.prompt, "You are a chat assistant.");
+    }
+
+    #[test]
+    fn test_get_config_with_missing_agent() {
+        let config_content = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+profiles: {}
+agents: {}
+chat:
+  model: dummy-7b
+  agent: non-existent
+task:
+  model: dummy-7b
+"#;
+        let config_file = create_temp_config(config_content);
+        let err = get_config(Some(config_file)).unwrap_err();
+        assert!(matches!(
+            err,
+            AreyConfigError::Config(msg)
+                if msg.contains("Agent 'non-existent' specified in chat mode not found")
+        ));
+    }
+
+    #[test]
+    fn test_get_config_with_default_agent() {
+        const DUMMY_CONFIG_NO_CHAT_AGENT: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+profiles: {}
+agents: {}
+chat:
+  model: dummy-7b
+task:
+  model: dummy-7b
+"#;
+        let config_file = create_temp_config(DUMMY_CONFIG_NO_CHAT_AGENT);
+        let config = get_config(Some(config_file)).unwrap();
+
+        assert_eq!(config.chat.agent_name, "default");
+        assert!(config.agents.contains_key("default"));
+        let default_agent = config.agents.get("default").unwrap();
+        assert_eq!(default_agent.prompt, "You are a helpful assistant.");
     }
 }

@@ -18,7 +18,8 @@ use tracing::{debug, error};
 /// A session with shared context between Human and AI model.
 pub struct Session {
     model: Box<dyn CompletionModel + Send + Sync>,
-    model_name: String,
+    // Model key is used to identify the model in config.
+    model_key: String,
     context_size: usize,
     system_prompt: String,
     // Store messages with their optional token count.
@@ -30,7 +31,7 @@ pub struct Session {
 impl Session {
     /// Create a new session with the given model configuration
     pub async fn new(model_config: ModelConfig, system_prompt: &str) -> Result<Self> {
-        let model_name = model_config.name.clone();
+        let model_key = model_config.key.clone();
         let mut model = crate::get_completion_llm(model_config.clone())
             .context("Failed to initialize session model")?;
 
@@ -45,7 +46,7 @@ impl Session {
 
         Ok(Self {
             model,
-            model_name,
+            model_key,
             context_size,
             system_prompt: system_prompt.to_string(),
             messages: Vec::new(),
@@ -66,9 +67,9 @@ impl Session {
         Ok(())
     }
 
-    /// Get model name
-    pub fn model_name(&self) -> &str {
-        &self.model_name
+    /// Get model key for retrieving details from config
+    pub fn model_key(&self) -> &str {
+        &self.model_key
     }
 
     /// Get system prompt
@@ -382,7 +383,13 @@ impl Session {
                     // Serialize output field only
                     let mut content = serde_json::to_string(&tool_output.output).unwrap();
                     if content.len() > MAX_TOOL_RESPONSE_CHARS {
-                        content.truncate(MAX_TOOL_RESPONSE_CHARS);
+                        let mut new_len = MAX_TOOL_RESPONSE_CHARS;
+
+                        // Ensure we don't cut off in the middle of a UTF-8 character.
+                        while !content.is_char_boundary(new_len) {
+                            new_len -= 1;
+                        }
+                        content.truncate(new_len);
                         content.push_str(TRUNCATION_MARKER);
                     }
 
@@ -456,7 +463,7 @@ mod tests {
     fn new_session(context_size: usize) -> Session {
         Session {
             model: Box::new(MockModel::new()),
-            model_name: "test-model".to_string(),
+            model_key: "test-model".to_string(),
             context_size,
             system_prompt: "System".to_string(), // 6 chars -> 1 token est.
             messages: Vec::new(),
@@ -770,5 +777,45 @@ mod tests {
             trimmed[3].text,
             "invalid json for last message is not truncated"
         );
+    }
+
+    #[test]
+    fn test_tool_response_truncation_with_multibyte_chars() {
+        // This test ensures that truncating a tool response with multi-byte characters
+        // does not panic by cutting a character in half.
+        let mut session = new_session(4096);
+
+        // Construct a string where the truncation boundary (512) falls within a multi-byte character.
+        // `content` will be `"` + `long_string` + `"`.
+        // The euro sign '€' is 3 bytes and starts at byte index 511 of `content`.
+        let long_string = "a".to_string().repeat(510) + "€"; // 513 bytes as a string slice.
+
+        let tool_outputs = vec![
+            ToolResult {
+                call: new_tool_call("tool_1"),
+                output: Value::String(long_string),
+            },
+            ToolResult {
+                call: new_tool_call("tool_2"),
+                output: Value::String("b".to_string().repeat(10)), // A dummy second tool call
+            },
+        ];
+
+        let serialized_outputs: Vec<String> = tool_outputs
+            .iter()
+            .map(|out| serde_json::to_string(out).unwrap())
+            .collect();
+
+        session.add_message(SenderType::User, "U1");
+        session.add_message(SenderType::Tool, &serialized_outputs[0]);
+        session.add_message(SenderType::User, "U2");
+        session.add_message(SenderType::Tool, &serialized_outputs[1]);
+
+        // This call would panic without the fix.
+        let trimmed = session.get_trimmed_messages(0);
+
+        // Check that it didn't panic and the first message was truncated correctly.
+        assert!(trimmed[1].text.contains("... [truncated]"));
+        assert!(!trimmed[3].text.contains("... [truncated]"));
     }
 }

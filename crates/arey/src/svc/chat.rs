@@ -14,79 +14,9 @@ use tokio::sync::Mutex;
 /// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
     session: Arc<Mutex<Session>>,
-    profile_name: Option<String>,
+    agent_name: String,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     config: &'a Config,
-}
-
-impl<'a> Chat<'a> {
-    /// Switch to a different model
-    pub async fn set_model(&mut self, model_name: &str) -> Result<()> {
-        let model_config = self
-            .config
-            .models
-            .get(model_name)
-            .cloned()
-            .context(format!("Model '{model_name}' not found in config."))?;
-
-        let mut session_lock = self.session.lock().await;
-        // Preserve existing conversation state
-        let messages = session_lock.all_messages();
-        let tools = session_lock.tools();
-        let system_prompt = session_lock.system_prompt().to_string();
-
-        let mut new_session = Session::new(model_config, &system_prompt)
-            .await
-            .context("Failed to initialize new session")?;
-
-        new_session.set_tools(tools);
-        new_session.set_messages(messages);
-        *session_lock = new_session;
-
-        Ok(())
-    }
-
-    /// Get current system prompt
-    pub async fn system_prompt(&self) -> String {
-        self.session.lock().await.system_prompt().to_string()
-    }
-
-    /// Get available model names
-    pub fn available_model_names(&self) -> Vec<&str> {
-        self.config.models.keys().map(|s| s.as_str()).collect()
-    }
-
-    /// Get current model name
-    pub async fn model_name(&self) -> String {
-        self.session.lock().await.model_name().to_string()
-    }
-
-    /// Get available profile names
-    pub fn available_profile_names(&self) -> Vec<&str> {
-        self.config.profiles.keys().map(|s| s.as_str()).collect()
-    }
-
-    /// Get current profile name
-    pub fn profile_name(&self) -> Option<String> {
-        self.profile_name.clone()
-    }
-
-    /// Get current profile name and data
-    /// Get current profile name and data
-    pub fn current_profile(&self) -> Option<(&String, &ProfileConfig)> {
-        self.profile_name
-            .as_ref()
-            .and_then(|name| self.config.profiles.get(name).map(|data| (name, data)))
-    }
-
-    /// Switch to a different profile
-    pub fn set_profile(&mut self, profile_name: &str) -> Result<()> {
-        if !self.config.profiles.contains_key(profile_name) {
-            anyhow::bail!("Profile '{profile_name}' not found in config.");
-        }
-        self.profile_name = Some(profile_name.to_string());
-        Ok(())
-    }
 }
 
 impl<'a> fmt::Debug for Chat<'a> {
@@ -119,19 +49,159 @@ impl<'a> Chat<'a> {
             config.chat.model.clone()
         };
 
-        let profile_name = config.chat.profile_name.clone();
-        let system_prompt = ""; // Profiles do not manage the system prompt.
+        let agent_name = config.chat.agent_name.clone();
+        let agent_config = config
+            .agents
+            .get(&agent_name)
+            .cloned()
+            .context(format!("Agent '{agent_name}' not found in config."))?;
 
-        let session = Session::new(model_config, system_prompt)
+        let tools: Result<Vec<Arc<dyn Tool>>, _> = agent_config
+            .tools
+            .iter()
+            .map(|tool_name| {
+                available_tools
+                    .get(tool_name.as_str())
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", tool_name))
+            })
+            .collect();
+
+        let mut session = Session::new(model_config, &agent_config.prompt)
             .await
             .context("Failed to create chat session")?;
+        session.set_tools(tools?);
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
-            profile_name,
+            agent_name,
             available_tools,
             config,
         })
+    }
+
+    /// Get current agent name
+    pub fn agent_name(&self) -> String {
+        self.agent_name.clone()
+    }
+
+    /// Switch to a different agent
+    pub async fn set_agent(&mut self, agent_name: &str) -> Result<()> {
+        let agent_config = self
+            .config
+            .agents
+            .get(agent_name)
+            .cloned()
+            .context(format!("Agent '{agent_name}' not found in config."))?;
+
+        let model_key = self.model_key().await;
+        let model_config = self
+            .config
+            .models
+            .get(&model_key)
+            .cloned()
+            .context(format!(
+                "Model '{}' associated with the current session not found in config.",
+                model_key
+            ))?;
+
+        let mut session_lock = self.session.lock().await;
+        let messages = session_lock.all_messages();
+
+        let tools: Result<Vec<Arc<dyn Tool>>, _> = agent_config
+            .tools
+            .iter()
+            .map(|name| {
+                self.available_tools
+                    .get(name.as_str())
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("Tool not found: {}", name))
+            })
+            .collect();
+
+        let mut new_session = Session::new(model_config, &agent_config.prompt).await?;
+        new_session.set_tools(tools?);
+        new_session.set_messages(messages);
+        *session_lock = new_session;
+        self.agent_name = agent_name.to_string();
+
+        Ok(())
+    }
+
+    /// Get current model key identifier
+    pub async fn model_key(&self) -> String {
+        self.session.lock().await.model_key().to_string()
+    }
+
+    /// Switch to a different model
+    pub async fn set_model(&mut self, model_name: &str) -> Result<()> {
+        let model_config = self
+            .config
+            .models
+            .get(model_name)
+            .cloned()
+            .context(format!("Model '{model_name}' not found in config."))?;
+
+        let mut session_lock = self.session.lock().await;
+        // Preserve existing conversation state
+        let messages = session_lock.all_messages();
+        let tools = session_lock.tools();
+        let system_prompt = session_lock.system_prompt().to_string();
+
+        let mut new_session = Session::new(model_config, &system_prompt)
+            .await
+            .context("Failed to initialize new session")?;
+
+        new_session.set_tools(tools);
+        new_session.set_messages(messages);
+        *session_lock = new_session;
+
+        Ok(())
+    }
+
+    /// Get current profile name
+    pub fn profile_name(&self) -> String {
+        self.agent_name.clone()
+    }
+
+    /// Get current profile name and data
+    pub fn current_profile(&self) -> Option<(&String, &ProfileConfig)> {
+        self.config
+            .agents
+            .get(&self.agent_name)
+            .map(|agent| (&self.agent_name, &agent.profile))
+    }
+
+    /// Switch to a different profile
+    pub fn set_profile(&mut self, _profile_name: &str) -> Result<()> {
+        anyhow::bail!(
+            "Profiles cannot be set directly in chat mode. Use an agent to set a profile."
+        )
+    }
+
+    /// Get current system prompt
+    pub async fn system_prompt(&self) -> String {
+        self.session.lock().await.system_prompt().to_string()
+    }
+
+    /// Get available agent names
+    pub fn available_agent_names(&self) -> Vec<&str> {
+        self.config.agents.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get available model names
+    pub fn available_model_names(&self) -> Vec<&str> {
+        self.config.models.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get available profile names
+    pub fn available_profile_names(&self) -> Vec<&str> {
+        self.config.profiles.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Gets the tools available for the current chat session.
+    pub async fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.session.lock().await.tools()
     }
 
     /// Sets the tools available for the current chat session.
@@ -145,14 +215,38 @@ impl<'a> Chat<'a> {
             tools.push(tool.clone());
         }
 
-        let mut session = self.session.lock().await;
-        session.set_tools(tools);
+        let mut session_lock = self.session.lock().await;
+        let model_key = session_lock.model_key().to_string();
+        let model_config = self
+            .config
+            .models
+            .get(&model_key)
+            .cloned()
+            .context(format!(
+                "Model '{}' associated with the current session not found in config.",
+                model_key
+            ))?;
+        let messages = session_lock.all_messages();
+        let system_prompt = session_lock.system_prompt().to_string();
+
+        let mut new_session = Session::new(model_config, &system_prompt).await?;
+        new_session.set_tools(tools);
+        new_session.set_messages(messages);
+        *session_lock = new_session;
+
         Ok(())
     }
 
-    /// Gets the tools available for the current chat session.
-    pub async fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.session.lock().await.tools()
+    /// Get all messages from the session
+    pub async fn get_all_messages(&self) -> Vec<ChatMessage> {
+        let session = self.session.lock().await;
+        session.all_messages()
+    }
+
+    /// Retrieves the last message from the assistant in the conversation history.
+    pub async fn get_last_assistant_message(&self) -> Option<ChatMessage> {
+        let session = self.session.lock().await;
+        session.last_assistant_message().cloned()
     }
 
     /// Adds messages to the conversation history.
@@ -171,32 +265,39 @@ impl<'a> Chat<'a> {
         }
     }
 
+    /// Clears the conversation history of the session.
+    pub async fn clear_messages(&self) {
+        let mut session = self.session.lock().await;
+        session.clear_history();
+    }
+
     /// Generates a streaming response from the model based on the conversation history.
     pub async fn stream_response(
         &self,
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'_, Result<Completion>>> {
         let session = self.session.clone();
-        let settings = self
-            .profile_name
-            .as_ref()
-            .and_then(|name| self.config.profiles.get(name))
-            .map(|profile| {
-                let mut settings = HashMap::new();
 
-                // Construct the settings map from the profile fields. When a profile
-                // is active, all its settings are applied.
-                settings.insert("temperature".to_string(), profile.temperature.to_string());
-                settings.insert(
-                    "repeat_penalty".to_string(),
-                    profile.repeat_penalty.to_string(),
-                );
-                settings.insert("top_k".to_string(), profile.top_k.to_string());
-                settings.insert("top_p".to_string(), profile.top_p.to_string());
+        let profile = self
+            .config
+            .agents
+            .get(&self.agent_name)
+            .map(|a| a.profile.clone());
 
-                settings
-            })
-            .unwrap_or_default();
+        let settings = if let Some(profile) = profile {
+            let mut settings = HashMap::new();
+            settings.insert("temperature".to_string(), profile.temperature.to_string());
+            settings.insert(
+                "repeat_penalty".to_string(),
+                profile.repeat_penalty.to_string(),
+            );
+            settings.insert("top_k".to_string(), profile.top_k.to_string());
+            settings.insert("top_p".to_string(), profile.top_p.to_string());
+            settings
+        } else {
+            HashMap::new()
+        };
+
         let stream = async_stream::stream! {
             let mut session_lock = session.lock().await;
             let mut inner_stream = match session_lock.generate(settings, cancel_token.clone()).await {
@@ -213,24 +314,6 @@ impl<'a> Chat<'a> {
         };
 
         Ok(Box::pin(stream))
-    }
-
-    /// Clears the conversation history of the session.
-    pub async fn clear_messages(&self) {
-        let mut session = self.session.lock().await;
-        session.clear_history();
-    }
-
-    /// Retrieves the last message from the assistant in the conversation history.
-    pub async fn get_last_assistant_message(&self) -> Option<ChatMessage> {
-        let session = self.session.lock().await;
-        session.last_assistant_message().cloned()
-    }
-
-    /// Get all messages from the session
-    pub async fn get_all_messages(&self) -> Vec<ChatMessage> {
-        let session = self.session.lock().await;
-        session.all_messages()
     }
 }
 
@@ -292,7 +375,6 @@ models:
     api_key: "MOCK_OPENAI_API_KEY"
 chat:
   model: test-model
-  profile: test-profile
 task:
   model: test-model
 profiles:
@@ -301,6 +383,12 @@ profiles:
     top_p: 0.9
     repeat_penalty: 1.1
     top_k: 40
+agents:
+  test-agent:
+    prompt: "You are a test agent."
+    tools: [ "mock_tool" ]
+    profile:
+      temperature: 0.1
 "#,
         );
         std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
@@ -338,15 +426,31 @@ profiles:
     #[tokio::test]
     async fn test_chat_new() -> Result<()> {
         let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
+        let mut config = get_test_config(&server).await?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
-        // Test with existing model
+        // Test with existing model, should use default agent from config
         let chat = Chat::new(&config, Some("test-model".to_string()), HashMap::new()).await;
         assert!(chat.is_ok());
+        assert_eq!(chat.unwrap().agent_name(), "default");
 
-        // Test with default model
+        // Test with a specified agent
+        config.chat.agent_name = "test-agent".to_string();
+        let chat = Chat::new(&config, None, available_tools).await?;
+        assert_eq!(chat.agent_name(), "test-agent");
+        assert_eq!(chat.system_prompt().await, "You are a test agent.");
+        assert_eq!(chat.tools().await.len(), 1);
+
+        // Test with non-existent agent
+        config.chat.agent_name = "bad-agent".to_string();
         let chat = Chat::new(&config, None, HashMap::new()).await;
-        assert!(chat.is_ok());
+        assert!(chat.is_err());
+        assert!(
+            chat.unwrap_err()
+                .to_string()
+                .contains("Agent 'bad-agent' not found in config.")
+        );
 
         // Test with non-existent model
         let chat = Chat::new(&config, Some("bad-model".to_string()), HashMap::new()).await;
@@ -508,6 +612,7 @@ profiles:
         config.models.insert(
             "test-model-2".to_string(),
             arey_core::model::ModelConfig {
+                key: "test-key".to_string(),
                 name: "test-model-2".to_string(),
                 provider: arey_core::model::ModelProvider::Openai,
                 settings: HashMap::from([
@@ -534,38 +639,34 @@ profiles:
     }
 
     #[tokio::test]
-    async fn test_set_profile() -> Result<()> {
+    async fn test_set_agent() -> Result<()> {
         let server = MockServer::start().await;
         let config = get_test_config(&server).await?;
-        let mut chat = Chat::new(&config, None, HashMap::new()).await?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
-        // 1. Initially, the default profile from config is set
-        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
+        let mut chat = Chat::new(&config, None, available_tools).await?;
+        assert_eq!(chat.agent_name(), "default");
+        assert_eq!(chat.system_prompt().await, "You are a helpful assistant.");
 
-        // 2. Set a valid profile
-        chat.set_profile("test-profile")?;
-        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
+        // Set a valid agent
+        chat.set_agent("test-agent").await?;
+        assert_eq!(chat.agent_name(), "test-agent".to_string());
+        assert_eq!(chat.system_prompt().await, "You are a test agent.");
+        assert_eq!(chat.tools().await.len(), 1);
 
-        // 3. Setting a model should NOT clear the profile
-        chat.set_model("test-model").await?;
-        assert_eq!(
-            chat.profile_name(),
-            Some("test-profile".to_string()),
-            "Setting a model should not clear the active profile"
-        );
-
-        // 4. Setting an invalid profile should fail
-        let result = chat.set_profile("non-existent-profile");
+        // Setting an invalid agent should fail
+        let result = chat.set_agent("non-existent-agent").await;
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Profile 'non-existent-profile' not found in config.")
+                .contains("Agent 'non-existent-agent' not found in config.")
         );
 
-        // 5. Profile should remain unchanged after error
-        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
+        // Agent should remain unchanged after error
+        assert_eq!(chat.agent_name(), "test-agent".to_string());
 
         Ok(())
     }

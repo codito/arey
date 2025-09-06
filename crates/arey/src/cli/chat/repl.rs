@@ -14,7 +14,6 @@ use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::{CompletionType, Editor, Helper, Highlighter, Validator};
 use serde_json::Value;
-use serde_yaml;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -139,8 +138,8 @@ impl Command {
                 }
                 None => {
                     let chat_guard = session.lock().await;
-                    let model_name = chat_guard.model_name().await;
-                    println!("Current model: {}", model_name);
+                    let model_key = chat_guard.model_key().await;
+                    println!("Current model: {}", model_key);
                 }
             },
             Command::Profile { name } => match name {
@@ -422,11 +421,8 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     loop {
         let prompt = {
             let chat_guard = chat.lock().await;
-            let model_name = chat_guard.model_name().await;
-            let profile_str = chat_guard
-                .profile_name()
-                .map(|p| format!(" | profile: {}", p))
-                .unwrap_or_default();
+            let model_key = chat_guard.model_key().await;
+            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
 
             let tools = chat_guard.tools().await;
             let tools_str = if !tools.is_empty() {
@@ -436,7 +432,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                 String::new()
             };
 
-            let prompt_meta = format!("[model: {}{}{}]", model_name, profile_str, tools_str);
+            let prompt_meta = format!("[model: {}{}{}]", model_key, agent_str, tools_str);
             format!(
                 "\n{}\n{}",
                 style_chat_text(&prompt_meta, ChatMessageType::Prompt),
@@ -829,6 +825,9 @@ models:
     provider: test
   test-model-2:
     provider: test
+agents:
+  test-agent:
+    prompt: "You are a test agent."
 profiles:
   test-profile:
     temperature: 0.8
@@ -837,7 +836,7 @@ profiles:
     top_p: 0.9
 chat:
   model: test-model-1
-  profile: test-profile
+  agent: test-agent
 task:
   model: test-model-1
 "#;
@@ -1273,7 +1272,7 @@ USER: Run tool
         let chat_session = Arc::new(Mutex::new(chat));
 
         // 3. Check initial model
-        assert_eq!(chat_session.lock().await.model_name().await, "test-model-1");
+        assert_eq!(chat_session.lock().await.model_key().await, "test-model-1");
 
         // 4. Test successful model switch
         let switch_to_2 = Command::Model {
@@ -1281,7 +1280,7 @@ USER: Run tool
         };
         let result = switch_to_2.execute(chat_session.clone()).await?;
         assert!(result, "execute should return true to continue REPL");
-        assert_eq!(chat_session.lock().await.model_name().await, "test-model-2");
+        assert_eq!(chat_session.lock().await.model_key().await, "test-model-2");
 
         // 5. Test switching to a non-existent model
         let switch_to_bad = Command::Model {
@@ -1290,7 +1289,7 @@ USER: Run tool
         let result = switch_to_bad.execute(chat_session.clone()).await?;
         assert!(result, "execute should return true even on error");
         // Model should not have changed
-        assert_eq!(chat_session.lock().await.model_name().await, "test-model-2");
+        assert_eq!(chat_session.lock().await.model_key().await, "test-model-2");
 
         // 6. Test /model list (just ensure it runs without panic)
         let list_models = Command::Model {
@@ -1312,45 +1311,33 @@ USER: Run tool
 
         // 2. Create Chat instance
         let chat = Chat::new(&config, Some("test-model-2".to_string()), HashMap::new()).await?;
-        assert_eq!(chat.profile_name(), Some("test-profile".to_string()));
+        assert_eq!(chat.agent_name(), "test-agent".to_string());
         let chat_session = Arc::new(Mutex::new(chat));
 
-        // 3. Test successful profile switch
+        // 3. Test that switching profile fails, as it's not supported in chat mode
         let switch_to_prof = Command::Profile {
             name: Some("test-profile".to_string()),
         };
+        // The command will print an error but not exit the REPL loop
         assert!(switch_to_prof.execute(chat_session.clone()).await?);
+
         let chat_guard = chat_session.lock().await;
-        assert_eq!(chat_guard.profile_name(), Some("test-profile".to_string()));
         assert_eq!(
-            chat_guard.model_name().await,
-            "test-model-2",
-            "Model should not change when setting a profile"
+            chat_guard.agent_name(),
+            "test-agent",
+            "Agent should not have changed after a failed attempt to set profile"
         );
         drop(chat_guard);
 
-        // 4. Test switching to a non-existent profile
-        let switch_to_bad = Command::Profile {
-            name: Some("bad-profile".to_string()),
-        };
-        assert!(switch_to_bad.execute(chat_session.clone()).await?);
-        let chat_guard = chat_session.lock().await;
-        assert_eq!(
-            chat_guard.profile_name(),
-            Some("test-profile".to_string()),
-            "Profile should not have changed after a failed attempt"
-        );
-        drop(chat_guard);
-
-        // 5. Test /profile list (ensure it runs)
-        let list_profiles = Command::Profile {
+        // 5. Test /model list (ensure it runs)
+        let list_models = Command::Model {
             name: Some("list".to_string()),
         };
-        assert!(list_profiles.execute(chat_session.clone()).await?);
+        assert!(list_models.execute(chat_session.clone()).await?);
 
-        // 6. Test /profile (ensure it shows current profile)
-        let current_profile = Command::Profile { name: None };
-        assert!(current_profile.execute(chat_session.clone()).await?);
+        // 6. Test /model (ensure it shows current model)
+        let current_model = Command::Model { name: None };
+        assert!(current_model.execute(chat_session.clone()).await?);
 
         Ok(())
     }
@@ -1386,11 +1373,8 @@ USER: Run tool
         // 4. Test prompt generation
         let prompt_meta = {
             let chat_guard = chat_session.lock().await;
-            let model_name = chat_guard.model_name().await;
-            let profile_str = chat_guard
-                .profile_name()
-                .map(|p| format!(" | profile: {}", p))
-                .unwrap_or_default();
+            let model_key = chat_guard.model_key().await;
+            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
             let tools = chat_guard.tools().await;
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
@@ -1398,12 +1382,12 @@ USER: Run tool
             } else {
                 String::new()
             };
-            format!("[model: {}{}{}]", model_name, profile_str, tools_str)
+            format!("[model: {}{}{}]", model_key, agent_str, tools_str)
         };
 
         assert_eq!(
             prompt_meta,
-            "[model: test-model-1 | profile: test-profile | tools: mock_tool]"
+            "[model: test-model-1 | agent: test-agent | tools: mock_tool]"
         );
 
         // 5. Test clearing tools
@@ -1412,11 +1396,8 @@ USER: Run tool
 
         let prompt_meta_after_clear = {
             let chat_guard = chat_session.lock().await;
-            let model_name = chat_guard.model_name().await;
-            let profile_str = chat_guard
-                .profile_name()
-                .map(|p| format!(" | profile: {}", p))
-                .unwrap_or_default();
+            let model_key = chat_guard.model_key().await;
+            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
             let tools = chat_guard.tools().await;
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
@@ -1424,12 +1405,12 @@ USER: Run tool
             } else {
                 String::new()
             };
-            format!("[model: {}{}{}]", model_name, profile_str, tools_str)
+            format!("[model: {}{}{}]", model_key, agent_str, tools_str)
         };
 
         assert_eq!(
             prompt_meta_after_clear,
-            "[model: test-model-1 | profile: test-profile]"
+            "[model: test-model-1 | agent: test-agent]"
         );
 
         Ok(())

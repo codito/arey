@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
 
     let api_key = env::var("GEMINI_API_KEY").expect("GROQ_API_KEY environment variable not set");
     let config = ModelConfig {
+        key: "test-key".to_string(),
         name: "gemini-2.5-flash".to_string(),
         provider: arey_core::model::ModelProvider::Openai,
         settings: HashMap::from([
