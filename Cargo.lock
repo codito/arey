@@ -647,7 +647,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -1494,9 +1494,9 @@ checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 
 [[package]]
 name = "llama-cpp-2"
-version = "0.1.119"
+version = "0.1.121"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9ffa7ce593d8de218df0c333820ad8b8eb171db8e2599b62f80e5df2178bfae"
+checksum = "fd4349398c631eef9824111bf523f0d2c500f8d786e109d7d5c6c673451b35a1"
 dependencies = [
  "enumflags2",
  "llama-cpp-sys-2",
