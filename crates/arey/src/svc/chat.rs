@@ -184,6 +184,34 @@ impl<'a> Chat<'a> {
         self.session.lock().await.system_prompt().to_string()
     }
 
+    /// Set new system prompt for the current session
+    pub async fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
+        let mut session_lock = self.session.lock().await;
+        // Preserve existing conversation state
+        let messages = session_lock.all_messages();
+        let tools = session_lock.tools();
+        let model_key = session_lock.model_key().to_string();
+        let model_config = self
+            .config
+            .models
+            .get(&model_key)
+            .cloned()
+            .context(format!(
+                "Model '{}' associated with the current session not found in config.",
+                model_key
+            ))?;
+
+        let mut new_session = Session::new(model_config, prompt)
+            .await
+            .context("Failed to initialize new session with new system prompt")?;
+
+        new_session.set_tools(tools);
+        new_session.set_messages(messages);
+        *session_lock = new_session;
+
+        Ok(())
+    }
+
     /// Get available agent names
     pub fn available_agent_names(&self) -> Vec<&str> {
         self.config.agents.keys().map(|s| s.as_str()).collect()
@@ -667,6 +695,54 @@ agents:
 
         // Agent should remain unchanged after error
         assert_eq!(chat.agent_name(), "test-agent".to_string());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt() -> Result<()> {
+        let server = MockServer::start().await;
+        let config = get_test_config(&server).await?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+
+        // Use the test-agent which has tools configured
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+        chat.set_agent("test-agent").await?;
+
+        let original_prompt = chat.system_prompt().await;
+        assert_eq!(original_prompt, "You are a test agent.");
+
+        // Add some messages to test preservation
+        chat.add_messages(
+            vec![ChatMessage {
+                sender: SenderType::User,
+                text: "Hello".to_string(),
+                tools: vec![],
+            }],
+            vec![],
+        )
+        .await;
+
+        // Verify we have tools initially
+        let tools = chat.tools().await;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "mock_tool");
+
+        // Set a new system prompt
+        let new_prompt = "You are a Python expert.";
+        chat.set_system_prompt(new_prompt).await?;
+        assert_eq!(chat.system_prompt().await, new_prompt);
+
+        // Verify that the message history was preserved
+        let messages = chat.get_all_messages().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "Hello");
+
+        // Verify tools are preserved after prompt change
+        let tools = chat.tools().await;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "mock_tool");
 
         Ok(())
     }
