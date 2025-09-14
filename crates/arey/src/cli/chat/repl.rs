@@ -72,6 +72,15 @@ enum Command {
         /// Names of the tools to use
         names: Vec<String>,
     },
+    /// Set or view the system prompt for the current session.
+    ///
+    /// With no arguments, shows the current system prompt.
+    /// Provide a prompt string to set a new system prompt.
+    #[command(alias = "sys")]
+    Prompt {
+        /// New system prompt to set (optional)
+        prompt: Option<String>,
+    },
     /// Exit the chat session
     #[command(alias = "q", alias = "quit")]
     Exit,
@@ -190,6 +199,25 @@ impl Command {
                     }
                 }
             },
+            Command::Prompt { prompt } => {
+                let mut chat_guard = session.lock().await;
+                match prompt {
+                    Some(new_prompt) => match chat_guard.set_system_prompt(&new_prompt).await {
+                        Ok(()) => {
+                            println!("System prompt updated successfully.");
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Error setting system prompt: {}", e);
+                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                        }
+                    },
+                    None => {
+                        let current_prompt = chat_guard.system_prompt().await;
+                        println!("Current system prompt:");
+                        println!("{}", current_prompt);
+                    }
+                }
+            }
             Command::Exit => {
                 println!("Bye!");
                 return Ok(false);
@@ -1476,6 +1504,18 @@ USER: Run tool
         };
         assert!(set_bad_tool_cmd.execute(chat_session.clone()).await?);
         assert!(chat_session.lock().await.tools().await.is_empty());
+
+        // Test Prompt command
+        let new_prompt = "You are a helpful coding assistant.";
+        let set_prompt_cmd = Command::Prompt {
+            prompt: Some(new_prompt.to_string()),
+        };
+        assert!(set_prompt_cmd.execute(chat_session.clone()).await?);
+        assert_eq!(chat_session.lock().await.system_prompt().await, new_prompt);
+
+        // Test viewing current prompt (no arguments)
+        let view_prompt_cmd = Command::Prompt { prompt: None };
+        assert!(view_prompt_cmd.execute(chat_session.clone()).await?);
 
         // Test Exit command
         let exit_cmd = Command::Exit;

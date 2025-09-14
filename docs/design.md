@@ -16,71 +16,54 @@ Notes on the design of this tool.
 
 ### Non Goals
 
-We're not going to be build yet another index, or a semantic kernel like
-`langchain`. We focus only on the language modeling aspect; not the storage or
-anything else.
-
-While these are true at the time of writing, we will be open to reconsider these
-in the future.
-
-- Training models are not supported. This is an inference library.
-- GPU support is not available (due to lack of resource/testing environment).
-
-### Better tools
-
-We believe below tools are awesome and may be in the same bucket as this one.
-
-- <https://github.com/simonw/llm>
-- <https://github.com/go-skynet/LocalAI>
-- <https://github.com/jmorganca/ollama>
+- `arey` is not a development library or SDK.
+- No support for training or inference for generic models.
 
 ## Architecture
 
-### Clean Architecture Approach
+### Workspace Structure
 
-We implement a layered architecture with clear separation of concerns:
+This is a Rust monorepo with three main crates:
 
-1. **Core Crate**: Contains domain abstractions and foundational interfaces:
-   - `Agent`: Traits for agent definitions and execution
-   - `Workflow`: Step-by-step automation engines
-   - `Tool`: Standardized tool interface
-   - `Memory`: Short/long-term contextual storage
+1. **`crates/core`** - Domain logic and foundational interfaces
+   - Contains `agent`, `completion`, `config`, `model`, `session`, `tools` modules
+   - Provides abstractions for LLM providers and capabilities
+   - Core infrastructure for agents, workflows, and tools
 
-2. **Implementation Crates**: Concrete implementations in dedicated crates:
-   - `agent-research`: Domain-specific agent
-   - `memory-persistent`: Persistent storage
-   - `tool-search`: Web search implementation
+2. **`crates/arey`** - CLI application binary
+   - Main entry point with commands: `run`, `play`, `chat`
+   - User experience components (styling, spinners) for output formatting
+   - REPL engine with session management, context-aware autocomplete
+   - REPL commands such as `/log`, `/tool`, `@agent`, `!workflow`
 
-3. **CLI Crate (`arey`)**: Provides user experience with:
-   - Top-level commands: `run`, `play`, `chat`
-   - REPL engine with commands: `/log`, `/tool`, `@agent`, `!workflow`
-   - Managed sessions with state persistence
-   - Consistent UX components (styling, spinners)
+3. **`crates/tools-*`** - Tool implementations
+   - E.g., `tools-search` for web search functionality
+   - Each tool can be used inline or as independent MCP server
 
 ### Key Concepts
 
-- **Agent**: A stateless configuration that defines a persona and capabilities, configured in `arey.yml`. It bundles a system prompt, a list of default tool names, and model generation parameters (`ProfileConfig`). Agents are reusable templates for creating specialized conversational experiences.
+**Agent**: Stateless configuration defining persona and capabilities, configured in `arey.yml`. Bundles system prompt, tool list, and model parameters.
 
-- **Session**: A stateful, long-lived object that represents a single, continuous conversation. A session is instantiated from an `Agent` configuration and holds the complete message history. It is the primary entity that a user interacts with.
+**Session**: Stateful conversation object instantiated from an Agent, holding complete message history and tool state.
 
-- **Nested Execution (Future)**: The architecture is designed to support delegating sub-tasks to specialized agents in the future. In this model, a parent session would create a temporary, isolated child session for a sub-task. This capability is currently deferred to simplify the initial implementation.
+**Tools**: Extend agent functionality (search, memory, etc.). Dynamically managed per session without requiring model reload.
 
-- **Tools**: Extend agent functionality through integrations like web search or file operations. A session's toolset is initialized from its agent, but can be dynamically modified for the duration of the session.
+**Workflows**: Predefined sequences of agent/tool invocations for complex automation tasks.
 
-- **Workflows**: Predefined sequences of agent and tool invocations to automate complex, multi-step tasks.
+**REPL Engine**: Interactive chat environment with:
 
-- **REPL Engine**: Interactive chat environment with:
-  - Command history
-  - Context-aware autocomplete
-  - Rich output formatting for agent and tool responses.
+### Agent Configuration
 
-### Agent Configuration and Discovery
+Agents are defined in `~/.config/arey/arey.yml` (Linux/Mac) or `~/.arey/arey.yml` (Windows). The application validates configuration on startup.
+
+1. Startup: Parse `arey.yml` → Build Config → Populate Agent Repository
+2. User Interaction: CLI → Agent Repository → Session Configuration → Stateful Session
+3. Tools are sent with each completion request (not in system prompt)
 
 Agents are defined declaratively in the `arey.yml` configuration file under a top-level `agents` map. This allows for easy creation and management of reusable agent personas.
 
-**Discovery**: At startup, the application parses the `agents` section and populates an internal Agent Repository. When a user requests an agent (e.g., via the `--agent` flag), the application retrieves the corresponding configuration from this repository to initialize a session.
-
 **Example `arey.yml`:**
+
 ```yaml
 agents:
   coder:
@@ -102,6 +85,7 @@ agents:
 ### Execution Flows
 
 **Session Initialization and Interaction**
+
 ```mermaid
 graph TD
     subgraph Startup
@@ -119,7 +103,6 @@ graph TD
     end
 ```
 
-
 ### Design Decisions
 
 To maintain simplicity and deliver core value incrementally, the following design decisions have been made:
@@ -135,27 +118,33 @@ To maintain simplicity and deliver core value incrementally, the following desig
 ### Example Runs
 
 **1. Agent-Based Research**
+
 ```bash
 arey run @research "latest AI advancements"
 ```
+
 1. Agent searches academic/public sources
 2. Summarizes key findings
 3. Provides search references
 
 **2. Documentation Workflow**
+
 ```bash
 arey run !generate_docs src/
 ```
+
 1. Index source files
 2. Generate API documentation stubs
 3. Verify coverage
 4. Output markdown
 
 **3. Interactive Troubleshooting**
+
 ```bash
 arey chat
 > @support "Connection timeout error"
 ```
+
 1. Support agent suggests diagnostics
 2. Integrates log analysis tools
 3. Provides repair steps
