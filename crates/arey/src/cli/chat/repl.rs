@@ -483,8 +483,50 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
 
                 if is_command {
                     // TODO: error handling
-                    let args = shlex::split(trimmed_line).unwrap_or_default();
-                    match CliCommand::try_parse_from(args) {
+                    let args = match shlex::split(trimmed_line) {
+                        Some(parsed) => parsed,
+                        None => {
+                            // Fallback for cases with unescaped quotes/apostrophes
+                            // Split on first space only for commands that need special handling
+                            if trimmed_line.starts_with("/prompt")
+                                || trimmed_line.starts_with("/sys")
+                                || trimmed_line.starts_with("/tool")
+                            {
+                                if let Some(space_pos) = trimmed_line.find(' ') {
+                                    let command = trimmed_line[..space_pos].to_string();
+                                    let argument = trimmed_line[space_pos + 1..].trim().to_string();
+                                    vec![command, argument]
+                                } else {
+                                    vec![trimmed_line.to_string()]
+                                }
+                            } else {
+                                // For other commands, try simple space splitting
+                                trimmed_line
+                                    .split_whitespace()
+                                    .map(|s| s.to_string())
+                                    .collect()
+                            }
+                        }
+                    };
+
+                    // Special handling for commands that accept multi-word arguments
+                    let processed_args = if !args.is_empty()
+                        && (args[0] == "/prompt" || args[0] == "/sys" || args[0] == "/tool")
+                    {
+                        if args.len() > 1 {
+                            // Join all arguments after the command
+                            let mut processed = vec![args[0].clone()];
+                            let joined_arg = args[1..].join(" ");
+                            processed.push(joined_arg);
+                            processed
+                        } else {
+                            args
+                        }
+                    } else {
+                        args
+                    };
+
+                    match CliCommand::try_parse_from(processed_args) {
                         Ok(cli_command) => {
                             if !cli_command.command.execute(chat.clone()).await? {
                                 return Ok(()); // Exit REPL
@@ -1624,5 +1666,82 @@ task:
             output
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_prompt_command_parsing_edge_cases() {
+        let test_cases = vec![
+            // Test normal case with spaces
+            ("/prompt you are an expert", Some("you are an expert")),
+            // Test apostrophes (the main issue)
+            ("/prompt you're an expert", Some("you're an expert")),
+            // Test quotes (should still work with shlex)
+            ("/prompt \"quoted text\"", Some("quoted text")),
+            // Test mixed punctuation
+            ("/prompt hello, world!", Some("hello, world!")),
+            // Test no arguments (should work)
+            ("/prompt", None),
+            // Test alias
+            ("/sys you're an expert", Some("you're an expert")),
+        ];
+
+        for (input, expected_prompt) in test_cases {
+            // Apply the same processing logic as in the REPL
+            let args = match shlex::split(input) {
+                Some(parsed) => parsed,
+                None => {
+                    // Fallback for cases with unescaped quotes/apostrophes
+                    if input.starts_with("/prompt")
+                        || input.starts_with("/sys")
+                        || input.starts_with("/tool")
+                    {
+                        if let Some(space_pos) = input.find(' ') {
+                            let command = input[..space_pos].to_string();
+                            let argument = input[space_pos + 1..].trim().to_string();
+                            vec![command, argument]
+                        } else {
+                            vec![input.to_string()]
+                        }
+                    } else {
+                        input.split_whitespace().map(|s| s.to_string()).collect()
+                    }
+                }
+            };
+
+            // Apply the same processing logic as in the REPL
+            let processed_args = if !args.is_empty()
+                && (args[0] == "/prompt" || args[0] == "/sys" || args[0] == "/tool")
+            {
+                if args.len() > 1 {
+                    let mut processed = vec![args[0].clone()];
+                    let joined_arg = args[1..].join(" ");
+                    processed.push(joined_arg);
+                    processed
+                } else {
+                    args
+                }
+            } else {
+                args
+            };
+
+            let result = CliCommand::try_parse_from(processed_args);
+            assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
+
+            let cli_command = result.unwrap();
+            match cli_command.command {
+                Command::Prompt { prompt } => {
+                    assert_eq!(
+                        prompt,
+                        expected_prompt.map(|s| s.to_string()),
+                        "Failed for input: '{}'",
+                        input
+                    );
+                }
+                _ => panic!(
+                    "Expected Prompt command for input: '{}', got {:?}",
+                    input, cli_command.command
+                ),
+            }
+        }
     }
 }
