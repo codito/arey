@@ -227,6 +227,53 @@ impl Command {
     }
 }
 
+/// Parse command line input with robust handling for special characters
+/// Returns a vector of parsed arguments suitable for clap parsing
+fn parse_command_line(line: &str) -> Vec<String> {
+    let trimmed_line = line.trim();
+
+    let args = match shlex::split(trimmed_line) {
+        Some(parsed) => parsed,
+        None => {
+            // Fallback for cases with unescaped quotes/apostrophes
+            // Split on first space only for commands that need special handling
+            if trimmed_line.starts_with("/prompt")
+                || trimmed_line.starts_with("/sys")
+                || trimmed_line.starts_with("/tool")
+            {
+                if let Some(space_pos) = trimmed_line.find(' ') {
+                    let command = trimmed_line[..space_pos].to_string();
+                    let argument = trimmed_line[space_pos + 1..].trim().to_string();
+                    vec![command, argument]
+                } else {
+                    vec![trimmed_line.to_string()]
+                }
+            } else {
+                // For other commands, try simple space splitting
+                trimmed_line
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+        }
+    };
+
+    // Special handling for commands that accept multi-word arguments
+    if !args.is_empty() && (args[0] == "/prompt" || args[0] == "/sys" || args[0] == "/tool") {
+        if args.len() > 1 {
+            // Join all arguments after the command
+            let mut processed = vec![args[0].clone()];
+            let joined_arg = args[1..].join(" ");
+            processed.push(joined_arg);
+            processed
+        } else {
+            args
+        }
+    } else {
+        args
+    }
+}
+
 // Model command completion
 fn model_compl(
     line: &str,
@@ -483,48 +530,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
 
                 if is_command {
                     // TODO: error handling
-                    let args = match shlex::split(trimmed_line) {
-                        Some(parsed) => parsed,
-                        None => {
-                            // Fallback for cases with unescaped quotes/apostrophes
-                            // Split on first space only for commands that need special handling
-                            if trimmed_line.starts_with("/prompt")
-                                || trimmed_line.starts_with("/sys")
-                                || trimmed_line.starts_with("/tool")
-                            {
-                                if let Some(space_pos) = trimmed_line.find(' ') {
-                                    let command = trimmed_line[..space_pos].to_string();
-                                    let argument = trimmed_line[space_pos + 1..].trim().to_string();
-                                    vec![command, argument]
-                                } else {
-                                    vec![trimmed_line.to_string()]
-                                }
-                            } else {
-                                // For other commands, try simple space splitting
-                                trimmed_line
-                                    .split_whitespace()
-                                    .map(|s| s.to_string())
-                                    .collect()
-                            }
-                        }
-                    };
-
-                    // Special handling for commands that accept multi-word arguments
-                    let processed_args = if !args.is_empty()
-                        && (args[0] == "/prompt" || args[0] == "/sys" || args[0] == "/tool")
-                    {
-                        if args.len() > 1 {
-                            // Join all arguments after the command
-                            let mut processed = vec![args[0].clone()];
-                            let joined_arg = args[1..].join(" ");
-                            processed.push(joined_arg);
-                            processed
-                        } else {
-                            args
-                        }
-                    } else {
-                        args
-                    };
+                    let processed_args = parse_command_line(trimmed_line);
 
                     match CliCommand::try_parse_from(processed_args) {
                         Ok(cli_command) => {
@@ -1686,43 +1692,8 @@ task:
         ];
 
         for (input, expected_prompt) in test_cases {
-            // Apply the same processing logic as in the REPL
-            let args = match shlex::split(input) {
-                Some(parsed) => parsed,
-                None => {
-                    // Fallback for cases with unescaped quotes/apostrophes
-                    if input.starts_with("/prompt")
-                        || input.starts_with("/sys")
-                        || input.starts_with("/tool")
-                    {
-                        if let Some(space_pos) = input.find(' ') {
-                            let command = input[..space_pos].to_string();
-                            let argument = input[space_pos + 1..].trim().to_string();
-                            vec![command, argument]
-                        } else {
-                            vec![input.to_string()]
-                        }
-                    } else {
-                        input.split_whitespace().map(|s| s.to_string()).collect()
-                    }
-                }
-            };
-
-            // Apply the same processing logic as in the REPL
-            let processed_args = if !args.is_empty()
-                && (args[0] == "/prompt" || args[0] == "/sys" || args[0] == "/tool")
-            {
-                if args.len() > 1 {
-                    let mut processed = vec![args[0].clone()];
-                    let joined_arg = args[1..].join(" ");
-                    processed.push(joined_arg);
-                    processed
-                } else {
-                    args
-                }
-            } else {
-                args
-            };
+            // Use the shared parsing function
+            let processed_args = parse_command_line(input);
 
             let result = CliCommand::try_parse_from(processed_args);
             assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
