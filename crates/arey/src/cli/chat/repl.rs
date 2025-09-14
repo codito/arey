@@ -77,7 +77,7 @@ enum Command {
     /// With no arguments, shows the current system prompt.
     /// Provide a prompt string to set a new system prompt.
     #[command(alias = "sys")]
-    Prompt {
+    System {
         /// New system prompt to set (optional)
         prompt: Option<String>,
     },
@@ -199,7 +199,7 @@ impl Command {
                     }
                 }
             },
-            Command::Prompt { prompt } => {
+            Command::System { prompt } => {
                 let mut chat_guard = session.lock().await;
                 match prompt {
                     Some(new_prompt) => match chat_guard.set_system_prompt(&new_prompt).await {
@@ -237,7 +237,7 @@ fn parse_command_line(line: &str) -> Vec<String> {
         None => {
             // Fallback for cases with unescaped quotes/apostrophes
             // Split on first space only for commands that need special handling
-            if trimmed_line.starts_with("/prompt")
+            if trimmed_line.starts_with("/system")
                 || trimmed_line.starts_with("/sys")
                 || trimmed_line.starts_with("/tool")
             {
@@ -259,7 +259,7 @@ fn parse_command_line(line: &str) -> Vec<String> {
     };
 
     // Special handling for commands that accept multi-word arguments
-    if !args.is_empty() && (args[0] == "/prompt" || args[0] == "/sys" || args[0] == "/tool") {
+    if !args.is_empty() && (args[0] == "/system" || args[0] == "/sys" || args[0] == "/tool") {
         if args.len() > 1 {
             // Join all arguments after the command
             let mut processed = vec![args[0].clone()];
@@ -1555,14 +1555,14 @@ USER: Run tool
 
         // Test Prompt command
         let new_prompt = "You are a helpful coding assistant.";
-        let set_prompt_cmd = Command::Prompt {
+        let set_prompt_cmd = Command::System {
             prompt: Some(new_prompt.to_string()),
         };
         assert!(set_prompt_cmd.execute(chat_session.clone()).await?);
         assert_eq!(chat_session.lock().await.system_prompt().await, new_prompt);
 
         // Test viewing current prompt (no arguments)
-        let view_prompt_cmd = Command::Prompt { prompt: None };
+        let view_prompt_cmd = Command::System { prompt: None };
         assert!(view_prompt_cmd.execute(chat_session.clone()).await?);
 
         // Test Exit command
@@ -1675,18 +1675,18 @@ task:
     }
 
     #[test]
-    fn test_prompt_command_parsing_edge_cases() {
+    fn test_system_command_parsing_edge_cases() {
         let test_cases = vec![
             // Test normal case with spaces
-            ("/prompt you are an expert", Some("you are an expert")),
+            ("/system you are an expert", Some("you are an expert")),
             // Test apostrophes (the main issue)
-            ("/prompt you're an expert", Some("you're an expert")),
+            ("/system you're an expert", Some("you're an expert")),
             // Test quotes (should still work with shlex)
-            ("/prompt \"quoted text\"", Some("quoted text")),
+            ("/system \"quoted text\"", Some("quoted text")),
             // Test mixed punctuation
-            ("/prompt hello, world!", Some("hello, world!")),
+            ("/system hello, world!", Some("hello, world!")),
             // Test no arguments (should work)
-            ("/prompt", None),
+            ("/system", None),
             // Test alias
             ("/sys you're an expert", Some("you're an expert")),
         ];
@@ -1700,7 +1700,7 @@ task:
 
             let cli_command = result.unwrap();
             match cli_command.command {
-                Command::Prompt { prompt } => {
+                Command::System { prompt } => {
                     assert_eq!(
                         prompt,
                         expected_prompt.map(|s| s.to_string()),
@@ -1709,7 +1709,7 @@ task:
                     );
                 }
                 _ => panic!(
-                    "Expected Prompt command for input: '{}', got {:?}",
+                    "Expected System command for input: '{}', got {:?}",
                     input, cli_command.command
                 ),
             }
