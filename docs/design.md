@@ -115,6 +115,13 @@ To maintain simplicity and deliver core value incrementally, the following desig
 
 - **Startup Configuration Validation**: To prevent runtime errors from misconfiguration, the application will validate the `arey.yml` file on startup. This includes checks to ensure that all tools referenced by an agent (e.g., `search`) correspond to actual, registered tool implementations. This surfaces errors to the user early.
 
+- **Multi-Source Agent Loading**: Agents can be loaded from multiple sources with clear precedence rules:
+  - **Built-in agents**: Embedded in the binary for common use cases
+  - **User agents**: Individual YAML files in `~/.config/arey/agents/`
+  - **Legacy agents**: From the `agents` section in `arey.yml` (deprecated)
+
+  Precedence order: User agents > Built-in agents > Legacy agents. This allows users to override built-in agents while maintaining backward compatibility.
+
 ### Example Runs
 
 **1. Agent-Based Research**

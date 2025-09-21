@@ -72,6 +72,15 @@ enum Command {
         /// Names of the tools to use
         names: Vec<String>,
     },
+    /// Manage chat agents.
+    ///
+    /// With no arguments, shows the current agent and source.
+    /// Use "list" to see available agents with their sources.
+    #[command(alias = "a")]
+    Agent {
+        /// Agent name to switch to, or "list"
+        name: Option<String>,
+    },
     /// Set or view the system prompt for the current session.
     ///
     /// With no arguments, shows the current system prompt.
@@ -178,7 +187,7 @@ impl Command {
                     let chat_guard = session.lock().await;
                     if let Some((profile_name, profile_data)) = chat_guard.current_profile() {
                         println!("Current profile: {profile_name}");
-                        match serde_yaml::to_string(profile_data) {
+                        match serde_yaml::to_string(&profile_data) {
                             Ok(yaml) => {
                                 // Trim to avoid printing empty "{}" for empty-but-not-null data.
                                 let trimmed = yaml.trim();
@@ -197,6 +206,52 @@ impl Command {
                     } else {
                         println!("No profile is active.");
                     }
+                }
+            },
+            Command::Agent { name } => match name {
+                Some(name) => {
+                    if name == "list" {
+                        let chat_guard = session.lock().await;
+                        let agents = chat_guard.available_agents_with_sources();
+                        if agents.is_empty() {
+                            println!("No agents available.");
+                        } else {
+                            println!("Available agents:");
+                            for (agent_name, source) in agents {
+                                let source_str = match source {
+                                    arey_core::agent::AgentSource::BuiltIn => "built-in",
+                                    arey_core::agent::AgentSource::UserFile(_) => "user",
+                                };
+                                println!("  {} ({})", agent_name, source_str);
+                            }
+                        }
+                    } else {
+                        let mut chat_guard = session.lock().await;
+                        let spinner =
+                            GenerationSpinner::new(format!("Loading agent '{}'...", &name));
+
+                        match chat_guard.set_agent(&name).await {
+                            Ok(()) => {
+                                spinner.clear();
+                                let success_msg = format!("Agent switched to: {}", name);
+                                println!("{success_msg}");
+                            }
+                            Err(e) => {
+                                spinner.clear();
+                                let error_msg = format!("Error switching agent: {}", e);
+                                eprintln!(
+                                    "{}",
+                                    style_chat_text(&error_msg, ChatMessageType::Error)
+                                );
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let chat_guard = session.lock().await;
+                    let agent_name = chat_guard.agent_name();
+                    let source = chat_guard.format_agent_source(&agent_name);
+                    println!("Current agent: {} ({})", agent_name, source);
                 }
             },
             Command::System { prompt } => {
@@ -497,7 +552,9 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
         let prompt = {
             let chat_guard = chat.lock().await;
             let model_key = chat_guard.model_key().await;
-            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
+
+            // Get dynamic agent state information
+            let agent_state = chat_guard.agent_display_state();
 
             let tools = chat_guard.tools().await;
             let tools_str = if !tools.is_empty() {
@@ -507,7 +564,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                 String::new()
             };
 
-            let prompt_meta = format!("[model: {}{}{}]", model_key, agent_str, tools_str);
+            let prompt_meta = format!("[model: {} | {}{}]", model_key, agent_state, tools_str);
             format!(
                 "\n{}\n{}",
                 style_chat_text(&prompt_meta, ChatMessageType::Prompt),
@@ -919,6 +976,79 @@ task:
 
     fn get_test_config_from_str(content: &str) -> Result<Config> {
         let mut file = NamedTempFile::new().unwrap();
+        let config_dir = file.path().parent().unwrap();
+
+        // Create agents directory in the same directory as the config file
+        let agents_dir = config_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // Parse the config content to see what agents are referenced
+        let config_value: serde_yaml::Value = serde_yaml::from_str(content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config content: {}", e))?;
+
+        // Extract agent names from chat and task sections
+        let mut needed_agents = std::collections::HashSet::new();
+        if let Some(chat) = config_value.get("chat")
+            && let Some(agent) = chat.get("agent")
+            && let Some(agent_name) = agent.as_str()
+        {
+            needed_agents.insert(agent_name);
+        }
+        if let Some(task) = config_value.get("task")
+            && let Some(agent) = task.get("agent")
+            && let Some(agent_name) = agent.as_str()
+        {
+            needed_agents.insert(agent_name);
+        }
+
+        // Also check if there are agents defined inline in the config
+        if let Some(agents) = config_value.get("agents")
+            && let Some(agents_map) = agents.as_mapping()
+        {
+            for (agent_name, agent_config) in agents_map {
+                if let Some(agent_name_str) = agent_name.as_str() {
+                    needed_agents.insert(agent_name_str);
+
+                    // Create agent file from inline config
+                    let agent_path = agents_dir.join(format!("{}.yml", agent_name_str));
+                    let agent_content = format!(
+                        r#"
+name: "{}"
+prompt: "{}"
+profile:
+  temperature: 0.1
+"#,
+                        agent_name_str,
+                        agent_config
+                            .get("prompt")
+                            .and_then(|p| p.as_str())
+                            .unwrap_or("You are a helpful assistant.")
+                    );
+                    std::fs::write(&agent_path, agent_content).unwrap();
+                }
+            }
+        }
+
+        // Create the needed agent files (but don't create default agent, let it use built-in)
+        for agent_name in needed_agents {
+            if agent_name != "default" {
+                // Don't override the built-in default agent
+                let agent_path = agents_dir.join(format!("{}.yml", agent_name));
+                if !agent_path.exists() {
+                    let agent_content = format!(
+                        r#"
+name: "{}"
+prompt: "You are a helpful assistant."
+profile:
+  temperature: 0.1
+"#,
+                        agent_name
+                    );
+                    std::fs::write(&agent_path, agent_content).unwrap();
+                }
+            }
+        }
+
         std::io::Write::write_all(&mut file, content.as_bytes()).unwrap();
         get_config(Some(file.path().to_path_buf()))
             .map_err(|e| anyhow::anyhow!("Failed to create temp config file. Error {}", e))

@@ -3,6 +3,7 @@ use futures::stream::BoxStream;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arey_core::agent::Agent;
 use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
 };
@@ -18,7 +19,7 @@ pub struct Task<'a> {
     instruction: String,
     model_config: ModelConfig,
     config: &'a Config,
-    agent_name: String,
+    current_agent: Agent,
     model: Option<Box<dyn CompletionModel + Send + Sync>>,
 }
 
@@ -29,14 +30,24 @@ impl<'a> Task<'a> {
         model_config: ModelConfig,
         config: &'a Config,
         agent_name: String,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let current_agent = config
+            .agents
+            .get(&agent_name)
+            .cloned()
+            .context(format!("Agent '{agent_name}' not found in config."))?;
+
+        // Mark this agent as active
+        let mut agent = current_agent;
+        agent.set_active(true);
+
+        Ok(Self {
             instruction,
             model_config,
             config,
-            agent_name,
+            current_agent: agent,
             model: None,
-        }
+        })
     }
 
     /// Loads the language model for the task.
@@ -47,16 +58,11 @@ impl<'a> Task<'a> {
         let config = self.model_config.clone();
         let mut model = get_completion_llm(config).context("Failed to initialize model")?;
 
-        // Use agent prompt if available, otherwise empty for tasks
-        let system_prompt = self
-            .config
-            .agents
-            .get(self.agent_name.as_str())
-            .map(|agent| agent.prompt.clone())
-            .unwrap_or_default();
+        // Use agent prompt
+        let system_prompt = &self.current_agent.prompt;
 
         model
-            .load(&system_prompt)
+            .load(system_prompt)
             .await
             .context("Failed to load model with system prompt")?;
 
@@ -78,30 +84,22 @@ impl<'a> Task<'a> {
         };
 
         let mut settings = HashMap::new();
-        if let Some(agent) = self.config.agents.get(self.agent_name.as_str()) {
-            settings.insert(
-                "temperature".to_string(),
-                agent.profile.temperature.to_string(),
-            );
-            settings.insert(
-                "repeat_penalty".to_string(),
-                agent.profile.repeat_penalty.to_string(),
-            );
-            settings.insert("top_k".to_string(), agent.profile.top_k.to_string());
-            settings.insert("top_p".to_string(), agent.profile.top_p.to_string());
-        }
+        let profile = self.current_agent.effective_profile();
+        settings.insert("temperature".to_string(), profile.temperature.to_string());
+        settings.insert(
+            "repeat_penalty".to_string(),
+            profile.repeat_penalty.to_string(),
+        );
+        settings.insert("top_k".to_string(), profile.top_k.to_string());
+        settings.insert("top_p".to_string(), profile.top_p.to_string());
 
         let available_tools = get_tools(self.config).unwrap_or_default();
-        let tools: Vec<Arc<dyn Tool>> =
-            if let Some(agent) = self.config.agents.get(self.agent_name.as_str()) {
-                agent
-                    .tools
-                    .iter()
-                    .filter_map(|tool_name| available_tools.get(tool_name.as_str()).cloned())
-                    .collect()
-            } else {
-                vec![]
-            };
+        let tools: Vec<Arc<dyn Tool>> = self
+            .current_agent
+            .effective_tools()
+            .iter()
+            .filter_map(|tool_name| available_tools.get(tool_name.as_str()).cloned())
+            .collect();
 
         let cancel_token = CancellationToken::new();
 
@@ -120,6 +118,8 @@ impl<'a> Task<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arey_core::agent::AgentConfig;
+    use arey_core::agent::AgentSource;
     use arey_core::config::{ModeConfig, ProfileConfig};
     use arey_core::model::ModelProvider;
     use futures::stream::StreamExt;
@@ -180,10 +180,17 @@ mod tests {
         let mut models = HashMap::new();
         models.insert("test-model".to_string(), create_mock_model_config(""));
 
+        let mut agents = HashMap::new();
+        agents.insert(
+            "default".to_string(),
+            AgentConfig::new("default", "You are a helpful assistant.", vec![])
+                .to_agent(AgentSource::BuiltIn),
+        );
+
         let config = Config {
             models,
             profiles: HashMap::new(),
-            agents: HashMap::new(),
+            agents,
             chat: ModeConfig {
                 model: create_mock_model_config(""),
                 profile: ProfileConfig::default(),
@@ -206,7 +213,8 @@ mod tests {
             model_config,
             &config,
             "default".to_string(),
-        );
+        )
+        .unwrap();
         assert_eq!(task.instruction, "test");
         assert_eq!(task.model_config.name, "test-model");
         assert!(task.model.is_none());
@@ -231,10 +239,17 @@ mod tests {
             create_mock_model_config(&server.uri()),
         );
 
+        let mut agents = HashMap::new();
+        agents.insert(
+            "default".to_string(),
+            AgentConfig::new("default", "You are a helpful assistant.", vec![])
+                .to_agent(AgentSource::BuiltIn),
+        );
+
         let config = Config {
             models,
             profiles: HashMap::new(),
-            agents: HashMap::new(),
+            agents,
             chat: ModeConfig {
                 model: create_mock_model_config(&server.uri()),
                 profile: ProfileConfig::default(),
@@ -257,7 +272,8 @@ mod tests {
             model_config,
             &config,
             "default".to_string(),
-        );
+        )
+        .unwrap();
 
         let metrics = task.load_model().await?;
         assert!(metrics.init_latency_ms >= 0.0);

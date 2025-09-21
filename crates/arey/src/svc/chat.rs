@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use arey_core::agent::{Agent, AgentSource};
 use arey_core::completion::{CancellationToken, ChatMessage, Completion};
 use arey_core::config::{Config, ProfileConfig};
 use arey_core::session::Session;
@@ -14,7 +15,7 @@ use tokio::sync::Mutex;
 /// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
     session: Arc<Mutex<Session>>,
-    agent_name: String,
+    current_agent: Agent,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     config: &'a Config,
 }
@@ -50,14 +51,17 @@ impl<'a> Chat<'a> {
         };
 
         let agent_name = config.chat.agent_name.clone();
-        let agent_config = config
+        let mut agent = config
             .agents
             .get(&agent_name)
             .cloned()
             .context(format!("Agent '{agent_name}' not found in config."))?;
 
-        let tools: Result<Vec<Arc<dyn Tool>>, _> = agent_config
-            .tools
+        // Mark this agent as active
+        agent.set_active(true);
+
+        let tools: Result<Vec<Arc<dyn Tool>>, _> = agent
+            .effective_tools()
             .iter()
             .map(|tool_name| {
                 available_tools
@@ -67,14 +71,14 @@ impl<'a> Chat<'a> {
             })
             .collect();
 
-        let mut session = Session::new(model_config, &agent_config.prompt)
+        let mut session = Session::new(model_config, &agent.prompt)
             .await
             .context("Failed to create chat session")?;
         session.set_tools(tools?);
 
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
-            agent_name,
+            current_agent: agent,
             available_tools,
             config,
         })
@@ -82,17 +86,25 @@ impl<'a> Chat<'a> {
 
     /// Get current agent name
     pub fn agent_name(&self) -> String {
-        self.agent_name.clone()
+        self.current_agent.name.clone()
+    }
+
+    /// Get current agent state display string
+    pub fn agent_display_state(&self) -> String {
+        self.current_agent.display_state()
     }
 
     /// Switch to a different agent
     pub async fn set_agent(&mut self, agent_name: &str) -> Result<()> {
-        let agent_config = self
+        let mut new_agent = self
             .config
             .agents
             .get(agent_name)
             .cloned()
             .context(format!("Agent '{agent_name}' not found in config."))?;
+
+        // Deactivate current agent
+        self.current_agent.set_active(false);
 
         let model_key = self.model_key().await;
         let model_config = self
@@ -108,8 +120,11 @@ impl<'a> Chat<'a> {
         let mut session_lock = self.session.lock().await;
         let messages = session_lock.all_messages();
 
-        let tools: Result<Vec<Arc<dyn Tool>>, _> = agent_config
-            .tools
+        // Activate new agent
+        new_agent.set_active(true);
+
+        let tools: Result<Vec<Arc<dyn Tool>>, _> = new_agent
+            .effective_tools()
             .iter()
             .map(|name| {
                 self.available_tools
@@ -119,11 +134,11 @@ impl<'a> Chat<'a> {
             })
             .collect();
 
-        let mut new_session = Session::new(model_config, &agent_config.prompt).await?;
+        let mut new_session = Session::new(model_config, &new_agent.prompt).await?;
         new_session.set_tools(tools?);
         new_session.set_messages(messages);
         *session_lock = new_session;
-        self.agent_name = agent_name.to_string();
+        self.current_agent = new_agent;
 
         Ok(())
     }
@@ -161,15 +176,15 @@ impl<'a> Chat<'a> {
 
     /// Get current profile name
     pub fn profile_name(&self) -> String {
-        self.agent_name.clone()
+        self.agent_name().clone()
     }
 
     /// Get current profile name and data
-    pub fn current_profile(&self) -> Option<(&String, &ProfileConfig)> {
+    pub fn current_profile(&self) -> Option<(String, ProfileConfig)> {
         self.config
             .agents
-            .get(&self.agent_name)
-            .map(|agent| (&self.agent_name, &agent.profile))
+            .get(&self.agent_name())
+            .map(|agent| (self.agent_name(), agent.profile.clone()))
     }
 
     /// Switch to a different profile
@@ -215,6 +230,32 @@ impl<'a> Chat<'a> {
     /// Get available agent names
     pub fn available_agent_names(&self) -> Vec<&str> {
         self.config.agents.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get available agents with their sources
+    pub fn available_agents_with_sources(&self) -> Vec<(&str, &AgentSource)> {
+        self.config
+            .agents
+            .iter()
+            .map(|(name, agent)| (name.as_str(), &agent.metadata.source))
+            .collect()
+    }
+
+    /// Get agent source information
+    pub fn get_agent_source(&self, agent_name: &str) -> Option<&AgentSource> {
+        self.config
+            .agents
+            .get(agent_name)
+            .map(|agent| &agent.metadata.source)
+    }
+
+    /// Format agent source for display
+    pub fn format_agent_source(&self, agent_name: &str) -> String {
+        match self.get_agent_source(agent_name) {
+            Some(AgentSource::BuiltIn) => "built-in".to_string(),
+            Some(AgentSource::UserFile(_)) => "user".to_string(),
+            None => "unknown".to_string(),
+        }
     }
 
     /// Get available model names
@@ -309,7 +350,7 @@ impl<'a> Chat<'a> {
         let profile = self
             .config
             .agents
-            .get(&self.agent_name)
+            .get(&self.agent_name())
             .map(|a| a.profile.clone());
 
         let settings = if let Some(profile) = profile {
@@ -393,7 +434,25 @@ mod tests {
     }
 
     fn create_temp_config_file(server_uri: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
+        let config_file = NamedTempFile::new().unwrap();
+        let config_dir = config_file.path().parent().unwrap();
+
+        // Create agents directory in the same directory as the config file
+        let agents_dir = config_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // Create the test agent file
+        let test_agent_path = agents_dir.join("test-agent.yml");
+        let test_agent_content = r#"
+name: "test-agent"
+prompt: "You are a test agent."
+tools: [ "mock_tool" ]
+profile:
+  temperature: 0.1
+"#;
+        std::fs::write(&test_agent_path, test_agent_content).unwrap();
+
+        // Create the main config file
         let config_content = format!(
             r#"
 models:
@@ -403,24 +462,20 @@ models:
     api_key: "MOCK_OPENAI_API_KEY"
 chat:
   model: test-model
+  agent: "test-agent"
 task:
   model: test-model
+  agent: "test-agent"
 profiles:
   test-profile:
     temperature: 0.5
     top_p: 0.9
     repeat_penalty: 1.1
     top_k: 40
-agents:
-  test-agent:
-    prompt: "You are a test agent."
-    tools: [ "mock_tool" ]
-    profile:
-      temperature: 0.1
 "#,
         );
-        std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
-        file
+        std::io::Write::write_all(&mut config_file.as_file(), config_content.as_bytes()).unwrap();
+        config_file
     }
 
     async fn get_test_config(server: &MockServer) -> Result<Config> {
@@ -459,9 +514,14 @@ agents:
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
         // Test with existing model, should use default agent from config
-        let chat = Chat::new(&config, Some("test-model".to_string()), HashMap::new()).await;
+        let chat = Chat::new(
+            &config,
+            Some("test-model".to_string()),
+            available_tools.clone(),
+        )
+        .await;
         assert!(chat.is_ok());
-        assert_eq!(chat.unwrap().agent_name(), "default");
+        assert_eq!(chat.unwrap().agent_name(), "test-agent");
 
         // Test with a specified agent
         config.chat.agent_name = "test-agent".to_string();
@@ -519,7 +579,15 @@ agents:
 
         let chat = Chat::new(&config, None, available_tools).await?;
 
-        // Initially, no tools are set
+        // Initially, tools are set based on agent configuration
+        let tools = chat.tools().await;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "mock_tool");
+
+        // Clear tools first
+        chat.set_tools(&[]).await?;
+
+        // Verify tools are cleared
         let tools = chat.tools().await;
         assert!(tools.is_empty());
 
@@ -538,7 +606,9 @@ agents:
     async fn test_add_and_get_last_message() -> Result<()> {
         let server = MockServer::start().await;
         let config = get_test_config(&server).await?;
-        let chat = Chat::new(&config, None, HashMap::new()).await?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let chat = Chat::new(&config, None, available_tools).await?;
 
         chat.add_messages(
             vec![ChatMessage {
@@ -574,7 +644,9 @@ agents:
     async fn test_clear_messages() -> Result<()> {
         let server = MockServer::start().await;
         let config = get_test_config(&server).await?;
-        let chat = Chat::new(&config, None, HashMap::new()).await?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let chat = Chat::new(&config, None, available_tools).await?;
 
         chat.add_messages(
             vec![
@@ -614,7 +686,9 @@ agents:
             .await;
 
         let config = get_test_config(&server).await?;
-        let chat = Chat::new(&config, None, HashMap::new()).await?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let chat = Chat::new(&config, None, available_tools).await?;
 
         let cancel_token = CancellationToken::new();
         let mut stream = chat.stream_response(cancel_token).await?;
@@ -674,8 +748,8 @@ agents:
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
         let mut chat = Chat::new(&config, None, available_tools).await?;
-        assert_eq!(chat.agent_name(), "default");
-        assert_eq!(chat.system_prompt().await, "You are a helpful assistant.");
+        assert_eq!(chat.agent_name(), "test-agent");
+        assert_eq!(chat.system_prompt().await, "You are a test agent.");
 
         // Set a valid agent
         chat.set_agent("test-agent").await?;

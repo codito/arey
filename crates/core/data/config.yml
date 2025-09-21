@@ -5,6 +5,24 @@
 #
 # Please refer to below arey configuration for more examples:
 # https://github.com/codito/dotfiles/blob/master/.config/arey/arey.yml
+#
+# AGENTS
+# The arey app supports configurable agents that define AI personas with custom
+# prompts, tools, and model parameters. On first run, a default agent is created
+# automatically at ~/.config/arey/agents/default.yml (or equivalent on Windows).
+#
+# You can:
+# 1. Edit the default.yml file to customize the default agent behavior
+# 2. Create additional .yml files in the agents directory for custom agents
+# 3. Delete default.yml to fall back to the built-in default agent
+#
+# Agent file format:
+# name: "agent-name"
+# prompt: "You are an expert in..."
+# tools:
+#   - search
+# profile:
+#   temperature: 0.7
 
 models:
   openhermes25-mistral-7b:

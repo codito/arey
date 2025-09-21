@@ -63,7 +63,23 @@ Please update the `models` section in the config yml to your local model path.
 
 `arey chat`
 
-### 3. Run Arey in play mode
+### 3. Use specialized Agents
+
+`arey` supports specialized agents for different tasks:
+
+```bash
+# Ask a research agent to find information
+arey ask "@researcher What are the latest developments in quantum computing?"
+
+# Chat with a code expert
+arey chat
+> @coder Help me debug this Rust function: fn main() { println!("Hello"); }
+
+# Use a creative writing assistant
+arey ask "@writer Write a short story about a robot learning to paint"
+```
+
+### 4. Run Arey in play mode
 
 Use to fine-tune a prompt in your editor while `arey` keeps completing your prompt on every save.
 
@@ -97,7 +113,7 @@ See <https://apps.codito.in/arey/contribute>.
       for examples.
 - [x] Markdown formatting for chat mode.
 - [x] OpenAI server support.
-- [ ] Agents and tools.
+- [x] Agents and tools with unified agent architecture.
 - [ ] Server proxy for any arey model.
 - [ ] Command support in chat. E.g., logs, change model, copy, clear, etc.
 - [ ] Discover prompts from user directory

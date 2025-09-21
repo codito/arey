@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo:*)"
+      "Bash(cargo:*)",
+      "Bash(find:*)",
+      "Bash(git diff:*)"
     ],
     "deny": [],
     "ask": []
