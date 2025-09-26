@@ -14,7 +14,7 @@ Configuration file is a valid YAML file.
 A default configuration file is created by `arey` on the first run. You can
 refer [here][config-file] for the latest configuration file snapshot.
 
-[config-file]: https://github.com/codito/arey/blob/master/arey/data/config.yml
+[config-file]: https://github.com/codito/arey/blob/master/crates/core/data/config.yml
 
 ## Sections
 

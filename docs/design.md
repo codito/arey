@@ -42,7 +42,7 @@ This is a Rust monorepo with three main crates:
 
 ### Key Concepts
 
-**Agent**: Stateless configuration defining persona and capabilities, configured in `arey.yml`. Bundles system prompt, tool list, and model parameters.
+**Agent**: Stateless configuration defining persona and capabilities, configured in YAML files. Bundles system prompt, tool list, and model parameters.
 
 **Session**: Stateful conversation object instantiated from an Agent, holding complete message history and tool state.
 
@@ -51,35 +51,42 @@ This is a Rust monorepo with three main crates:
 **Workflows**: Predefined sequences of agent/tool invocations for complex automation tasks.
 
 **REPL Engine**: Interactive chat environment with:
+- Context-aware autocomplete
+- Command support (`/log`, `/tool`, `@agent`, `!workflow`)
+- Session management and persistence
 
 ### Agent Configuration
 
-Agents are defined in `~/.config/arey/arey.yml` (Linux/Mac) or `~/.arey/arey.yml` (Windows). The application validates configuration on startup.
+Agents are defined in YAML files in the `~/.config/arey/agents/` directory. The application validates configuration on startup.
 
-1. Startup: Parse `arey.yml` → Build Config → Populate Agent Repository
+1. Startup: Parse config → Build Config → Populate Agent Repository
 2. User Interaction: CLI → Agent Repository → Session Configuration → Stateful Session
 3. Tools are sent with each completion request (not in system prompt)
 
-Agents are defined declaratively in the `arey.yml` configuration file under a top-level `agents` map. This allows for easy creation and management of reusable agent personas.
+Agents are defined declaratively in individual YAML files. This allows for easy creation and management of reusable agent personas.
 
-**Example `arey.yml`:**
+**Example agent file (`~/.config/arey/agents/coder.yml`):**
 
 ```yaml
-agents:
-  coder:
-    prompt: "You are an expert Rust programmer. You only write concise, idiomatic Rust code."
-    tools:
-      - search
-    profile: concise
+name: "coder"
+prompt: "You are an expert Rust programmer. You only write concise, idiomatic Rust code."
+tools:
+  - search
+profile:
+  temperature: 0.3
+  top_p: 0.9
+```
 
-  researcher:
-    prompt: "You are a meticulous researcher who always cites sources."
-    tools:
-      - search
-    profile:
-      # An inline profile can also be used
-      temperature: 0.2
-      top_p: 0.1
+**Example agent file (`~/.config/arey/agents/researcher.yml`):**
+
+```yaml
+name: "researcher"
+prompt: "You are a meticulous researcher who always cites sources."
+tools:
+  - search
+profile:
+  temperature: 0.2
+  top_p: 0.1
 ```
 
 ### Execution Flows
@@ -113,7 +120,7 @@ To maintain simplicity and deliver core value incrementally, the following desig
 
 - **Clear Separation of Concerns**: The architecture maintains a strict separation between the stateless `Agent` configuration (the template) and the stateful `Session` (the conversation instance). This ensures that agent definitions are reusable and that session state is managed predictably.
 
-- **Startup Configuration Validation**: To prevent runtime errors from misconfiguration, the application will validate the `arey.yml` file on startup. This includes checks to ensure that all tools referenced by an agent (e.g., `search`) correspond to actual, registered tool implementations. This surfaces errors to the user early.
+- **Startup Configuration Validation**: To prevent runtime errors from misconfiguration, the application validates configuration files on startup. This includes checks to ensure that all tools referenced by an agent (e.g., `search`) correspond to actual, registered tool implementations. This surfaces errors to the user early.
 
 - **Multi-Source Agent Loading**: Agents can be loaded from multiple sources with clear precedence rules:
   - **Built-in agents**: Embedded in the binary for common use cases
@@ -121,6 +128,8 @@ To maintain simplicity and deliver core value incrementally, the following desig
   - **Legacy agents**: From the `agents` section in `arey.yml` (deprecated)
 
   Precedence order: User agents > Built-in agents > Legacy agents. This allows users to override built-in agents while maintaining backward compatibility.
+
+- **Performance Focus**: The implementation prioritizes CPU performance and low memory usage, making it suitable for running on modest hardware while maintaining responsive interactions with large language models.
 
 ### Example Runs
 

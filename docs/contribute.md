@@ -12,30 +12,69 @@ Thank you ❤️
 
 ## Development notes
 
-```sh
-# Install arey locally in editable mode.
-> pip install -e .
-> pip install -e .\[test\] # optional, if you wish to run tests
+### Building from source
 
-# Install with samples dependency if you wish to run them
-> pip install -e .\[samples\]
+```sh
+# Clone the repository
+git clone https://github.com/codito/arey.git
+cd arey
+
+# Build in release mode
+cargo build --release
+
+# Run tests
+cargo test
+
+# Run with debug output
+cargo run --bin arey -- --verbose chat
 ```
 
-### CUDA support
-
-If you've a GPU, try the following installation instead.
+### Code style and formatting
 
 ```sh
-> pip uninstall llama-cpp-python
-> CMAKE_ARGS="-DGGML_CUDA=on" FORCE_CMAKE=1 pip install llama-cpp-python --force
+# Format code
+cargo fmt --all
+
+# Run linter
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Type check
+cargo check
 ```
 
-### CPU with BLAS library
-
-With OPENBLAS, loading time for models is much smaller and inference is about
-4-5% faster. Here's how to install `llama-cpp-python` with OPENBLAS support:
+### Running tests
 
 ```sh
-> pip uninstall llama-cpp-python
-> CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" FORCE_CMAKE=1 pip install llama-cpp-python --force-reinstall --upgrade --verbose --no-cache
+# Run all tests
+cargo test
+
+# Run specific test
+cargo test test_name
+
+# Run with nextest (if installed)
+cargo nextest run
+```
+
+### GPU support
+
+For CUDA support, ensure you have the appropriate CUDA toolkit installed and build with:
+
+```sh
+# The build system will automatically detect CUDA if available
+cargo build --release --features cuda
+```
+
+### CPU optimization
+
+For better performance with CPU-based models, ensure you have system BLAS libraries installed:
+
+```sh
+# Ubuntu/Debian
+sudo apt-get install libopenblas-dev
+
+# macOS
+brew install openblas
+
+# The build system will automatically use BLAS if available
+cargo build --release
 ```

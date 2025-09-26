@@ -4,31 +4,38 @@
 
 Arey is a simple large language model playground in your terminal.
 
-- ✨ Command line interface, works everywhere python is available.
-- 🤖 Use any llama.cpp, ollama model or an openai compatible endpoint.
+- ✨ Command line interface, built with Rust, runs everywhere.
+- 🤖 Use any llama.cpp model, or an openai compatible endpoint.
 - 💬 Chat with your favorite local models. CPU friendly 🍀
 - 🙋 Ask anything to AI models with a single command.
 - 📋 Supercharged prompt fine-tuning workflow ❤️ Edit your prompt in _any_ editor
   and `arey` will generate a completion on save.
-- 🔓 No telemetry, no internet, nothing to sell.
+- 🔓 No telemetry, completely private with local models, internet optional (if using tools).
+- 🤖 Configurable agents for specialized tasks.
+- 🔧 Extensible with tools for web search, file operations, and more.
 
 See [Get Started](https://apps.codito.in/arey) or notes below for a quick guide.
 
 https://github.com/codito/arey/assets/28766/6b886e49-6124-4256-84d9-20449c783a34
 
-🚧 See **Roadmap** below.
-
 ## Installation
 
+**From source:**
+
 ```sh
-# Install pipx if needed: `pip install pipx`
-# Ensure ~/.local/bin is available in system PATH
-pipx install arey
+git clone https://github.com/codito/arey.git
+cd arey
+cargo build --release
 ```
 
-Windows troubleshooting notes are [here](docs/windows.md).
+**Binary releases:**
+Download the latest release from [GitHub Releases](https://github.com/codito/arey/releases).
 
-[WSL]: https://learn.microsoft.com/en-us/windows/wsl/install
+**Package managers:**
+
+- Cargo: `cargo install arey` or `cargo binstall arey`.
+
+Windows troubleshooting notes are [here](docs/windows.md).
 
 ## Usage
 
@@ -104,27 +111,16 @@ Watching `/tmp/arey_playzl9igj3d.md` for changes...
 
 ## Development
 
-See <https://apps.codito.in/arey/contribute>.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
 
-## Roadmap
+## Configuration
 
-- [x] Chat and task modes for interactive or batch queries
-- [x] Define new tasks with only a prompt, no code. See docs/samples directory
-      for examples.
-- [x] Markdown formatting for chat mode.
-- [x] OpenAI server support.
-- [x] Agents and tools with unified agent architecture.
-- [ ] Server proxy for any arey model.
-- [ ] Command support in chat. E.g., logs, change model, copy, clear, etc.
-- [ ] Discover prompts from user directory
-- [ ] Manage prompts and create new interactively
-- [ ] Download models and manage them
-- [ ] Release v0.1
-- [ ] Add [textfx](https://github.com/google/generative-ai-docs/tree/main/demos/palm/web/textfx)
-- [ ] Add offline knowledge bases and RAG. See
-      <https://library.kiwix.org/#lang=eng>
-- [ ] Search: brave (2000calls/mo), Tavily (1000calls/mo), searxng
-- [ ] Reader API: https://jina.ai/reader/
+Arey uses YAML configuration files:
+
+- **Config file**: `~/.config/arey/arey.yml` (Linux/Mac) or `~/.arey/arey.yml` (Windows)
+- **Agents directory**: `~/.config/arey/agents/` for custom agent definitions
+
+The configuration includes model definitions, agent personas, and tool settings. See [docs/config.md](./docs/config.md) for detailed configuration options.
 
 ## License
 
