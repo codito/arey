@@ -6,6 +6,7 @@ use arey_core::{
     session::Session,
 };
 use chrono::Local;
+#[allow(unused_imports)]
 use futures::{Stream, StreamExt};
 use markdown::{Constructs, ParseOptions, to_mdast};
 use serde_yaml::Value;
@@ -13,11 +14,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
 };
-use tokio::sync::Mutex;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 
 /// Holds the result of a `PlayFile` execution.
 pub struct PlayResult {
@@ -35,7 +32,7 @@ pub struct PlayFile {
     pub prompt: String,
     pub completion_profile: HashMap<String, Value>,
     pub output_settings: HashMap<String, String>,
-    pub session: Option<Arc<Mutex<Session>>>,
+    pub session: Option<Session>,
     pub result: Option<PlayResult>,
 }
 
@@ -166,10 +163,10 @@ impl PlayFile {
                 AreyConfigError::Config("Missing model configuration".to_string())
             })?;
 
-            let session = Session::new(model_config.clone(), "").await?;
+            let session = Session::new(model_config.clone(), "")?;
 
             // TODO: Apply model_settings overrides
-            self.session = Some(Arc::new(Mutex::new(session)));
+            self.session = Some(session);
         }
         Ok(())
     }
@@ -179,43 +176,28 @@ impl PlayFile {
     /// It returns a stream of `Completion` events.
     pub async fn generate(&mut self) -> Result<impl Stream<Item = Result<Completion>>> {
         self.ensure_session().await?;
-        let session = self.session.clone().unwrap();
+        let session = self.session.as_mut().unwrap();
         let prompt = self.prompt.clone();
         let completion_profile = self.completion_profile.clone();
 
-        let (tx, rx) = mpsc::channel(4);
+        // Add the message first
+        session.add_message(SenderType::User, &prompt)?;
 
-        tokio::spawn(async move {
-            let mut session_lock = session.lock().await;
-            session_lock.add_message(SenderType::User, &prompt);
+        let settings: HashMap<String, String> = completion_profile
+            .iter()
+            .filter_map(|(k, v)| {
+                v.as_str()
+                    .map(|s| (k.clone(), s.to_owned()))
+                    .or_else(|| v.as_bool().map(|b| (k.clone(), b.to_string())))
+                    .or_else(|| v.as_i64().map(|n| (k.clone(), n.to_string())))
+                    .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
+            })
+            .collect();
+        let cancel_token = CancellationToken::new();
 
-            let settings: HashMap<String, String> = completion_profile
-                .iter()
-                .filter_map(|(k, v)| {
-                    v.as_str()
-                        .map(|s| (k.clone(), s.to_owned()))
-                        .or_else(|| v.as_bool().map(|b| (k.clone(), b.to_string())))
-                        .or_else(|| v.as_i64().map(|n| (k.clone(), n.to_string())))
-                        .or_else(|| v.as_f64().map(|f| (k.clone(), f.to_string())))
-                })
-                .collect();
-            let cancel_token = CancellationToken::new();
+        let stream = session.generate(settings, cancel_token).await?;
 
-            match session_lock.generate(settings, cancel_token).await {
-                Ok(mut stream) => {
-                    while let Some(item) = stream.next().await {
-                        if tx.send(item).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                }
-            }
-        });
-
-        Ok(ReceiverStream::new(rx))
+        Ok(stream)
     }
 }
 

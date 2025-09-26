@@ -86,7 +86,7 @@ async fn test_gguf_model_complete() {
     };
 
     let model_config = get_model_config(&model_path, "test-gguf-complete");
-    let mut model = GgufBaseModel::new(model_config).unwrap();
+    let model = GgufBaseModel::new(model_config).unwrap();
 
     let messages = vec![ChatMessage {
         sender: SenderType::User,

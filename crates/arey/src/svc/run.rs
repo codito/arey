@@ -4,12 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arey_core::agent::Agent;
-use arey_core::completion::{
-    CancellationToken, ChatMessage, Completion, CompletionModel, SenderType,
-};
+use arey_core::completion::{CancellationToken, Completion, SenderType};
 use arey_core::config::Config;
-use arey_core::get_completion_llm;
-use arey_core::model::{ModelConfig, ModelMetrics};
+use arey_core::model::ModelConfig;
+use arey_core::session::Session;
 use arey_core::tools::Tool;
 
 use crate::ext::get_tools;
@@ -17,17 +15,16 @@ use crate::ext::get_tools;
 /// Represents a single, non-interactive instruction to be executed by a model.
 pub struct Task<'a> {
     instruction: String,
-    model_config: ModelConfig,
     config: &'a Config,
     current_agent: Agent,
-    model: Option<Box<dyn CompletionModel + Send + Sync>>,
+    session: Option<Session>,
 }
 
 impl<'a> Task<'a> {
     /// Creates a new `Task` with the given instruction, model configuration, and config.
     pub fn new(
         instruction: String,
-        model_config: ModelConfig,
+        _model_config: ModelConfig,
         config: &'a Config,
         agent_name: String,
     ) -> Result<Self> {
@@ -43,45 +40,65 @@ impl<'a> Task<'a> {
 
         Ok(Self {
             instruction,
-            model_config,
             config,
             current_agent: agent,
-            model: None,
+            session: None,
         })
     }
 
-    /// Loads the language model for the task.
+    /// Loads the session for the task.
     ///
-    /// This method initializes the model and loads the system prompt from the agent if specified.
+    /// This method initializes the session with the model and agent configuration.
     /// It should be called before `run`.
-    pub async fn load_model(&mut self) -> Result<ModelMetrics> {
-        let config = self.model_config.clone();
-        let mut model = get_completion_llm(config).context("Failed to initialize model")?;
-
-        // Use agent prompt
+    pub async fn load_session(&mut self) -> Result<()> {
+        let model_config = self.config.task.model.clone();
         let system_prompt = &self.current_agent.prompt;
 
-        model
-            .load(system_prompt)
-            .await
-            .context("Failed to load model with system prompt")?;
+        let mut session =
+            Session::new(model_config, system_prompt).context("Failed to create task session")?;
 
-        let metrics = model.metrics();
-        self.model = Some(model);
-        Ok(metrics)
+        // Get tools for the agent
+        let available_tools = get_tools(self.config).unwrap_or_default();
+        let tools: Vec<Arc<dyn Tool>> = self
+            .current_agent
+            .effective_tools()
+            .iter()
+            .filter_map(|tool_name| available_tools.get(tool_name.as_str()).cloned())
+            .collect();
+
+        session.set_tools(tools)?;
+
+        self.session = Some(session);
+        Ok(())
     }
 
     /// Executes the task and returns a stream of completion results.
     ///
     /// # Panics
     ///
-    /// This method will panic if `load_model` has not been called first.
+    /// This method will panic if `load_session` has not been called first.
+    /// For backwards compatibility, also provide load_model method
+    /// that returns model metrics
+    pub async fn load_model(&mut self) -> Result<arey_core::model::ModelMetrics> {
+        self.load_session().await?;
+
+        // Return metrics from the session
+        self.session
+            .as_ref()
+            .and_then(|s| s.metrics().cloned())
+            .ok_or_else(|| anyhow::anyhow!("No metrics available"))
+    }
+
     pub async fn run(&mut self) -> Result<BoxStream<'_, Result<Completion>>> {
-        let message = ChatMessage {
-            sender: SenderType::User,
-            text: self.instruction.clone(),
-            tools: Vec::new(),
-        };
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Session not loaded"))?;
+
+        // Add the user instruction to the session
+        session
+            .add_message(SenderType::User, &self.instruction)
+            .context("Failed to add instruction message")?;
 
         let mut settings = HashMap::new();
         let profile = self.current_agent.effective_profile();
@@ -93,23 +110,12 @@ impl<'a> Task<'a> {
         settings.insert("top_k".to_string(), profile.top_k.to_string());
         settings.insert("top_p".to_string(), profile.top_p.to_string());
 
-        let available_tools = get_tools(self.config).unwrap_or_default();
-        let tools: Vec<Arc<dyn Tool>> = self
-            .current_agent
-            .effective_tools()
-            .iter()
-            .filter_map(|tool_name| available_tools.get(tool_name.as_str()).cloned())
-            .collect();
-
         let cancel_token = CancellationToken::new();
 
-        let model = self
-            .model
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
-        let stream = model
-            .complete(&[message], Some(&tools), &settings, cancel_token)
-            .await;
+        let stream = session
+            .generate(settings, cancel_token)
+            .await
+            .context("Failed to generate response")?;
 
         Ok(stream)
     }
@@ -207,17 +213,15 @@ mod tests {
             tools: HashMap::new(),
         };
 
-        let model_config = config.task.model.clone();
         let task = Task::new(
             "test".to_string(),
-            model_config,
+            config.task.model.clone(),
             &config,
             "default".to_string(),
         )
         .unwrap();
         assert_eq!(task.instruction, "test");
-        assert_eq!(task.model_config.name, "test-model");
-        assert!(task.model.is_none());
+        assert!(task.session.is_none());
     }
 
     #[tokio::test]
@@ -266,18 +270,16 @@ mod tests {
             tools: HashMap::new(),
         };
 
-        let model_config = config.task.model.clone();
         let mut task = Task::new(
             "test instruction".to_string(),
-            model_config,
+            config.task.model.clone(),
             &config,
             "default".to_string(),
         )
         .unwrap();
 
-        let metrics = task.load_model().await?;
-        assert!(metrics.init_latency_ms >= 0.0);
-        assert!(task.model.is_some());
+        task.load_session().await?;
+        assert!(task.session.is_some());
 
         let mut stream = task.run().await?;
 

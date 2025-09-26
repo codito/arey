@@ -9,6 +9,7 @@ use once_cell::sync::Lazy;
 use regex::{Regex, escape};
 use serde_json;
 use std::collections::HashMap;
+use std::sync::Mutex;
 use tracing::{debug, error};
 
 const DEFAULT_TEMPLATE: &str = include_str!("../../../data/default_template.jinja");
@@ -124,8 +125,8 @@ pub fn get_tool_call_regexes(model_name: &str) -> (&'static str, &'static str) {
 
 #[derive(Debug)]
 pub struct ToolCallParser {
-    buffer: String,
-    next_id: usize,
+    buffer: Mutex<String>,
+    next_id: Mutex<usize>,
     complete_call_re: Regex,
     start_tag_re: Regex,
     expects_array: bool,
@@ -151,8 +152,8 @@ impl ToolCallParser {
             )
         };
         Ok(Self {
-            buffer: String::new(),
-            next_id: 0,
+            buffer: Mutex::new(String::new()),
+            next_id: Mutex::new(0),
             complete_call_re: Regex::new(&complete_call_pattern)
                 .context("Invalid regex for complete tool call")?,
             start_tag_re: Regex::new(&escape(start_tag_pattern))
@@ -162,17 +163,20 @@ impl ToolCallParser {
         })
     }
 
-    pub fn parse(&mut self, text: &str) -> (String, Vec<ToolCall>) {
-        self.buffer.push_str(text);
+    pub fn parse(&self, text: &str) -> (String, Vec<ToolCall>) {
+        let mut buffer = self.buffer.lock().unwrap();
+        let mut next_id = self.next_id.lock().unwrap();
+
+        buffer.push_str(text);
         let mut tool_calls = Vec::new();
         let mut plain_text = String::new();
         let mut last_end = 0;
 
         // Special handling for models without a tool call end tag (e.g., Granite).
         if self.complete_call_re.as_str() == "$^" {
-            if let Some(mat) = self.start_tag_re.find(&self.buffer) {
-                plain_text.push_str(&self.buffer[..mat.start()]);
-                let tool_call_part = self.buffer[mat.start()..].to_string();
+            if let Some(mat) = self.start_tag_re.find(&buffer) {
+                plain_text.push_str(&buffer[..mat.start()]);
+                let tool_call_part = buffer[mat.start()..].to_string();
                 let content = &tool_call_part[(mat.end() - mat.start())..];
 
                 if self.expects_array {
@@ -180,41 +184,41 @@ impl ToolCallParser {
                         Ok(parsed) => {
                             for raw_tool_call in parsed {
                                 tool_calls.push(ToolCall {
-                                    id: format!("call_{}", self.next_id),
+                                    id: format!("call_{}", *next_id),
                                     name: raw_tool_call.name,
                                     arguments: raw_tool_call.arguments.to_string(),
                                 });
-                                self.next_id += 1;
+                                *next_id += 1;
                             }
-                            self.buffer.clear();
+                            buffer.clear();
                         }
                         Err(e) if e.is_eof() => {
                             // Incomplete JSON, so we buffer the tool call part.
-                            self.buffer = tool_call_part;
+                            *buffer = tool_call_part;
                         }
                         Err(_) => {
                             // Invalid JSON, treat the whole tool call part as plain text.
                             plain_text.push_str(&tool_call_part);
-                            self.buffer.clear();
+                            buffer.clear();
                         }
                     }
                 } else {
                     // Not expecting an array, and no end tag. This is an unsupported configuration.
                     // Treat as plain text to avoid getting stuck.
                     plain_text.push_str(&tool_call_part);
-                    self.buffer.clear();
+                    buffer.clear();
                 }
             } else {
-                plain_text.push_str(&self.buffer);
-                self.buffer.clear();
+                plain_text.push_str(&buffer);
+                buffer.clear();
             }
             return (plain_text, tool_calls);
         }
 
-        for captures in self.complete_call_re.captures_iter(&self.buffer) {
+        for captures in self.complete_call_re.captures_iter(&buffer) {
             // There will be exactly one capture group in a successful match
             if let (Some(outer_match), Some(inner_match)) = (captures.get(0), captures.get(1)) {
-                plain_text.push_str(&self.buffer[last_end..outer_match.start()]);
+                plain_text.push_str(&buffer[last_end..outer_match.start()]);
 
                 let tool_content = inner_match.as_str().trim();
                 let parsed_calls = if self.expects_array {
@@ -227,11 +231,11 @@ impl ToolCallParser {
                     Some(raw_tool_calls) => {
                         for raw_tool_call in raw_tool_calls {
                             tool_calls.push(ToolCall {
-                                id: format!("call_{}", self.next_id),
+                                id: format!("call_{}", *next_id),
                                 name: raw_tool_call.name,
                                 arguments: raw_tool_call.arguments.to_string(),
                             });
-                            self.next_id += 1;
+                            *next_id += 1;
                         }
                     }
                     None => {
@@ -243,20 +247,25 @@ impl ToolCallParser {
             }
         }
 
-        let remainder = &self.buffer[last_end..];
-        if let Some(first_start) = self.start_tag_re.find(remainder) {
-            plain_text.push_str(&remainder[..first_start.start()]);
-            self.buffer.drain(..last_end + first_start.start());
+        let remainder_start = last_end;
+        let remainder_len = buffer.len() - last_end;
+        let remainder_range = remainder_start..remainder_start + remainder_len;
+
+        if let Some(first_start) = self.start_tag_re.find(&buffer[remainder_range.clone()]) {
+            let start_in_remainder = first_start.start();
+            plain_text.push_str(&buffer[remainder_start..remainder_start + start_in_remainder]);
+            buffer.drain(..last_end + start_in_remainder);
         } else {
-            plain_text.push_str(remainder);
-            self.buffer.clear();
+            plain_text.push_str(&buffer[remainder_range]);
+            buffer.clear();
         }
 
         (plain_text, tool_calls)
     }
 
-    pub fn flush(&mut self) -> String {
-        std::mem::take(&mut self.buffer)
+    pub fn flush(&self) -> String {
+        let mut buffer = self.buffer.lock().unwrap();
+        std::mem::take(&mut *buffer)
     }
 }
 
@@ -474,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_split_across_chunks() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk1 = "Thinking...<tool_call>{\"name\": \"search\",";
         let (text, calls) = parser.parse(chunk1);
         assert_eq!(text, "Thinking...");
@@ -494,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_plain_text_only() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let (text, calls) = parser.parse("This is some thinking text. ");
         assert_eq!(text, "This is some thinking text. ");
         assert!(calls.is_empty());
@@ -509,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_multiple_calls() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = "<tool_call>{\"name\":\"search\",\"arguments\":{\"query\":\"rust\"}}</tool_call>Then<tool_call>{\"name\":\"weather\",\"arguments\":{\"location\":\"moon\"}}</tool_call>";
         let (text, calls) = parser.parse(chunk);
 
@@ -527,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_mixed_content() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk1 = "<tool_call>{\"name\":\"search\",\"arguments\":{\"query\":\"rust\"}}</tool_call>Now for the next one <tool_call>{\"name\":";
         let (text, calls) = parser.parse(chunk1);
 
@@ -548,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_custom_tags() {
-        let mut parser = ToolCallParser::new("<|tool_code|>", "<|/tool_code|>").unwrap();
+        let parser = ToolCallParser::new("<|tool_code|>", "<|/tool_code|>").unwrap();
         let chunk =
             "Thinking...<|tool_code|>{\"name\":\"search\",\"arguments\":{}}<|/tool_code|>Done.";
         let (text, calls) = parser.parse(chunk);
@@ -563,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_wrapped_format() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = r#"<tool_call>{"call": {"name":"get_weather","arguments":{"location":"Paris"}}}</tool_call>"#;
         let (_, calls) = parser.parse(chunk);
 
@@ -574,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_mixed_formats() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = r#"
             <tool_call>{"name":"direct_search","arguments":{"query":"Rust"}}</tool_call>
             <tool_call>{"call": {"name":"wrapped_weather","arguments":{"location":"London"}}}</tool_call>
@@ -590,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_ignores_invalid() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = r#"<tool_call>This is not JSON</tool_call>
             <tool_call>{"call": {"invalid_key": "value"}}</tool_call>
             <tool_call>{"call": {"name": "missing_arguments"}}</tool_call>
@@ -605,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_granite_array_of_calls() {
-        let mut parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
+        let parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
         let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]"#;
         let (text, calls) = parser.parse(chunk);
 
@@ -623,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_granite_array_streaming() {
-        let mut parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
+        let parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
         let chunk1 = r#"<|tool_call|>[{"name": "search", "arguments": {"query": "rust"}}, "#;
         let (text, calls) = parser.parse(chunk1);
         assert_eq!(text, "");
@@ -639,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_malformed_json() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = "<tool_call>{invalid json}</tool_call>";
         let (text, calls) = parser.parse(chunk);
         assert_eq!(text, "<tool_call>{invalid json}</tool_call>");
@@ -648,7 +657,7 @@ mod tests {
 
     #[test]
     fn test_flush_returns_partial_buffer() {
-        let mut parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
+        let parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
         parser.parse("<|tool_call|>[{\"name\":\"test");
         let flushed = parser.flush();
         assert_eq!(flushed, "<|tool_call|>[{\"name\":\"test");
@@ -656,12 +665,15 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_multiple_start_tags_without_end() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = "<tool_call>start<tool_call>middle";
         let (text, calls) = parser.parse(chunk);
         assert_eq!(text, "");
         assert!(calls.is_empty());
-        assert_eq!(parser.buffer, "<tool_call>start<tool_call>middle");
+        assert_eq!(
+            parser.buffer.lock().unwrap().as_str(),
+            "<tool_call>start<tool_call>middle"
+        );
     }
 
     #[test]
@@ -687,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_parser_repeated_calls() {
-        let mut parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
+        let parser = ToolCallParser::new("<tool_call>", "</tool_call>").unwrap();
         let chunk = r#"
             <tool_call>{"name":"search","arguments":{"query":"python"}}</tool_call>
             <tool_call>{"name":"search","arguments":{"query":"rust"}}</tool_call>

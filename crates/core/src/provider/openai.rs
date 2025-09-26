@@ -26,6 +26,7 @@ pub struct OpenAISettings {
     api_key: String,
 }
 
+#[derive(Clone)]
 pub struct OpenAIBaseModel {
     config: ModelConfig,
     client: OpenAIClient<OpenAIConfig>,
@@ -144,20 +145,15 @@ impl CompletionModel for OpenAIBaseModel {
         self.metrics.clone()
     }
 
-    async fn load(&mut self, _text: &str) -> Result<()> {
-        // No-op for remote models
-        Ok(())
-    }
-
     #[instrument(skip_all)]
     async fn complete(
-        &mut self,
+        &self,
         messages: &[ChatMessage],
         tools: Option<&[std::sync::Arc<dyn crate::tools::Tool>]>,
         settings: &HashMap<String, String>,
         cancel_token: CancellationToken,
-    ) -> BoxStream<'_, Result<Completion>> {
-        // Map messages to OpenAI message types
+    ) -> BoxStream<'static, Result<Completion>> {
+        // Map messages to OpenAI message types - clone to move into closure
         let openai_messages: Vec<ChatCompletionRequestMessage> = messages
             .iter()
             .map(OpenAIBaseModel::to_openai_message)
@@ -218,6 +214,10 @@ impl CompletionModel for OpenAIBaseModel {
         let prev_time = start_time;
         let mut first_chunk = true;
 
+        // Clone self for the stream to avoid lifetime issues
+        let cloned_self = self.clone();
+        let request_value_clone = request_value.clone();
+
         // Create the stream
         let outer_stream = async_stream::stream! {
             let _start_time = start_time;
@@ -229,10 +229,10 @@ impl CompletionModel for OpenAIBaseModel {
             let mut tool_calls_partial: HashMap<u32, ToolCall> = HashMap::new();
 
             // Send the request and get back a streaming response
-            match self
+            match cloned_self
                 .client
                 .chat()
-                .create_stream_byot(request_value)
+                .create_stream_byot(request_value_clone)
                 .await
             {
                 Ok(response) => {
@@ -561,7 +561,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut model = OpenAIBaseModel::new(config).unwrap();
+        let model = OpenAIBaseModel::new(config).unwrap();
 
         let messages = vec![ChatMessage {
             text: "Hello".to_string(),
@@ -616,7 +616,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut model = OpenAIBaseModel::new(config).unwrap();
+        let model = OpenAIBaseModel::new(config).unwrap();
 
         let messages = vec![ChatMessage {
             text: "What's the weather in Paris?".to_string(),

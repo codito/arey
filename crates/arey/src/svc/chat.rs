@@ -2,19 +2,19 @@ use anyhow::{Context, Result};
 use arey_core::agent::{Agent, AgentSource};
 use arey_core::completion::{CancellationToken, ChatMessage, Completion};
 use arey_core::config::{Config, ProfileConfig};
+use arey_core::get_completion_llm;
 use arey_core::session::Session;
 use arey_core::tools::Tool;
 use futures::{StreamExt, stream::BoxStream};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Represents an interactive chat session between a user and an AI model.
 ///
 /// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
-    session: Arc<Mutex<Session>>,
+    session: Session,
     current_agent: Agent,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     config: &'a Config,
@@ -71,13 +71,12 @@ impl<'a> Chat<'a> {
             })
             .collect();
 
-        let mut session = Session::new(model_config, &agent.prompt)
-            .await
-            .context("Failed to create chat session")?;
-        session.set_tools(tools?);
+        let mut session =
+            Session::new(model_config, &agent.prompt).context("Failed to create chat session")?;
+        session.set_tools(tools?)?;
 
         Ok(Self {
-            session: Arc::new(Mutex::new(session)),
+            session,
             current_agent: agent,
             available_tools,
             config,
@@ -106,8 +105,8 @@ impl<'a> Chat<'a> {
         // Deactivate current agent
         self.current_agent.set_active(false);
 
-        let model_key = self.model_key().await;
-        let model_config = self
+        let model_key = self.session.model_key();
+        let _model_config = self
             .config
             .models
             .get(&model_key)
@@ -117,8 +116,7 @@ impl<'a> Chat<'a> {
                 model_key
             ))?;
 
-        let mut session_lock = self.session.lock().await;
-        let messages = session_lock.all_messages();
+        let _messages = self.session.all_messages();
 
         // Activate new agent
         new_agent.set_active(true);
@@ -134,18 +132,17 @@ impl<'a> Chat<'a> {
             })
             .collect();
 
-        let mut new_session = Session::new(model_config, &new_agent.prompt).await?;
-        new_session.set_tools(tools?);
-        new_session.set_messages(messages);
-        *session_lock = new_session;
+        // Update the session with new agent and tools
+        self.session
+            .update_agent(new_agent.prompt.clone(), tools?)?;
         self.current_agent = new_agent;
 
         Ok(())
     }
 
     /// Get current model key identifier
-    pub async fn model_key(&self) -> String {
-        self.session.lock().await.model_key().to_string()
+    pub fn model_key(&self) -> String {
+        self.session.model_key()
     }
 
     /// Switch to a different model
@@ -157,19 +154,13 @@ impl<'a> Chat<'a> {
             .cloned()
             .context(format!("Model '{model_name}' not found in config."))?;
 
-        let mut session_lock = self.session.lock().await;
-        // Preserve existing conversation state
-        let messages = session_lock.all_messages();
-        let tools = session_lock.tools();
-        let system_prompt = session_lock.system_prompt().to_string();
+        // Create new model instance
+        let new_model = get_completion_llm(model_config.clone())
+            .context("Failed to create new model instance")?;
 
-        let mut new_session = Session::new(model_config, &system_prompt)
-            .await
-            .context("Failed to initialize new session")?;
-
-        new_session.set_tools(tools);
-        new_session.set_messages(messages);
-        *session_lock = new_session;
+        // Update the session with the new model
+        self.session
+            .update_model(model_name.to_string(), new_model)?;
 
         Ok(())
     }
@@ -195,34 +186,14 @@ impl<'a> Chat<'a> {
     }
 
     /// Get current system prompt
-    pub async fn system_prompt(&self) -> String {
-        self.session.lock().await.system_prompt().to_string()
+    pub fn system_prompt(&self) -> String {
+        self.session.system_prompt()
     }
 
     /// Set new system prompt for the current session
     pub async fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
-        let mut session_lock = self.session.lock().await;
-        // Preserve existing conversation state
-        let messages = session_lock.all_messages();
-        let tools = session_lock.tools();
-        let model_key = session_lock.model_key().to_string();
-        let model_config = self
-            .config
-            .models
-            .get(&model_key)
-            .cloned()
-            .context(format!(
-                "Model '{}' associated with the current session not found in config.",
-                model_key
-            ))?;
-
-        let mut new_session = Session::new(model_config, prompt)
-            .await
-            .context("Failed to initialize new session with new system prompt")?;
-
-        new_session.set_tools(tools);
-        new_session.set_messages(messages);
-        *session_lock = new_session;
+        // Update the session with the new system prompt
+        self.session.set_system_prompt(prompt)?;
 
         Ok(())
     }
@@ -269,12 +240,12 @@ impl<'a> Chat<'a> {
     }
 
     /// Gets the tools available for the current chat session.
-    pub async fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.session.lock().await.tools()
+    pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.session.tools()
     }
 
     /// Sets the tools available for the current chat session.
-    pub async fn set_tools(&self, tool_names: &[String]) -> Result<()> {
+    pub async fn set_tools(&mut self, tool_names: &[String]) -> Result<()> {
         let mut tools = Vec::new();
         for name in tool_names {
             let tool = self
@@ -284,60 +255,46 @@ impl<'a> Chat<'a> {
             tools.push(tool.clone());
         }
 
-        let mut session_lock = self.session.lock().await;
-        let model_key = session_lock.model_key().to_string();
-        let model_config = self
-            .config
-            .models
-            .get(&model_key)
-            .cloned()
-            .context(format!(
-                "Model '{}' associated with the current session not found in config.",
-                model_key
-            ))?;
-        let messages = session_lock.all_messages();
-        let system_prompt = session_lock.system_prompt().to_string();
-
-        let mut new_session = Session::new(model_config, &system_prompt).await?;
-        new_session.set_tools(tools);
-        new_session.set_messages(messages);
-        *session_lock = new_session;
+        // Update the session with the new tools
+        self.session.set_tools(tools)?;
 
         Ok(())
     }
 
     /// Get all messages from the session
-    pub async fn get_all_messages(&self) -> Vec<ChatMessage> {
-        let session = self.session.lock().await;
-        session.all_messages()
+    pub fn get_all_messages(&self) -> Vec<ChatMessage> {
+        self.session.all_messages()
     }
 
     /// Retrieves the last message from the assistant in the conversation history.
-    pub async fn get_last_assistant_message(&self) -> Option<ChatMessage> {
-        let session = self.session.lock().await;
-        session.last_assistant_message().cloned()
+    pub fn get_last_assistant_message(&self) -> Option<ChatMessage> {
+        self.session.last_assistant_message()
     }
 
     /// Adds messages to the conversation history.
     pub async fn add_messages(
-        &self,
+        &mut self,
         user_messages: Vec<ChatMessage>,
         tool_messages: Vec<ChatMessage>,
     ) {
-        let mut session = self.session.lock().await;
         for message in user_messages {
-            session.add_message(message.sender, &message.text);
+            if let Err(e) = self.session.add_message(message.sender, &message.text) {
+                eprintln!("Failed to add message: {}", e);
+            }
         }
 
         for message in tool_messages {
-            session.add_message(message.sender, &message.text);
+            if let Err(e) = self.session.add_message(message.sender, &message.text) {
+                eprintln!("Failed to add message: {}", e);
+            }
         }
     }
 
     /// Clears the conversation history of the session.
-    pub async fn clear_messages(&self) {
-        let mut session = self.session.lock().await;
-        session.clear_history();
+    pub async fn clear_messages(&mut self) {
+        if let Err(e) = self.session.clear_history() {
+            eprintln!("Failed to clear history: {}", e);
+        }
     }
 
     /// Generates a streaming response from the model based on the conversation history.
@@ -345,8 +302,6 @@ impl<'a> Chat<'a> {
         &self,
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'_, Result<Completion>>> {
-        let session = self.session.clone();
-
         let profile = self
             .config
             .agents
@@ -368,8 +323,7 @@ impl<'a> Chat<'a> {
         };
 
         let stream = async_stream::stream! {
-            let mut session_lock = session.lock().await;
-            let mut inner_stream = match session_lock.generate(settings, cancel_token.clone()).await {
+            let mut inner_stream = match self.session.generate(settings, cancel_token.clone()).await {
                 Ok(stream) => stream,
                 Err(e) => {
                     yield Err(e);
@@ -527,8 +481,8 @@ profiles:
         config.chat.agent_name = "test-agent".to_string();
         let chat = Chat::new(&config, None, available_tools).await?;
         assert_eq!(chat.agent_name(), "test-agent");
-        assert_eq!(chat.system_prompt().await, "You are a test agent.");
-        assert_eq!(chat.tools().await.len(), 1);
+        assert_eq!(chat.system_prompt(), "You are a test agent.");
+        assert_eq!(chat.tools().len(), 1);
 
         // Test with non-existent agent
         config.chat.agent_name = "bad-agent".to_string();
@@ -560,7 +514,7 @@ profiles:
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
-        let chat = Chat::new(&config, None, available_tools).await?;
+        let mut chat = Chat::new(&config, None, available_tools).await?;
         assert!(chat.set_tools(&["mock_tool".to_string()]).await.is_ok());
 
         // Test with a tool that is not available
@@ -577,10 +531,10 @@ profiles:
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
-        let chat = Chat::new(&config, None, available_tools).await?;
+        let mut chat = Chat::new(&config, None, available_tools).await?;
 
         // Initially, tools are set based on agent configuration
-        let tools = chat.tools().await;
+        let tools = chat.tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "mock_tool");
 
@@ -588,14 +542,14 @@ profiles:
         chat.set_tools(&[]).await?;
 
         // Verify tools are cleared
-        let tools = chat.tools().await;
+        let tools = chat.tools();
         assert!(tools.is_empty());
 
         // Set a tool
         chat.set_tools(&["mock_tool".to_string()]).await?;
 
         // Get the tools and verify
-        let tools = chat.tools().await;
+        let tools = chat.tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "mock_tool");
 
@@ -608,7 +562,7 @@ profiles:
         let config = get_test_config(&server).await?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let chat = Chat::new(&config, None, available_tools).await?;
+        let mut chat = Chat::new(&config, None, available_tools).await?;
 
         chat.add_messages(
             vec![ChatMessage {
@@ -619,7 +573,7 @@ profiles:
             Vec::new(),
         )
         .await;
-        assert!(chat.get_last_assistant_message().await.is_none());
+        assert!(chat.get_last_assistant_message().is_none());
 
         chat.add_messages(
             vec![ChatMessage {
@@ -631,7 +585,7 @@ profiles:
         )
         .await;
 
-        let last_message = chat.get_last_assistant_message().await;
+        let last_message = chat.get_last_assistant_message();
         assert!(last_message.is_some());
         let last_message = last_message.unwrap();
         assert_eq!(last_message.sender, SenderType::Assistant);
@@ -646,7 +600,7 @@ profiles:
         let config = get_test_config(&server).await?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let chat = Chat::new(&config, None, available_tools).await?;
+        let mut chat = Chat::new(&config, None, available_tools).await?;
 
         chat.add_messages(
             vec![
@@ -665,11 +619,11 @@ profiles:
         )
         .await;
 
-        assert!(chat.get_last_assistant_message().await.is_some());
+        assert!(chat.get_last_assistant_message().is_some());
 
         chat.clear_messages().await;
 
-        assert!(chat.get_last_assistant_message().await.is_none());
+        assert!(chat.get_last_assistant_message().is_none());
         Ok(())
     }
 
@@ -749,13 +703,13 @@ profiles:
 
         let mut chat = Chat::new(&config, None, available_tools).await?;
         assert_eq!(chat.agent_name(), "test-agent");
-        assert_eq!(chat.system_prompt().await, "You are a test agent.");
+        assert_eq!(chat.system_prompt(), "You are a test agent.");
 
         // Set a valid agent
         chat.set_agent("test-agent").await?;
         assert_eq!(chat.agent_name(), "test-agent".to_string());
-        assert_eq!(chat.system_prompt().await, "You are a test agent.");
-        assert_eq!(chat.tools().await.len(), 1);
+        assert_eq!(chat.system_prompt(), "You are a test agent.");
+        assert_eq!(chat.tools().len(), 1);
 
         // Setting an invalid agent should fail
         let result = chat.set_agent("non-existent-agent").await;
@@ -784,7 +738,7 @@ profiles:
         let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
         chat.set_agent("test-agent").await?;
 
-        let original_prompt = chat.system_prompt().await;
+        let original_prompt = chat.system_prompt();
         assert_eq!(original_prompt, "You are a test agent.");
 
         // Add some messages to test preservation
@@ -799,22 +753,22 @@ profiles:
         .await;
 
         // Verify we have tools initially
-        let tools = chat.tools().await;
+        let tools = chat.tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "mock_tool");
 
         // Set a new system prompt
         let new_prompt = "You are a Python expert.";
         chat.set_system_prompt(new_prompt).await?;
-        assert_eq!(chat.system_prompt().await, new_prompt);
+        assert_eq!(chat.system_prompt(), new_prompt);
 
         // Verify that the message history was preserved
-        let messages = chat.get_all_messages().await;
+        let messages = chat.get_all_messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].text, "Hello");
 
         // Verify tools are preserved after prompt change
-        let tools = chat.tools().await;
+        let tools = chat.tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "mock_tool");
 

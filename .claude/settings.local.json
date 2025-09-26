@@ -3,7 +3,8 @@
     "allow": [
       "Bash(cargo:*)",
       "Bash(find:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

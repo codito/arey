@@ -107,12 +107,12 @@ impl Command {
             }
             Command::Log => {
                 let chat_guard = session.lock().await;
-                let messages = chat_guard.get_all_messages().await;
+                let messages = chat_guard.get_all_messages();
                 let block = format_message_block(&messages)?;
                 println!("{}", block);
             }
             Command::Tool { names } => {
-                let chat_guard = session.lock().await;
+                let mut chat_guard = session.lock().await;
                 match chat_guard.set_tools(&names).await {
                     Ok(()) => {
                         if names.is_empty() {
@@ -156,7 +156,7 @@ impl Command {
                 }
                 None => {
                     let chat_guard = session.lock().await;
-                    let model_key = chat_guard.model_key().await;
+                    let model_key = chat_guard.model_key();
                     println!("Current model: {}", model_key);
                 }
             },
@@ -267,7 +267,7 @@ impl Command {
                         }
                     },
                     None => {
-                        let current_prompt = chat_guard.system_prompt().await;
+                        let current_prompt = chat_guard.system_prompt();
                         println!("Current system prompt:");
                         println!("{}", current_prompt);
                     }
@@ -515,6 +515,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
             .lock()
             .await
             .available_tools
+            .clone()
             .keys()
             .map(|s| s.to_string())
             .collect()
@@ -551,12 +552,12 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     loop {
         let prompt = {
             let chat_guard = chat.lock().await;
-            let model_key = chat_guard.model_key().await;
+            let model_key = chat_guard.model_key();
 
             // Get dynamic agent state information
             let agent_state = chat_guard.agent_display_state();
 
-            let tools = chat_guard.tools().await;
+            let tools = chat_guard.tools();
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
                 format!(" | tools: {}", tool_names.join(", "))
@@ -650,7 +651,7 @@ async fn process_message(
     let mut stream_error = false;
     let was_cancelled = {
         // Get stream response
-        let chat_guard = chat_clone.lock().await;
+        let mut chat_guard = chat_clone.lock().await;
         let available_tools = chat_guard.available_tools.clone();
         let mut stream = {
             chat_guard.add_messages(user_messages, tool_messages).await;
@@ -1478,7 +1479,7 @@ USER: Run tool
         let chat_session = Arc::new(Mutex::new(chat));
 
         // 3. Check initial model
-        assert_eq!(chat_session.lock().await.model_key().await, "test-model-1");
+        assert_eq!(chat_session.lock().await.model_key(), "test-model-1");
 
         // 4. Test successful model switch
         let switch_to_2 = Command::Model {
@@ -1486,7 +1487,7 @@ USER: Run tool
         };
         let result = switch_to_2.execute(chat_session.clone()).await?;
         assert!(result, "execute should return true to continue REPL");
-        assert_eq!(chat_session.lock().await.model_key().await, "test-model-2");
+        assert_eq!(chat_session.lock().await.model_key(), "test-model-2");
 
         // 5. Test switching to a non-existent model
         let switch_to_bad = Command::Model {
@@ -1495,7 +1496,7 @@ USER: Run tool
         let result = switch_to_bad.execute(chat_session.clone()).await?;
         assert!(result, "execute should return true even on error");
         // Model should not have changed
-        assert_eq!(chat_session.lock().await.model_key().await, "test-model-2");
+        assert_eq!(chat_session.lock().await.model_key(), "test-model-2");
 
         // 6. Test /model list (just ensure it runs without panic)
         let list_models = Command::Model {
@@ -1571,7 +1572,7 @@ USER: Run tool
         // Check that the tool is actually set
         {
             let chat_guard = chat_session.lock().await;
-            let tools = chat_guard.tools().await;
+            let tools = chat_guard.tools();
             assert_eq!(tools.len(), 1);
             assert_eq!(tools[0].name(), "mock_tool");
         }
@@ -1579,9 +1580,9 @@ USER: Run tool
         // 4. Test prompt generation
         let prompt_meta = {
             let chat_guard = chat_session.lock().await;
-            let model_key = chat_guard.model_key().await;
+            let model_key = chat_guard.model_key();
             let agent_str = format!(" | agent: {}", chat_guard.agent_name());
-            let tools = chat_guard.tools().await;
+            let tools = chat_guard.tools();
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
                 format!(" | tools: {}", tool_names.join(", "))
@@ -1602,9 +1603,9 @@ USER: Run tool
 
         let prompt_meta_after_clear = {
             let chat_guard = chat_session.lock().await;
-            let model_key = chat_guard.model_key().await;
+            let model_key = chat_guard.model_key();
             let agent_str = format!(" | agent: {}", chat_guard.agent_name());
-            let tools = chat_guard.tools().await;
+            let tools = chat_guard.tools();
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
                 format!(" | tools: {}", tool_names.join(", "))
@@ -1641,24 +1642,10 @@ USER: Run tool
                 vec![],
             )
             .await;
-        assert!(
-            !chat_session
-                .lock()
-                .await
-                .get_all_messages()
-                .await
-                .is_empty()
-        );
+        assert!(!chat_session.lock().await.get_all_messages().is_empty());
         let clear_cmd = Command::Clear;
         assert!(clear_cmd.execute(chat_session.clone()).await?);
-        assert!(
-            chat_session
-                .lock()
-                .await
-                .get_all_messages()
-                .await
-                .is_empty()
-        );
+        assert!(chat_session.lock().await.get_all_messages().is_empty());
 
         // Test Log command
         chat_session
@@ -1681,7 +1668,7 @@ USER: Run tool
             names: vec!["nonexistent_tool".to_string()],
         };
         assert!(set_bad_tool_cmd.execute(chat_session.clone()).await?);
-        assert!(chat_session.lock().await.tools().await.is_empty());
+        assert!(chat_session.lock().await.tools().is_empty());
 
         // Test Prompt command
         let new_prompt = "You are a helpful coding assistant.";
@@ -1689,7 +1676,7 @@ USER: Run tool
             prompt: Some(new_prompt.to_string()),
         };
         assert!(set_prompt_cmd.execute(chat_session.clone()).await?);
-        assert_eq!(chat_session.lock().await.system_prompt().await, new_prompt);
+        assert_eq!(chat_session.lock().await.system_prompt(), new_prompt);
 
         // Test viewing current prompt (no arguments)
         let view_prompt_cmd = Command::System { prompt: None };

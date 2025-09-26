@@ -43,17 +43,13 @@ impl CompletionModel for TestProviderModel {
         self.metrics.clone()
     }
 
-    async fn load(&mut self, _text: &str) -> Result<()> {
-        Ok(())
-    }
-
     async fn complete(
-        &mut self,
+        &self,
         messages: &[ChatMessage],
         _tools: Option<&[Arc<dyn Tool>]>,
         _settings: &HashMap<String, String>,
         _cancel_token: CancellationToken,
-    ) -> BoxStream<'_, Result<Completion>> {
+    ) -> BoxStream<'static, Result<Completion>> {
         let response_mode: String = self.config.get_setting("response_mode").unwrap_or_default();
 
         // If the last message is a tool result, always return the "final answer".
