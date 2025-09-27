@@ -167,22 +167,46 @@ impl<'a> Chat<'a> {
 
     /// Get current profile name
     pub fn profile_name(&self) -> String {
-        self.agent_name().clone()
+        self.current_agent
+            .runtime_state
+            .current_profile_name
+            .clone()
+            .unwrap_or_else(|| self.agent_name())
     }
 
     /// Get current profile name and data
     pub fn current_profile(&self) -> Option<(String, ProfileConfig)> {
-        self.config
-            .agents
-            .get(&self.agent_name())
-            .map(|agent| (self.agent_name(), agent.profile.clone()))
+        // Check if there's a session-specific profile override
+        if let Some(session_profile) = self.current_agent.runtime_state.current_profile.as_ref() {
+            if let Some(profile_name) = &self.current_agent.runtime_state.current_profile_name {
+                Some((profile_name.clone(), session_profile.clone()))
+            } else {
+                // Fallback: use agent name if profile name is not set
+                Some((self.agent_name(), session_profile.clone()))
+            }
+        } else {
+            // Fall back to the agent's default profile
+            self.config
+                .agents
+                .get(&self.agent_name())
+                .map(|agent| (self.agent_name(), agent.profile.clone()))
+        }
     }
 
     /// Switch to a different profile
-    pub fn set_profile(&mut self, _profile_name: &str) -> Result<()> {
-        anyhow::bail!(
-            "Profiles cannot be set directly in chat mode. Use an agent to set a profile."
-        )
+    pub fn set_profile(&mut self, profile_name: &str) -> Result<()> {
+        // Look up the profile in the config
+        let profile_config = self
+            .config
+            .profiles
+            .get(profile_name)
+            .context(format!("Profile '{}' not found in config.", profile_name))?
+            .clone();
+
+        // Set the profile as a session override for the current agent
+        self.current_agent
+            .set_current_profile_with_name(profile_name.to_string(), profile_config);
+        Ok(())
     }
 
     /// Get current system prompt
@@ -302,11 +326,10 @@ impl<'a> Chat<'a> {
         &self,
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'_, Result<Completion>>> {
+        // Use the current profile (either session override or agent default)
         let profile = self
-            .config
-            .agents
-            .get(&self.agent_name())
-            .map(|a| a.profile.clone());
+            .current_profile()
+            .map(|(_, profile_config)| profile_config);
 
         let settings = if let Some(profile) = profile {
             let mut settings = HashMap::new();
@@ -771,6 +794,268 @@ profiles:
         let tools = chat.tools();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name(), "mock_tool");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_profile() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        // Add a second profile to the config for testing
+        config.profiles.insert(
+            "test-profile".to_string(),
+            ProfileConfig {
+                temperature: 0.8,
+                top_p: 0.9,
+                top_k: 40,
+                repeat_penalty: 1.1,
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Check initial profile (should be the agent's default profile)
+        let initial_profile = chat.current_profile();
+        assert!(initial_profile.is_some());
+        let (agent_name, profile_config) = initial_profile.unwrap();
+        assert_eq!(agent_name, "test-agent");
+        assert_eq!(profile_config.temperature, 0.1); // Default from test config
+
+        // Set a new profile
+        chat.set_profile("test-profile")?;
+
+        // Check that the profile was updated
+        let new_profile = chat.current_profile();
+        assert!(new_profile.is_some());
+        let (profile_name, profile_config) = new_profile.unwrap();
+        assert_eq!(profile_name, "test-profile"); // Profile name should be the new profile name
+        assert_eq!(profile_config.temperature, 0.8); // New temperature from test-profile
+
+        // Setting an invalid profile should fail
+        let result = chat.set_profile("non-existent-profile");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Profile 'non-existent-profile' not found")
+        );
+
+        // Profile should remain unchanged after error
+        let current_profile = chat.current_profile();
+        assert!(current_profile.is_some());
+        let (_, profile_config) = current_profile.unwrap();
+        assert_eq!(profile_config.temperature, 0.8); // Should still be test-profile
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_profile_name_returns_correct_name() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        // Add multiple profiles to test
+        config.profiles.insert(
+            "creative".to_string(),
+            ProfileConfig {
+                temperature: 0.9,
+                top_p: 0.95,
+                top_k: 50,
+                repeat_penalty: 1.0,
+            },
+        );
+        config.profiles.insert(
+            "precise".to_string(),
+            ProfileConfig {
+                temperature: 0.1,
+                top_p: 0.5,
+                top_k: 20,
+                repeat_penalty: 1.2,
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Initially, profile_name should return the agent name (default behavior)
+        assert_eq!(chat.profile_name(), "test-agent");
+
+        // Switch to creative profile
+        chat.set_profile("creative")?;
+        assert_eq!(chat.profile_name(), "creative");
+
+        // Switch to precise profile
+        chat.set_profile("precise")?;
+        assert_eq!(chat.profile_name(), "precise");
+
+        // Test error case for non-existent profile
+        let result = chat.set_profile("non-existent");
+        assert!(result.is_err());
+
+        // Profile name should remain unchanged after error
+        assert_eq!(chat.profile_name(), "precise");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_current_profile_returns_correct_data() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        config.profiles.insert(
+            "test-profile".to_string(),
+            ProfileConfig {
+                temperature: 0.8,
+                top_p: 0.9,
+                top_k: 40,
+                repeat_penalty: 1.1,
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Initially, current_profile should return the agent's default profile
+        let initial_profile = chat.current_profile();
+        assert!(initial_profile.is_some());
+        let (name, config) = initial_profile.unwrap();
+        assert_eq!(name, "test-agent");
+        assert_eq!(config.temperature, 0.1); // From test agent config
+
+        // Switch to test-profile
+        chat.set_profile("test-profile")?;
+
+        // Now current_profile should return the test-profile
+        let new_profile = chat.current_profile();
+        assert!(new_profile.is_some());
+        let (name, config) = new_profile.unwrap();
+        assert_eq!(name, "test-profile");
+        assert_eq!(config.temperature, 0.8); // From test-profile config
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_profile_name_updates_correctly() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        config.profiles.insert(
+            "fast".to_string(),
+            ProfileConfig {
+                temperature: 0.9,
+                top_p: 0.8,
+                top_k: 50,
+                repeat_penalty: 1.0,
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Test initial profile name
+        assert_eq!(chat.profile_name(), "test-agent");
+
+        // Switch to fast profile
+        chat.set_profile("fast")?;
+
+        // Test updated profile name
+        assert_eq!(chat.profile_name(), "fast");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stream_response_uses_current_profile() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        config.profiles.insert(
+            "high-temp".to_string(),
+            ProfileConfig {
+                temperature: 0.9,
+                top_p: 0.95,
+                top_k: 50,
+                repeat_penalty: 1.0,
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Switch to high-temp profile
+        chat.set_profile("high-temp")?;
+
+        // Check that the current profile reflects the change
+        let current_profile = chat.current_profile();
+        assert!(current_profile.is_some());
+        let (profile_name, profile_config) = current_profile.unwrap();
+        assert_eq!(profile_name, "high-temp");
+        assert_eq!(profile_config.temperature, 0.9);
+
+        // The stream_response method should use the current profile
+        // We can't easily test the actual stream without a real model, but we can verify
+        // that the current_profile() method returns the expected profile that stream_response would use
+        assert_eq!(chat.profile_name(), "high-temp");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_profile_switching_integration() -> Result<()> {
+        let server = MockServer::start().await;
+        let mut config = get_test_config(&server).await?;
+
+        config.profiles.insert(
+            "integration-test-profile".to_string(),
+            ProfileConfig {
+                temperature: 0.7,
+                top_p: 0.8,
+                top_k: 30,
+                repeat_penalty: 1.15,
+            },
+        );
+
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
+
+        // Test initial state
+        assert_eq!(chat.profile_name(), "test-agent");
+        let initial_profile = chat.current_profile();
+        assert!(initial_profile.is_some());
+        let (initial_name, initial_config) = initial_profile.unwrap();
+        assert_eq!(initial_name, "test-agent");
+        assert_eq!(initial_config.temperature, 0.1);
+
+        // Test profile switching
+        chat.set_profile("integration-test-profile")?;
+
+        // Verify the profile was switched
+        assert_eq!(chat.profile_name(), "integration-test-profile");
+        let switched_profile = chat.current_profile();
+        assert!(switched_profile.is_some());
+        let (switched_name, switched_config) = switched_profile.unwrap();
+        assert_eq!(switched_name, "integration-test-profile");
+        assert_eq!(switched_config.temperature, 0.7);
+
+        // Test that stream_response would use the correct profile
+        // by verifying current_profile() returns what we expect
+        let stream_profile = chat.current_profile();
+        assert!(stream_profile.is_some());
+        let (stream_name, stream_config) = stream_profile.unwrap();
+        assert_eq!(stream_name, "integration-test-profile");
+        assert_eq!(stream_config.temperature, 0.7);
 
         Ok(())
     }

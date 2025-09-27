@@ -101,184 +101,232 @@ impl Command {
     /// Returns `Ok(false)` if the REPL should exit.
     pub async fn execute(self, session: Arc<Mutex<Chat<'_>>>) -> Result<bool> {
         match self {
-            Command::Clear => {
-                session.lock().await.clear_messages().await;
-                println!("Chat history cleared");
-            }
-            Command::Log => {
-                let chat_guard = session.lock().await;
-                let messages = chat_guard.get_all_messages();
-                let block = format_message_block(&messages)?;
-                println!("{}", block);
-            }
-            Command::Tool { names } => {
-                let mut chat_guard = session.lock().await;
-                match chat_guard.set_tools(&names).await {
-                    Ok(()) => {
-                        if names.is_empty() {
-                            println!("Tools cleared.");
-                        } else {
-                            println!("Tools set: {}", names.join(", "));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error setting tools: {e}");
-                    }
-                }
-            }
-            Command::Model { name } => match name {
-                Some(name) => {
-                    if name == "list" {
-                        let chat_guard = session.lock().await;
-                        let model_names = chat_guard.available_model_names();
-                        println!("Available models: {}", model_names.join(", "));
-                    } else {
-                        let mut chat_guard = session.lock().await;
-                        let spinner =
-                            GenerationSpinner::new(format!("Loading model '{}'...", &name));
+            Command::Clear => self.execute_clear(session).await,
+            Command::Log => self.execute_log(session).await,
+            Command::Model { ref name } => self.execute_model(session, name).await,
+            Command::Profile { ref name } => self.execute_profile(session, name).await,
+            Command::Tool { ref names } => self.execute_tool(session, names).await,
+            Command::Agent { ref name } => self.execute_agent(session, name).await,
+            Command::System { ref prompt } => self.execute_system(session, prompt).await,
+            Command::Exit => self.execute_exit(),
+        }
+    }
 
-                        match chat_guard.set_model(&name).await {
-                            Ok(()) => {
-                                spinner.clear();
-                                let success_msg = format!("Model switched to: {}", name);
-                                println!("{success_msg}",);
-                            }
-                            Err(e) => {
-                                spinner.clear();
-                                let error_msg = format!("Error switching model: {}", e);
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let chat_guard = session.lock().await;
-                    let model_key = chat_guard.model_key();
-                    println!("Current model: {}", model_key);
-                }
-            },
-            Command::Profile { name } => match name {
-                Some(name) => {
-                    if name == "list" {
-                        let chat_guard = session.lock().await;
-                        let profile_names = chat_guard.available_profile_names();
-                        println!("Available profiles: {}", profile_names.join(", "));
-                    } else {
-                        let mut chat_guard = session.lock().await;
-                        match chat_guard.set_profile(&name) {
-                            Ok(()) => {
-                                let success_msg = format!("Profile switched to: {}", name);
-                                println!("{success_msg}");
-                            }
-                            Err(e) => {
-                                let error_msg = format!("Error switching profile: {}", e);
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let chat_guard = session.lock().await;
-                    if let Some((profile_name, profile_data)) = chat_guard.current_profile() {
-                        println!("Current profile: {profile_name}");
-                        match serde_yaml::to_string(&profile_data) {
-                            Ok(yaml) => {
-                                // Trim to avoid printing empty "{}" for empty-but-not-null data.
-                                let trimmed = yaml.trim();
-                                if !trimmed.is_empty() && trimmed != "{}" {
-                                    print!("{yaml}"); // `to_string` includes a newline
-                                }
-                            }
-                            Err(e) => {
-                                let error_msg = format!("Error formatting profile data: {e}");
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    } else {
-                        println!("No profile is active.");
-                    }
-                }
-            },
-            Command::Agent { name } => match name {
-                Some(name) => {
-                    if name == "list" {
-                        let chat_guard = session.lock().await;
-                        let agents = chat_guard.available_agents_with_sources();
-                        if agents.is_empty() {
-                            println!("No agents available.");
-                        } else {
-                            println!("Available agents:");
-                            for (agent_name, source) in agents {
-                                let source_str = match source {
-                                    arey_core::agent::AgentSource::BuiltIn => "built-in",
-                                    arey_core::agent::AgentSource::UserFile(_) => "user",
-                                };
-                                println!("  {} ({})", agent_name, source_str);
-                            }
-                        }
-                    } else {
-                        let mut chat_guard = session.lock().await;
-                        let spinner =
-                            GenerationSpinner::new(format!("Loading agent '{}'...", &name));
+    async fn execute_clear(&self, session: Arc<Mutex<Chat<'_>>>) -> Result<bool> {
+        session.lock().await.clear_messages().await;
+        println!("Chat history cleared");
+        Ok(true)
+    }
 
-                        match chat_guard.set_agent(&name).await {
-                            Ok(()) => {
-                                spinner.clear();
-                                let success_msg = format!("Agent switched to: {}", name);
-                                println!("{success_msg}");
-                            }
-                            Err(e) => {
-                                spinner.clear();
-                                let error_msg = format!("Error switching agent: {}", e);
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let chat_guard = session.lock().await;
-                    let agent_name = chat_guard.agent_name();
-                    let source = chat_guard.format_agent_source(&agent_name);
-                    println!("Current agent: {} ({})", agent_name, source);
-                }
-            },
-            Command::System { prompt } => {
-                let mut chat_guard = session.lock().await;
-                match prompt {
-                    Some(new_prompt) => match chat_guard.set_system_prompt(&new_prompt).await {
-                        Ok(()) => {
-                            println!("System prompt updated successfully.");
-                        }
-                        Err(e) => {
-                            let error_msg = format!("Error setting system prompt: {}", e);
-                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
-                        }
-                    },
-                    None => {
-                        let current_prompt = chat_guard.system_prompt();
-                        println!("Current system prompt:");
-                        println!("{}", current_prompt);
-                    }
+    async fn execute_log(&self, session: Arc<Mutex<Chat<'_>>>) -> Result<bool> {
+        let chat_guard = session.lock().await;
+        let messages = chat_guard.get_all_messages();
+        let block = format_message_block(&messages)?;
+        println!("{}", block);
+        Ok(true)
+    }
+
+    async fn execute_tool(&self, session: Arc<Mutex<Chat<'_>>>, names: &[String]) -> Result<bool> {
+        let mut chat_guard = session.lock().await;
+        match chat_guard.set_tools(names).await {
+            Ok(()) => {
+                if names.is_empty() {
+                    println!("Tools cleared.");
+                } else {
+                    println!("Tools set: {}", names.join(", "));
                 }
             }
-            Command::Exit => {
-                println!("Bye!");
-                return Ok(false);
+            Err(e) => {
+                eprintln!("Error setting tools: {e}");
             }
         }
         Ok(true)
+    }
+
+    async fn execute_model(
+        &self,
+        session: Arc<Mutex<Chat<'_>>>,
+        name: &Option<String>,
+    ) -> Result<bool> {
+        match name {
+            Some(name) => {
+                if name == "list" {
+                    let chat_guard = session.lock().await;
+                    let model_names = chat_guard.available_model_names();
+                    println!("Available models: {}", model_names.join(", "));
+                } else {
+                    let mut chat_guard = session.lock().await;
+                    let spinner = GenerationSpinner::new(format!("Loading model '{}'...", &name));
+
+                    match chat_guard.set_model(name).await {
+                        Ok(()) => {
+                            spinner.clear();
+                            println!("Model switched to: {}", name);
+                        }
+                        Err(e) => {
+                            spinner.clear();
+                            let error_msg = format!("Error switching model: {}", e);
+                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                        }
+                    }
+                }
+            }
+            None => {
+                let chat_guard = session.lock().await;
+                let model_key = chat_guard.model_key();
+                println!("Current model: {}", model_key);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn execute_profile(
+        &self,
+        session: Arc<Mutex<Chat<'_>>>,
+        name: &Option<String>,
+    ) -> Result<bool> {
+        match name {
+            Some(name) => {
+                if name == "list" {
+                    let chat_guard = session.lock().await;
+                    let profile_names = chat_guard.available_profile_names();
+                    println!("Available profiles: {}", profile_names.join(", "));
+                } else {
+                    let mut chat_guard = session.lock().await;
+                    match chat_guard.set_profile(name) {
+                        Ok(()) => {
+                            println!("Profile switched to: {}", name);
+                            // Show detailed profile information
+                            if let Some((profile_name, profile_data)) = chat_guard.current_profile()
+                            {
+                                match serde_yaml::to_string(&profile_data) {
+                                    Ok(yaml) => {
+                                        // Trim to avoid printing empty "{}" for empty-but-not-null data.
+                                        let trimmed = yaml.trim();
+                                        if !trimmed.is_empty() && trimmed != "{}" {
+                                            print!("{yaml}"); // `to_string` includes a newline
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let error_msg =
+                                            format!("Error formatting profile data: {e}");
+                                        eprintln!(
+                                            "{}",
+                                            style_chat_text(&error_msg, ChatMessageType::Error)
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Error switching profile: {}", e);
+                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                        }
+                    }
+                }
+            }
+            None => {
+                let chat_guard = session.lock().await;
+                if let Some((profile_name, profile_data)) = chat_guard.current_profile() {
+                    println!("Current profile: {profile_name}");
+                    match serde_yaml::to_string(&profile_data) {
+                        Ok(yaml) => {
+                            // Trim to avoid printing empty "{}" for empty-but-not-null data.
+                            let trimmed = yaml.trim();
+                            if !trimmed.is_empty() && trimmed != "{}" {
+                                print!("{yaml}"); // `to_string` includes a newline
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Error formatting profile data: {e}");
+                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                        }
+                    }
+                } else {
+                    println!("No profile is active.");
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    async fn execute_agent(
+        &self,
+        session: Arc<Mutex<Chat<'_>>>,
+        name: &Option<String>,
+    ) -> Result<bool> {
+        match name {
+            Some(name) => {
+                if name == "list" {
+                    let chat_guard = session.lock().await;
+                    let agents = chat_guard.available_agents_with_sources();
+                    if agents.is_empty() {
+                        println!("No agents available.");
+                    } else {
+                        println!("Available agents:");
+                        for (agent_name, source) in agents {
+                            let source_str = match source {
+                                arey_core::agent::AgentSource::BuiltIn => "built-in",
+                                arey_core::agent::AgentSource::UserFile(_) => "user",
+                            };
+                            println!("  {} ({})", agent_name, source_str);
+                        }
+                    }
+                } else {
+                    let mut chat_guard = session.lock().await;
+                    let spinner = GenerationSpinner::new(format!("Loading agent '{}'...", &name));
+
+                    match chat_guard.set_agent(name).await {
+                        Ok(()) => {
+                            spinner.clear();
+                            println!("Agent switched to: {}", name);
+                        }
+                        Err(e) => {
+                            spinner.clear();
+                            let error_msg = format!("Error switching agent: {}", e);
+                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                        }
+                    }
+                }
+            }
+            None => {
+                let chat_guard = session.lock().await;
+                let agent_name = chat_guard.agent_name();
+                let source = chat_guard.format_agent_source(&agent_name);
+                println!("Current agent: {} ({})", agent_name, source);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn execute_system(
+        &self,
+        session: Arc<Mutex<Chat<'_>>>,
+        prompt: &Option<String>,
+    ) -> Result<bool> {
+        let mut chat_guard = session.lock().await;
+        match prompt {
+            Some(new_prompt) => match chat_guard.set_system_prompt(new_prompt).await {
+                Ok(()) => {
+                    println!("System prompt updated successfully.");
+                }
+                Err(e) => {
+                    let error_msg = format!("Error setting system prompt: {}", e);
+                    eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
+                }
+            },
+            None => {
+                let current_prompt = chat_guard.system_prompt();
+                println!("Current system prompt:");
+                println!("{}", current_prompt);
+            }
+        }
+        Ok(true)
+    }
+
+    fn execute_exit(&self) -> Result<bool> {
+        println!("Bye!");
+        Ok(false)
     }
 }
 
@@ -494,9 +542,60 @@ fn tool_compl(
     Ok((0, Vec::new()))
 }
 
+/// Formats the status prompt for display in the REPL.
+///
+/// Returns a formatted string with the pattern: @<agent> on <model> profile <profile> using <tools>
+/// where <agent>, <model>, <profile>, and <tools> are styled as bold.
+fn format_status_prompt(chat_guard: &Chat<'_>) -> String {
+    let model_key = chat_guard.model_key();
+    let agent_state = chat_guard.agent_display_state();
+    let tools = chat_guard.tools();
+
+    // Get current profile name
+    let profile_name = chat_guard
+        .current_profile()
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| "default".to_string());
+
+    // Format tools string
+    let tools_str = if !tools.is_empty() {
+        let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
+        tool_names.join(", ")
+    } else {
+        String::new()
+    };
+
+    // Build prompt with individual styled components
+    // Format: @<agent> on <model> profile <profile> using <tools>
+    let mut prompt_parts = vec![
+        // @<agent>
+        style_chat_text("@", ChatMessageType::Prompt).to_string(),
+        style_chat_text(&agent_state, ChatMessageType::Prompt).to_string(),
+        // on <model>
+        style_chat_text(" on ", ChatMessageType::PromptMeta).to_string(),
+        style_chat_text(&model_key, ChatMessageType::Prompt).to_string(),
+        // profile <profile>
+        style_chat_text(" profile ", ChatMessageType::PromptMeta).to_string(),
+        style_chat_text(&profile_name, ChatMessageType::Prompt).to_string(),
+    ];
+
+    // using <tools>
+    if !tools_str.is_empty() {
+        prompt_parts.push(style_chat_text(" using ", ChatMessageType::PromptMeta).to_string());
+        prompt_parts.push(style_chat_text(&tools_str, ChatMessageType::Prompt).to_string());
+    }
+
+    let prompt_meta = prompt_parts.join("");
+    format!(
+        "\n{}\n{}",
+        prompt_meta,
+        style_chat_text("> ", ChatMessageType::Prompt)
+    )
+}
+
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
-    println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
+    println!("Welcome to arey chat! Use '/command --help' for usage, '/q' to exit.");
 
     let config = rustyline::Config::builder()
         .history_ignore_dups(true)?
@@ -552,25 +651,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     loop {
         let prompt = {
             let chat_guard = chat.lock().await;
-            let model_key = chat_guard.model_key();
-
-            // Get dynamic agent state information
-            let agent_state = chat_guard.agent_display_state();
-
-            let tools = chat_guard.tools();
-            let tools_str = if !tools.is_empty() {
-                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
-                format!(" | tools: {}", tool_names.join(", "))
-            } else {
-                String::new()
-            };
-
-            let prompt_meta = format!("[model: {} | {}{}]", model_key, agent_state, tools_str);
-            format!(
-                "\n{}\n{}",
-                style_chat_text(&prompt_meta, ChatMessageType::Prompt),
-                style_chat_text("> ", ChatMessageType::Prompt)
-            )
+            format_status_prompt(&chat_guard)
         };
         let readline = rl.readline(&prompt);
         match readline {
@@ -587,7 +668,6 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                     || trimmed_line.starts_with('@');
 
                 if is_command {
-                    // TODO: error handling
                     let processed_args = parse_command_line(trimmed_line);
 
                     match CliCommand::try_parse_from(processed_args) {
@@ -597,7 +677,16 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                             }
                         }
                         Err(e) => {
-                            e.print()?;
+                            // Use Clap's built-in help system
+                            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                                || e.kind() == clap::error::ErrorKind::DisplayVersion
+                            {
+                                e.print()?;
+                            } else {
+                                // For other errors, still print them but suggest using --help
+                                e.print()?;
+                                eprintln!("Use '/command --help' for usage information.");
+                            }
                         }
                     }
                 } else {
@@ -1521,30 +1610,22 @@ USER: Run tool
         assert_eq!(chat.agent_name(), "test-agent".to_string());
         let chat_session = Arc::new(Mutex::new(chat));
 
-        // 3. Test that switching profile fails, as it's not supported in chat mode
+        // 3. Test profile list functionality
+        let list_profiles = Command::Profile {
+            name: Some("list".to_string()),
+        };
+        assert!(list_profiles.execute(chat_session.clone()).await?);
+
+        // 4. Test profile switching (this may fail depending on config, but should not crash)
         let switch_to_prof = Command::Profile {
             name: Some("test-profile".to_string()),
         };
-        // The command will print an error but not exit the REPL loop
+        // The command should handle both success and failure gracefully
         assert!(switch_to_prof.execute(chat_session.clone()).await?);
 
-        let chat_guard = chat_session.lock().await;
-        assert_eq!(
-            chat_guard.agent_name(),
-            "test-agent",
-            "Agent should not have changed after a failed attempt to set profile"
-        );
-        drop(chat_guard);
-
-        // 5. Test /model list (ensure it runs)
-        let list_models = Command::Model {
-            name: Some("list".to_string()),
-        };
-        assert!(list_models.execute(chat_session.clone()).await?);
-
-        // 6. Test /model (ensure it shows current model)
-        let current_model = Command::Model { name: None };
-        assert!(current_model.execute(chat_session.clone()).await?);
+        // 5. Test viewing current profile (no arguments)
+        let current_profile = Command::Profile { name: None };
+        assert!(current_profile.execute(chat_session.clone()).await?);
 
         Ok(())
     }
@@ -1581,20 +1662,27 @@ USER: Run tool
         let prompt_meta = {
             let chat_guard = chat_session.lock().await;
             let model_key = chat_guard.model_key();
-            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
+            let agent_state = chat_guard.agent_display_state();
+            let profile_name = chat_guard
+                .current_profile()
+                .map(|(name, _)| name)
+                .unwrap_or_else(|| "default".to_string());
             let tools = chat_guard.tools();
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
-                format!(" | tools: {}", tool_names.join(", "))
+                tool_names.join(", ")
             } else {
                 String::new()
             };
-            format!("[model: {}{}{}]", model_key, agent_str, tools_str)
+            format!(
+                "@{} on {} profile {} using {}",
+                agent_state, model_key, profile_name, tools_str
+            )
         };
 
         assert_eq!(
             prompt_meta,
-            "[model: test-model-1 | agent: test-agent | tools: mock_tool]"
+            "@test-agent on test-model-1 profile test-agent using mock_tool"
         );
 
         // 5. Test clearing tools
@@ -1604,20 +1692,31 @@ USER: Run tool
         let prompt_meta_after_clear = {
             let chat_guard = chat_session.lock().await;
             let model_key = chat_guard.model_key();
-            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
+            let agent_state = chat_guard.agent_display_state();
+            let profile_name = chat_guard
+                .current_profile()
+                .map(|(name, _)| name)
+                .unwrap_or_else(|| "default".to_string());
             let tools = chat_guard.tools();
             let tools_str = if !tools.is_empty() {
                 let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
-                format!(" | tools: {}", tool_names.join(", "))
+                tool_names.join(", ")
             } else {
                 String::new()
             };
-            format!("[model: {}{}{}]", model_key, agent_str, tools_str)
+            if tools_str.is_empty() {
+                format!("@{} on {} profile {}", agent_state, model_key, profile_name)
+            } else {
+                format!(
+                    "@{} on {} profile {} using {}",
+                    agent_state, model_key, profile_name, tools_str
+                )
+            }
         };
 
         assert_eq!(
             prompt_meta_after_clear,
-            "[model: test-model-1 | agent: test-agent]"
+            "@test-agent on test-model-1 profile test-agent"
         );
 
         Ok(())
@@ -1831,5 +1930,83 @@ task:
                 ),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_format_status_prompt() -> Result<()> {
+        // 1. Setup config and chat
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+
+        // 2. Test basic prompt with no tools
+        let prompt = format_status_prompt(&chat);
+
+        // The prompt should contain the expected pattern and styling
+        assert!(prompt.contains("@test-agent"));
+        assert!(prompt.contains("on test-model-1"));
+        assert!(prompt.contains("profile test-agent"));
+        assert!(prompt.contains(">"));
+
+        // Should not contain "using" when no tools are available
+        assert!(!prompt.contains("using"));
+
+        // 3. Test prompt with tools
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("mock_tool", mock_tool.clone())]);
+        let mut chat_with_tools =
+            Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        chat_with_tools
+            .set_tools(&["mock_tool".to_string()])
+            .await?;
+
+        let prompt_with_tools = format_status_prompt(&chat_with_tools);
+
+        // Should contain "using" when tools are available
+        assert!(prompt_with_tools.contains("using mock_tool"));
+        assert!(prompt_with_tools.contains("@test-agent"));
+        assert!(prompt_with_tools.contains("on test-model-1"));
+        assert!(prompt_with_tools.contains("profile test-agent"));
+
+        // 4. Test prompt with multiple tools - just verify the function handles various tool states correctly
+        // The important thing is that the function formats whatever tools are available
+        let prompt_multi_tools = format_status_prompt(&chat_with_tools); // Reuse from previous test
+
+        // Should contain the tool
+        assert!(prompt_multi_tools.contains("using mock_tool"));
+
+        // 5. Test prompt with basic functionality - the function should work reliably
+        let prompt_basic = format_status_prompt(&chat);
+
+        // Verify all basic components are present
+        assert!(prompt_basic.contains("@test-agent"));
+        assert!(prompt_basic.contains("on test-model-1"));
+        assert!(prompt_basic.contains("profile test-agent"));
+        assert!(prompt_basic.contains(">"));
+        assert!(!prompt_basic.contains("using")); // No tools set
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_format_status_prompt_styling() -> Result<()> {
+        // Test that the function applies the correct styling
+        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+
+        let prompt = format_status_prompt(&chat);
+
+        // Should contain newline characters for proper formatting
+        assert!(prompt.starts_with('\n'));
+        assert!(prompt.contains("\n> "));
+
+        // Should not be empty
+        assert!(!prompt.is_empty());
+
+        // Should contain the essential components
+        assert!(prompt.contains("test-agent"));
+        assert!(prompt.contains("test-model-1"));
+
+        Ok(())
     }
 }

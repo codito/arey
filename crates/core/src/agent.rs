@@ -37,7 +37,9 @@ impl Default for AgentMetadata {
 pub struct AgentRuntimeState {
     /// The current model being used (can override the agent's default).
     pub current_model: Option<String>,
-    /// The current profile being used (can override the agent's default).
+    /// The current profile name being used (can override the agent's default).
+    pub current_profile_name: Option<String>,
+    /// The current profile configuration being used (can override the agent's default).
     pub current_profile: Option<ProfileConfig>,
     /// Session-specific tool overrides.
     pub session_tools: Option<Vec<String>>,
@@ -131,6 +133,18 @@ impl Agent {
         self.runtime_state.current_profile = profile;
     }
 
+    /// Sets the current profile with name for this session.
+    pub fn set_current_profile_with_name(&mut self, profile_name: String, profile: ProfileConfig) {
+        self.runtime_state.current_profile_name = Some(profile_name);
+        self.runtime_state.current_profile = Some(profile);
+    }
+
+    /// Clears the current profile and returns to the agent's default profile.
+    pub fn clear_current_profile(&mut self) {
+        self.runtime_state.current_profile_name = None;
+        self.runtime_state.current_profile = None;
+    }
+
     /// Sets the session tools.
     pub fn set_session_tools(&mut self, tools: Option<Vec<String>>) {
         self.runtime_state.session_tools = tools;
@@ -153,18 +167,7 @@ impl Agent {
 
     /// Gets a display string showing the agent's current state.
     pub fn display_state(&self) -> String {
-        let mut parts = vec![self.name.clone()];
-
-        if let Some(model) = self.effective_model() {
-            parts.push(format!("model:{}", model));
-        }
-
-        let profile = self.effective_profile();
-        if profile.temperature != ProfileConfig::default().temperature {
-            parts.push(format!("temp:{:.2}", profile.temperature));
-        }
-
-        parts.join(" ")
+        self.name.clone()
     }
 }
 
@@ -298,11 +301,11 @@ mod tests {
         // Test basic state
         assert_eq!(agent.display_state(), "coder");
 
-        // Test with model override
+        // Test with model override (model is no longer shown in display_state as it's shown separately in status)
         agent.set_current_model(Some("gpt-4".to_string()));
-        assert_eq!(agent.display_state(), "coder model:gpt-4");
+        assert_eq!(agent.display_state(), "coder");
 
-        // Test with custom temperature
+        // Test with custom temperature (temperature is no longer shown in display_state)
         let mut agent = Agent::with_default_metadata(
             "creative".to_string(),
             "Test prompt".to_string(),
@@ -313,13 +316,11 @@ mod tests {
             },
             AgentSource::BuiltIn,
         );
-        assert_eq!(agent.display_state(), "creative temp:0.90");
+        assert_eq!(agent.display_state(), "creative");
 
-        // Test with both model and custom temperature
+        // Test with both model and custom temperature (neither shown in display_state)
         agent.set_current_model(Some("claude".to_string()));
-        assert!(agent.display_state().contains("creative"));
-        assert!(agent.display_state().contains("model:claude"));
-        assert!(agent.display_state().contains("temp:0.90"));
+        assert_eq!(agent.display_state(), "creative");
     }
 
     #[test]
