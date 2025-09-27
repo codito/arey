@@ -9,16 +9,19 @@ supports all the models supported by [Llama.cpp][] and any service with
 
 ## Install
 
-We recommend using `pipx` to install the app in an isolated python virtual
-environment.
-
+**From source:**
 ```sh
-# Install pipx if needed: `pip install pipx`
-# Ensure ~/.local/bin is available in system PATH
-pipx install arey
+git clone https://github.com/codito/arey.git
+cd arey
+cargo build --release
 ```
 
-You can upgrade to latest version of the app using `pipx upgrade arey`.
+**Binary releases:**
+Download the latest release from [GitHub Releases](https://github.com/codito/arey/releases).
+
+**Package managers:**
+- Arch Linux: `yay -S arey` (AUR)
+- Cargo: `cargo install arey`
 
 ## Commands
 
@@ -36,6 +39,8 @@ On the first run, `arey` will create a configuration file in following location:
 - `~/.arey/arey.yml` for Windows.
 
 Please update the `models` section in the config yml to your local model path.
+
+The configuration includes model definitions, agent personas, and tool settings. See [config.md](./config.md) for detailed configuration options.
 
 ### Get the model
 

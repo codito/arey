@@ -28,7 +28,7 @@ pub async fn execute(
         config.task.model.clone()
     };
     let agent_name = config.task.agent_name.clone();
-    let mut task = Task::new(instruction, ask_model_config, config, agent_name);
+    let mut task = Task::new(instruction, ask_model_config, config, agent_name)?;
 
     eprintln!(
         "{}",
@@ -123,6 +123,7 @@ mod tests {
             r#"
 models:
   test-model:
+    name: test-model
     provider: openai
     base_url: "{server_uri}"
     api_key: "MOCK_OPENAI_API_KEY"

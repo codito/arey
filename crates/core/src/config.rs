@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use thiserror::Error;
 use tracing::instrument;
 
 use crate::{
-    agent::AgentConfig,
+    agent::{Agent, AgentMetadata, AgentSource},
     assets::{get_config_dir, get_default_config},
     model::ModelConfig,
 };
@@ -60,7 +60,7 @@ pub struct Config {
     pub models: HashMap<String, ModelConfig>,
     pub profiles: HashMap<String, ProfileConfig>,
     #[serde(default)]
-    pub agents: HashMap<String, AgentConfig>,
+    pub agents: HashMap<String, Agent>,
     pub chat: ModeConfig,
     pub task: ModeConfig,
     #[serde(default = "default_theme")]
@@ -81,15 +81,6 @@ enum StringOrObject<T> {
 }
 
 #[derive(Deserialize, Debug)]
-struct RawAgentConfig {
-    prompt: String,
-    #[serde(default)]
-    tools: Vec<String>,
-    #[serde(default)]
-    profile: Option<StringOrObject<ProfileConfig>>,
-}
-
-#[derive(Deserialize, Debug)]
 struct RawModeConfig {
     model: StringOrObject<ModelConfig>,
     #[serde(default)]
@@ -99,11 +90,130 @@ struct RawModeConfig {
 }
 
 #[derive(Deserialize, Debug)]
+struct AgentFileConfig {
+    name: String,
+    prompt: String,
+    #[serde(default)]
+    tools: Vec<String>,
+    #[serde(default)]
+    profile: Option<ProfileConfig>,
+}
+
+fn create_default_agent(agents_dir: &Path) -> Result<(), AreyConfigError> {
+    if !agents_dir.exists() {
+        fs::create_dir_all(agents_dir)?;
+    }
+
+    // Create default agent if it doesn't exist, using the content from data file
+    let default_agent_content = include_str!("../data/agents/default.yml");
+
+    let default_path = agents_dir.join("default.yml");
+    if !default_path.exists() {
+        fs::write(&default_path, default_agent_content)?;
+    }
+
+    Ok(())
+}
+
+fn load_default_agent_from_data() -> Result<Agent, AreyConfigError> {
+    let default_content = include_str!("../data/agents/default.yml");
+    let agent_file: AgentFileConfig =
+        serde_yaml::from_str(default_content).map_err(AreyConfigError::YAMLError)?;
+
+    let metadata = AgentMetadata {
+        source: AgentSource::BuiltIn,
+        file_path: None,
+    };
+
+    let agent = Agent::new(
+        agent_file.name,
+        agent_file.prompt,
+        agent_file.tools,
+        agent_file.profile.unwrap_or_default(),
+        metadata,
+    );
+
+    Ok(agent)
+}
+
+fn get_built_in_agents() -> HashMap<String, Agent> {
+    let mut agents = HashMap::new();
+
+    // Load default agent from data file
+    if let Ok(agent) = load_default_agent_from_data() {
+        agents.insert("default".to_string(), agent);
+    }
+
+    agents
+}
+
+#[instrument]
+fn load_agents_from_directory(
+    agents_dir: &Path,
+) -> Result<HashMap<String, Agent>, AreyConfigError> {
+    let mut agents = HashMap::new();
+
+    if !agents_dir.exists() {
+        return Ok(agents);
+    }
+
+    let entries = fs::read_dir(agents_dir).map_err(AreyConfigError::IO)?;
+
+    for entry in entries {
+        let entry = entry.map_err(AreyConfigError::IO)?;
+        let path = entry.path();
+
+        if path.extension().and_then(|s| s.to_str()) == Some("yml")
+            || path.extension().and_then(|s| s.to_str()) == Some("yaml")
+        {
+            let content = fs::read_to_string(&path).map_err(AreyConfigError::IO)?;
+
+            let agent_config: AgentFileConfig =
+                serde_yaml::from_str(&content).map_err(AreyConfigError::YAMLError)?;
+
+            let metadata = AgentMetadata {
+                source: AgentSource::UserFile(path.clone()),
+                file_path: Some(path),
+            };
+
+            let agent = Agent::new(
+                agent_config.name.clone(),
+                agent_config.prompt,
+                agent_config.tools,
+                agent_config.profile.unwrap_or_default(),
+                metadata,
+            );
+
+            agents.insert(agent_config.name, agent);
+        }
+    }
+
+    Ok(agents)
+}
+
+fn merge_agents(
+    built_in: HashMap<String, Agent>,
+    user_agents: HashMap<String, Agent>,
+) -> HashMap<String, Agent> {
+    let mut merged_agents = HashMap::new();
+
+    // First add built-in agents
+    for (name, agent) in built_in {
+        merged_agents.insert(name, agent);
+    }
+
+    // User agents override built-in agents
+    for (name, agent) in user_agents {
+        merged_agents.insert(name, agent);
+    }
+
+    merged_agents
+}
+
+#[derive(Deserialize, Debug)]
 struct RawConfig {
     models: HashMap<String, ModelConfig>,
     profiles: HashMap<String, ProfileConfig>,
-    #[serde(default)]
-    agents: HashMap<String, RawAgentConfig>,
     chat: RawModeConfig,
     task: RawModeConfig,
     theme: Option<String>,
@@ -113,7 +223,7 @@ struct RawConfig {
 
 impl RawConfig {
     #[instrument]
-    fn to_config(&self) -> Result<Config, AreyConfigError> {
+    fn to_config(&self, config_dir: &Path) -> Result<Config, AreyConfigError> {
         let mut models_with_names = HashMap::new();
         for (k, v) in &self.models {
             // Update model name if not set
@@ -166,29 +276,33 @@ impl RawConfig {
                 }
             };
 
-        let mut agents = HashMap::new();
-        for (name, raw_agent) in &self.agents {
-            let profile = resolve_profile(&raw_agent.profile)?;
-            let agent_config = AgentConfig {
-                name: name.clone(),
-                prompt: raw_agent.prompt.clone(),
-                tools: raw_agent.tools.clone(),
-                profile,
-            };
-            agents.insert(name.clone(), agent_config);
+        // Load agents from multiple sources
+        let agents_dir = config_dir.join("agents");
+
+        // Create default agent if directory doesn't exist
+        if let Err(e) = create_default_agent(&agents_dir) {
+            tracing::warn!("Failed to create default agent: {}", e);
         }
 
+        let built_in_agents = get_built_in_agents();
+        let user_agents = load_agents_from_directory(&agents_dir)?;
+
+        let mut merged_agents = merge_agents(built_in_agents, user_agents);
+
         const DEFAULT_AGENT_NAME: &str = "default";
-        if !agents.contains_key(DEFAULT_AGENT_NAME) {
-            agents.insert(
+        if !merged_agents.contains_key(DEFAULT_AGENT_NAME) {
+            let default_metadata = AgentMetadata {
+                source: AgentSource::BuiltIn,
+                file_path: None,
+            };
+            let default_agent = Agent::new(
                 DEFAULT_AGENT_NAME.to_string(),
-                AgentConfig {
-                    name: DEFAULT_AGENT_NAME.to_string(),
-                    prompt: "You are a helpful assistant.".to_string(),
-                    tools: Vec::new(),
-                    profile: ProfileConfig::default(),
-                },
+                "You are a helpful assistant.".to_string(),
+                Vec::new(),
+                ProfileConfig::default(),
+                default_metadata,
             );
+            merged_agents.insert(DEFAULT_AGENT_NAME.to_string(), default_agent);
         }
 
         let chat_model = resolve_model(&self.chat.model)?;
@@ -197,7 +311,7 @@ impl RawConfig {
             .agent
             .clone()
             .unwrap_or_else(|| DEFAULT_AGENT_NAME.to_string());
-        if !agents.contains_key(&chat_agent_name) {
+        if !merged_agents.contains_key(&chat_agent_name) {
             return Err(AreyConfigError::Config(format!(
                 "Agent '{chat_agent_name}' specified in chat mode not found"
             )));
@@ -209,7 +323,7 @@ impl RawConfig {
             .agent
             .clone()
             .unwrap_or_else(|| DEFAULT_AGENT_NAME.to_string());
-        if !agents.contains_key(&task_agent_name) {
+        if !merged_agents.contains_key(&task_agent_name) {
             return Err(AreyConfigError::Config(format!(
                 "Agent '{task_agent_name}' specified in task mode not found"
             )));
@@ -221,7 +335,7 @@ impl RawConfig {
         Ok(Config {
             models: models_with_names,
             profiles: self.profiles.clone(),
-            agents,
+            agents: merged_agents,
             chat: ModeConfig {
                 model: chat_model,
                 agent_name: chat_agent_name,
@@ -271,11 +385,18 @@ pub fn create_or_get_config_file(
 #[instrument(skip(config_path))]
 pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigError> {
     let (_, config_file) = create_or_get_config_file(config_path)?;
+    let config_dir = config_file.parent().ok_or_else(|| {
+        AreyConfigError::IO(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Config path has no parent directory",
+        ))
+    })?;
+
     let content = fs::read_to_string(&config_file)?;
     let mut val: serde_yaml::Value = serde_yaml::from_str(&content)?;
     val.apply_merge()?; // Apply merge keys. Model configs can use it.
     let raw: RawConfig = serde_yaml::from_value(val)?;
-    raw.to_config()
+    raw.to_config(config_dir)
 }
 
 #[cfg(test)]
@@ -287,18 +408,21 @@ mod tests {
         path::PathBuf,
     };
 
-    use tempfile::{NamedTempFile, env::temp_dir, tempdir};
+    use tempfile::tempdir;
 
     use super::*;
+    use crate::agent::AgentConfig;
 
     fn create_temp_config(content: &str) -> PathBuf {
-        let temp_dir = temp_dir();
-        let config_path = NamedTempFile::new().unwrap().path().to_owned();
-        fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("arey.yml");
+        fs::create_dir_all(temp_dir.path()).unwrap();
         File::create(&config_path)
             .unwrap()
             .write_all(content.as_bytes())
             .unwrap();
+        // Keep the temp directory alive by leaking it (this is just for tests)
+        let _ = Box::leak(Box::new(temp_dir));
         config_path
     }
 
@@ -386,7 +510,6 @@ theme: dark
         let raw_config = RawConfig {
             models: models.clone(),
             profiles: profiles.clone(),
-            agents: HashMap::new(),
             chat: RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
                 agent: None,
@@ -401,7 +524,8 @@ theme: dark
             tools: HashMap::new(),
         };
 
-        let config = raw_config.to_config().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config = raw_config.to_config(temp_dir.path()).unwrap();
 
         assert_eq!(config.models.len(), 2);
         assert_eq!(config.profiles.len(), 3);
@@ -422,7 +546,6 @@ theme: dark
         let raw_config = RawConfig {
             models,
             profiles: HashMap::new(),
-            agents: HashMap::new(),
             chat: RawModeConfig {
                 model: StringOrObject::String("non-existent-model".to_string()),
                 agent: None,
@@ -437,7 +560,7 @@ theme: dark
             tools: HashMap::new(),
         };
 
-        let err = raw_config.to_config().unwrap_err();
+        let err = raw_config.to_config(&PathBuf::from("/tmp")).unwrap_err();
         assert!(
             matches!(err, AreyConfigError::Config(msg) if msg.contains("Model 'non-existent-model' not found"))
         );
@@ -451,7 +574,6 @@ theme: dark
         let raw_config = RawConfig {
             models,
             profiles: HashMap::new(),
-            agents: HashMap::new(),
             chat: RawModeConfig {
                 model: StringOrObject::String("dummy-7b".to_string()),
                 agent: None,
@@ -466,7 +588,7 @@ theme: dark
             tools: HashMap::new(),
         };
 
-        let err = raw_config.to_config().unwrap_err();
+        let err = raw_config.to_config(&PathBuf::from("/tmp")).unwrap_err();
         assert!(
             matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found"))
         );
@@ -477,7 +599,6 @@ theme: dark
         let raw_config = RawConfig {
             models: HashMap::new(),   // No named models
             profiles: HashMap::new(), // No named profiles
-            agents: HashMap::new(),   // No named agents
             chat: RawModeConfig {
                 model: StringOrObject::Object(dummy_model_config("inline-chat-model")),
                 agent: None,
@@ -492,7 +613,8 @@ theme: dark
             tools: HashMap::new(),
         };
 
-        let config = raw_config.to_config().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config = raw_config.to_config(temp_dir.path()).unwrap();
 
         assert_eq!(config.chat.model.name, "inline-chat-model");
         assert_eq!(config.chat.model.key, "inline-chat-model"); // Fallback set
@@ -617,32 +739,6 @@ task:
     }
 
     #[test]
-    fn test_get_config_throws_for_missing_referenced_profile() {
-        let invalid_config_content = r#"
-models:
-  dummy-7b:
-    name: dummy-7b
-    type: gguf
-    n_ctx: 4096
-    path: /path/to/dummy_model.gguf
-profiles: {} # Empty profiles map
-agents:
-  bad-agent:
-    prompt: "..."
-    profile: non-existent-profile # References a profile not in the map
-chat:
-  model: dummy-7b
-task:
-  model: dummy-7b
-"#;
-        let config_file = create_temp_config(invalid_config_content);
-        let err = get_config(Some(config_file)).unwrap_err();
-        assert!(
-            matches!(err, AreyConfigError::Config(msg) if msg.contains("Profile 'non-existent-profile' not found"))
-        );
-    }
-
-    #[test]
     fn test_get_config_with_merge_keys() {
         const MERGE_KEY_CONFIG: &str = r#"
 models:
@@ -739,42 +835,28 @@ models:
 profiles:
   concise:
     temperature: 0.1
-agents:
-  coder:
-    prompt: "You are a Rust programmer."
-    tools:
-      - search
-    profile: concise
-  researcher:
-    prompt: "You are a researcher."
-    profile:
-      temperature: 0.2
 chat:
   model: dummy-7b
-  agent: coder
+  agent: default
 task:
   model: dummy-7b
-  agent: researcher
+  agent: default
 "#;
         let config_file = create_temp_config(DUMMY_CONFIG_WITH_AGENTS);
         let config = get_config(Some(config_file)).unwrap();
 
-        assert_eq!(config.agents.len(), 3);
+        // Should have default agent (from default.yml) + any user agents
+        assert!(config.agents.contains_key("default"));
 
-        let coder = config.agents.get("coder").unwrap();
-        assert_eq!(coder.name, "coder");
-        assert_eq!(coder.prompt, "You are a Rust programmer.");
-        assert_eq!(coder.tools, vec!["search".to_string()]);
-        assert_eq!(coder.profile.temperature, 0.1);
+        // Check that default agent has proper metadata
+        let default_agent = config.agents.get("default").unwrap();
+        assert!(matches!(
+            default_agent.metadata.source,
+            AgentSource::UserFile(_)
+        ));
 
-        let researcher = config.agents.get("researcher").unwrap();
-        assert_eq!(researcher.name, "researcher");
-        assert_eq!(researcher.prompt, "You are a researcher.");
-        assert!(researcher.tools.is_empty());
-        assert_eq!(researcher.profile.temperature, 0.2);
-
-        assert_eq!(config.chat.agent_name, "coder");
-        assert_eq!(config.task.agent_name, "researcher");
+        assert_eq!(config.chat.agent_name, "default");
+        assert_eq!(config.task.agent_name, "default");
     }
 
     #[test]
@@ -785,22 +867,19 @@ models:
     name: dummy-7b
     type: gguf
 profiles: {}
-agents:
-  chat-agent:
-    prompt: "You are a chat assistant."
 chat:
   model: dummy-7b
-  agent: chat-agent
+  agent: default
 task:
   model: dummy-7b
 "#;
         let config_file = create_temp_config(DUMMY_CONFIG_WITH_CHAT_AGENT);
         let config = get_config(Some(config_file)).unwrap();
 
-        assert_eq!(config.agents.len(), 2); // default + chat-agent
-        assert_eq!(config.chat.agent_name, "chat-agent");
-        let chat_agent = config.agents.get("chat-agent").unwrap();
-        assert_eq!(chat_agent.prompt, "You are a chat assistant.");
+        assert!(config.agents.contains_key("default"));
+        assert_eq!(config.chat.agent_name, "default");
+        let chat_agent = config.agents.get("default").unwrap();
+        assert_eq!(chat_agent.prompt, "You are a helpful assistant.");
     }
 
     #[test]
@@ -848,5 +927,201 @@ task:
         assert!(config.agents.contains_key("default"));
         let default_agent = config.agents.get("default").unwrap();
         assert_eq!(default_agent.prompt, "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn test_get_built_in_agents() {
+        let agents = get_built_in_agents();
+
+        assert!(agents.contains_key("default"));
+
+        let default_agent = agents.get("default").unwrap();
+        assert_eq!(default_agent.name, "default");
+        assert_eq!(default_agent.prompt, "You are a helpful assistant.");
+        assert!(default_agent.tools.is_empty());
+    }
+
+    #[test]
+    fn test_load_agents_from_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let agents_dir = temp_dir.path().join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        // Create a test agent file
+        let test_agent_content = r#"
+name: "test-agent"
+prompt: "I am a test agent."
+tools:
+  - search
+profile:
+  temperature: 0.5
+"#;
+        let agent_file = agents_dir.join("test-agent.yml");
+        fs::write(&agent_file, test_agent_content).unwrap();
+
+        let agents = load_agents_from_directory(&agents_dir).unwrap();
+
+        assert_eq!(agents.len(), 1);
+        assert!(agents.contains_key("test-agent"));
+
+        let agent = agents.get("test-agent").unwrap();
+        assert_eq!(agent.name, "test-agent");
+        assert_eq!(agent.prompt, "I am a test agent.");
+        assert_eq!(agent.tools, vec!["search"]);
+        assert_eq!(agent.profile.temperature, 0.5);
+        assert_eq!(
+            agent.metadata.source,
+            AgentSource::UserFile(agent_file.clone())
+        );
+    }
+
+    #[test]
+    fn test_load_agents_from_nonexistent_directory() {
+        let nonexistent_dir = PathBuf::from("/nonexistent/directory");
+        let agents = load_agents_from_directory(&nonexistent_dir).unwrap();
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn test_merge_agents_precedence() {
+        let mut built_in = HashMap::new();
+        built_in.insert(
+            "default".to_string(),
+            AgentConfig::new("default", "Built-in default", vec!["tool1".to_string()])
+                .to_agent(AgentSource::BuiltIn),
+        );
+
+        let mut user_agents = HashMap::new();
+        user_agents.insert("default".to_string(), {
+            let mut agent = AgentConfig::new("default", "User default", vec!["tool2".to_string()])
+                .to_agent(AgentSource::UserFile(PathBuf::from("test.yml")));
+            agent.profile.temperature = 0.1;
+            agent
+        });
+
+        user_agents.insert(
+            "user-only".to_string(),
+            AgentConfig::new("user-only", "User only agent", vec![])
+                .to_agent(AgentSource::UserFile(PathBuf::from("user-only.yml"))),
+        );
+
+        let merged_agents = merge_agents(built_in, user_agents);
+
+        // User agents should override built-in
+        assert_eq!(merged_agents.len(), 2);
+
+        let default_agent = merged_agents.get("default").unwrap();
+        assert_eq!(default_agent.prompt, "User default"); // User overrides built-in
+        assert_eq!(default_agent.tools, vec!["tool2"]);
+
+        assert!(matches!(
+            default_agent.metadata.source,
+            AgentSource::UserFile(_)
+        ));
+
+        // User-only agent should be preserved
+        assert!(merged_agents.contains_key("user-only"));
+    }
+
+    #[test]
+    fn test_multi_source_agent_loading() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_dir = temp_dir.path();
+        let agents_dir = config_dir.join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        // Create a user agent file
+        let user_agent_content = r#"
+name: "user-coder"
+prompt: "User-defined coder agent"
+tools:
+  - search
+  - file
+profile:
+  temperature: 0.2
+"#;
+        let agent_file = agents_dir.join("user-coder.yml");
+        fs::write(&agent_file, user_agent_content).unwrap();
+
+        // Create config without legacy agents section
+        let config_content = r#"
+models:
+  test-model:
+    name: test-model
+    type: gguf
+profiles: {}
+chat:
+  model: test-model
+task:
+  model: test-model
+"#;
+        let config_file = config_dir.join("arey.yml");
+        fs::write(&config_file, config_content).unwrap();
+
+        let config = get_config(Some(config_file)).unwrap();
+
+        // Should have: default agent (from default.yml) + user agent
+        assert!(config.agents.len() >= 2);
+
+        // Check default agent is present
+        assert!(config.agents.contains_key("default"));
+
+        // Check user agent is present
+        assert!(config.agents.contains_key("user-coder"));
+        let user_coder = config.agents.get("user-coder").unwrap();
+        assert_eq!(user_coder.prompt, "User-defined coder agent");
+
+        // Check metadata is properly tracked within each agent
+        let default_agent = config.agents.get("default").unwrap();
+        let user_coder_agent = config.agents.get("user-coder").unwrap();
+
+        // The default agent is loaded from the created default.yml file
+        // so it should have UserFile source
+        assert!(matches!(
+            default_agent.metadata.source,
+            AgentSource::UserFile(_)
+        ));
+        assert!(matches!(
+            user_coder_agent.metadata.source,
+            AgentSource::UserFile(_)
+        ));
+    }
+
+    #[test]
+    fn test_agent_file_format_validation() {
+        let valid_content = r#"
+name: "test-agent"
+prompt: "Test prompt"
+tools:
+  - search
+profile:
+  temperature: 0.7
+"#;
+
+        let agent: Result<AgentFileConfig, _> = serde_yaml::from_str(valid_content);
+        assert!(agent.is_ok());
+
+        let agent_config = agent.unwrap();
+        assert_eq!(agent_config.name, "test-agent");
+        assert_eq!(agent_config.prompt, "Test prompt");
+        assert_eq!(agent_config.tools, vec!["search"]);
+        assert!(agent_config.profile.is_some());
+    }
+
+    #[test]
+    fn test_agent_file_with_missing_optional_fields() {
+        let minimal_content = r#"
+name: "minimal-agent"
+prompt: "Minimal prompt"
+"#;
+
+        let agent: Result<AgentFileConfig, _> = serde_yaml::from_str(minimal_content);
+        assert!(agent.is_ok());
+
+        let agent_config = agent.unwrap();
+        assert_eq!(agent_config.name, "minimal-agent");
+        assert_eq!(agent_config.prompt, "Minimal prompt");
+        assert!(agent_config.tools.is_empty());
+        assert!(agent_config.profile.is_none());
     }
 }

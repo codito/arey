@@ -86,9 +86,8 @@ async fn main() -> Result<()> {
     };
 
     // Instantiate model and tools
-    let mut model = arey_core::get_completion_llm(config)?;
+    let model = arey_core::get_completion_llm(config)?;
     let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(WeatherTool)];
-    model.load("").await?;
 
     let mut messages = vec![ChatMessage {
         text: "What's the current weather in London?".to_string(),

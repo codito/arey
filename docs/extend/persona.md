@@ -1,36 +1,42 @@
-# Using a Persona
+# Using a Persona (Legacy)
 
-Persona allows you to chat with a specific character. E.g., the `thinker`
-persona will deliberate carefully and evaluate the pros/cons for generating
-a response.
+> **Note**: The persona system has been replaced by the unified [Agent](../../config.md#agents) system. This documentation is preserved for historical reference.
 
-## Quick start
+The legacy persona system allowed you to chat with specific characters. This functionality has been enhanced and replaced by the unified Agent system, which provides more powerful capabilities including:
 
-In a `arey chat` session, you can pick a persona for the entire session using the
-`/persona <persona name>` slash command. The conversation will use persona's
-character, style and generation instructions.
+- **Tool integration**: Agents can use tools like search and file operations
+- **Runtime state management**: Agents can have session-specific overrides
+- **Multi-source loading**: Agents can be loaded from multiple locations with precedence
+- **Enhanced configuration**: More flexible profile and tool configuration
 
-You can also invoke a persona temporarily using the `@persona_name
-<instruction>` input in the chat session.
+## Migration to Agents
 
-TODO: screenshot
+To migrate from personas to agents:
 
-## Create a Persona
+1. **Move files**: Move persona files from `~/.config/arey/persona/` to `~/.config/arey/agents/`
+2. **Update format**: Convert from persona format to agent format:
 
-`arey` picks up personas defined in the [config] directory. E.g.,
-`~/.config/arey/persona`.
+   **Legacy persona format:**
+   ```yml
+   name: "phily"
+   character:
+     system_prompt: |
+       You're phily, a philosopher from the same time as Socrates, Plato and
+       others. You're well known for your deep knowledge of stoicism.
+   ```
 
-Every persona is a simple `yaml` file.
+   **New agent format:**
+   ```yml
+   # ~/.config/arey/agents/phily.yml
+   name: "phily"
+   prompt: |
+     You're phily, a philosopher from the same time as Socrates, Plato and
+     others. You're well known for your deep knowledge of stoicism.
+   tools: []
+   profile:
+     temperature: 0.7
+   ```
 
-```yml
-# Save this to ~/.config/arey/persona/phily.yml
-name: "name of the persona. E.g., phily"
-character:
-  system_prompt: |
-    You're phily, a philosopher from the same time as Socrates, Plato and
-    others. You're well known for your deep knowledge of stoicism.
-```
+3. **Update usage**: Replace `/persona phily` with `@phily` in chat sessions
 
-`arey` will validate available persona on startup. An error loading a persona is
-considered a warning. It will ignore the persona, and you will a note when you
-try to use it.
+For more information about creating and using agents, see the [Agent Configuration](../../config.md#agents) documentation.

@@ -86,17 +86,14 @@ pub struct CompletionResponse {
 
 #[async_trait]
 pub trait CompletionModel: Send + Sync {
-    // fn context_size(&self) -> usize;
     fn metrics(&self) -> ModelMetrics;
-    async fn load(&mut self, text: &str) -> Result<()>;
     async fn complete(
-        &mut self,
+        &self,
         messages: &[ChatMessage],
         tools: Option<&[Arc<dyn Tool>]>,
         settings: &HashMap<String, String>,
         cancel_token: CancellationToken,
-    ) -> BoxStream<'_, Result<Completion>>;
-    // async fn free(&mut self);
+    ) -> BoxStream<'static, Result<Completion>>;
 }
 
 #[cfg(test)]

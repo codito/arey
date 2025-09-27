@@ -1,0 +1,9 @@
+# Default agent configuration
+# This is the built-in default agent that gets created as default.yml
+# in the user's agents directory on first run.
+#
+# Users can modify their local default.yml to customize the default agent behavior.
+# If a user deletes their default.yml file, this built-in configuration will be used.
+name: "default"
+prompt: "You are a helpful assistant."
+tools: []

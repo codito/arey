@@ -1,3 +1,6 @@
+use crate::cli::chat::commands::{CliCommand, parse_command_line};
+use crate::cli::chat::compl::Repl;
+use crate::cli::chat::prompt::format_status_prompt;
 use crate::cli::ux::{
     ChatMessageType, GenerationSpinner, TerminalRenderer, format_footer_metrics, style_chat_text,
 };
@@ -7,441 +10,19 @@ use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType,
 };
 use arey_core::tools::{Tool, ToolCall, ToolResult};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser};
 use futures::StreamExt;
-use rustyline::completion::{Candidate, Completer};
 use rustyline::error::ReadlineError;
-use rustyline::hint::Hinter;
-use rustyline::{CompletionType, Editor, Helper, Highlighter, Validator};
+use rustyline::{CompletionType, Editor};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::debug;
 
-/// Recursively removes control characters from JSON values
-fn clean_value(value: &mut serde_json::Value) {
-    match value {
-        Value::String(s) => {
-            let cleaned = s.replace(|c: char| c.is_control(), "");
-            *s = cleaned;
-        }
-        Value::Array(a) => a.iter_mut().for_each(clean_value),
-        Value::Object(m) => m.values_mut().for_each(clean_value),
-        _ => {}
-    }
-}
-
-// -------------
-// REPL commands
-// -------------
-#[derive(Parser, Debug)]
-#[command(multicall = true)]
-struct CliCommand {
-    #[command(subcommand)]
-    pub command: Command,
-}
-
-#[derive(Subcommand, Debug, Hash, PartialEq, Eq)]
-enum Command {
-    /// Clear chat history
-    Clear,
-    /// Show detailed logs for the last assistant message
-    Log,
-    /// Manage chat models.
-    ///
-    /// With no arguments, shows the current model.
-    /// Use "list" to see available models.
-    #[command(alias = "m", alias = "mod")]
-    Model {
-        /// Model name to switch to, or "list"
-        name: Option<String>,
-    },
-    /// Manage chat profiles.
-    ///
-    /// With no arguments, shows the current profile.
-    /// Use "list" to see available profiles.
-    #[command(alias = "p")]
-    Profile {
-        /// Profile name to switch to, or "list"
-        name: Option<String>,
-    },
-    /// Set tools for the chat session. E.g. /tool search
-    #[command(alias = "t")]
-    Tool {
-        /// Names of the tools to use
-        names: Vec<String>,
-    },
-    /// Set or view the system prompt for the current session.
-    ///
-    /// With no arguments, shows the current system prompt.
-    /// Provide a prompt string to set a new system prompt.
-    #[command(alias = "sys")]
-    System {
-        /// New system prompt to set (optional)
-        prompt: Option<String>,
-    },
-    /// Exit the chat session
-    #[command(alias = "q", alias = "quit")]
-    Exit,
-}
-
-impl Command {
-    /// Executes a REPL command.
-    ///
-    /// Returns `Ok(false)` if the REPL should exit.
-    pub async fn execute(self, session: Arc<Mutex<Chat<'_>>>) -> Result<bool> {
-        match self {
-            Command::Clear => {
-                session.lock().await.clear_messages().await;
-                println!("Chat history cleared");
-            }
-            Command::Log => {
-                let chat_guard = session.lock().await;
-                let messages = chat_guard.get_all_messages().await;
-                let block = format_message_block(&messages)?;
-                println!("{}", block);
-            }
-            Command::Tool { names } => {
-                let chat_guard = session.lock().await;
-                match chat_guard.set_tools(&names).await {
-                    Ok(()) => {
-                        if names.is_empty() {
-                            println!("Tools cleared.");
-                        } else {
-                            println!("Tools set: {}", names.join(", "));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error setting tools: {e}");
-                    }
-                }
-            }
-            Command::Model { name } => match name {
-                Some(name) => {
-                    if name == "list" {
-                        let chat_guard = session.lock().await;
-                        let model_names = chat_guard.available_model_names();
-                        println!("Available models: {}", model_names.join(", "));
-                    } else {
-                        let mut chat_guard = session.lock().await;
-                        let spinner =
-                            GenerationSpinner::new(format!("Loading model '{}'...", &name));
-
-                        match chat_guard.set_model(&name).await {
-                            Ok(()) => {
-                                spinner.clear();
-                                let success_msg = format!("Model switched to: {}", name);
-                                println!("{success_msg}",);
-                            }
-                            Err(e) => {
-                                spinner.clear();
-                                let error_msg = format!("Error switching model: {}", e);
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let chat_guard = session.lock().await;
-                    let model_key = chat_guard.model_key().await;
-                    println!("Current model: {}", model_key);
-                }
-            },
-            Command::Profile { name } => match name {
-                Some(name) => {
-                    if name == "list" {
-                        let chat_guard = session.lock().await;
-                        let profile_names = chat_guard.available_profile_names();
-                        println!("Available profiles: {}", profile_names.join(", "));
-                    } else {
-                        let mut chat_guard = session.lock().await;
-                        match chat_guard.set_profile(&name) {
-                            Ok(()) => {
-                                let success_msg = format!("Profile switched to: {}", name);
-                                println!("{success_msg}");
-                            }
-                            Err(e) => {
-                                let error_msg = format!("Error switching profile: {}", e);
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let chat_guard = session.lock().await;
-                    if let Some((profile_name, profile_data)) = chat_guard.current_profile() {
-                        println!("Current profile: {profile_name}");
-                        match serde_yaml::to_string(profile_data) {
-                            Ok(yaml) => {
-                                // Trim to avoid printing empty "{}" for empty-but-not-null data.
-                                let trimmed = yaml.trim();
-                                if !trimmed.is_empty() && trimmed != "{}" {
-                                    print!("{yaml}"); // `to_string` includes a newline
-                                }
-                            }
-                            Err(e) => {
-                                let error_msg = format!("Error formatting profile data: {e}");
-                                eprintln!(
-                                    "{}",
-                                    style_chat_text(&error_msg, ChatMessageType::Error)
-                                );
-                            }
-                        }
-                    } else {
-                        println!("No profile is active.");
-                    }
-                }
-            },
-            Command::System { prompt } => {
-                let mut chat_guard = session.lock().await;
-                match prompt {
-                    Some(new_prompt) => match chat_guard.set_system_prompt(&new_prompt).await {
-                        Ok(()) => {
-                            println!("System prompt updated successfully.");
-                        }
-                        Err(e) => {
-                            let error_msg = format!("Error setting system prompt: {}", e);
-                            eprintln!("{}", style_chat_text(&error_msg, ChatMessageType::Error));
-                        }
-                    },
-                    None => {
-                        let current_prompt = chat_guard.system_prompt().await;
-                        println!("Current system prompt:");
-                        println!("{}", current_prompt);
-                    }
-                }
-            }
-            Command::Exit => {
-                println!("Bye!");
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-}
-
-/// Parse command line input with robust handling for special characters
-/// Returns a vector of parsed arguments suitable for clap parsing
-fn parse_command_line(line: &str) -> Vec<String> {
-    let trimmed_line = line.trim();
-
-    let args = match shlex::split(trimmed_line) {
-        Some(parsed) => parsed,
-        None => {
-            // Fallback for cases with unescaped quotes/apostrophes
-            // Split on first space only for commands that need special handling
-            if trimmed_line.starts_with("/system")
-                || trimmed_line.starts_with("/sys")
-                || trimmed_line.starts_with("/tool")
-            {
-                if let Some(space_pos) = trimmed_line.find(' ') {
-                    let command = trimmed_line[..space_pos].to_string();
-                    let argument = trimmed_line[space_pos + 1..].trim().to_string();
-                    vec![command, argument]
-                } else {
-                    vec![trimmed_line.to_string()]
-                }
-            } else {
-                // For other commands, try simple space splitting
-                trimmed_line
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect()
-            }
-        }
-    };
-
-    // Special handling for commands that accept multi-word arguments
-    if !args.is_empty() && (args[0] == "/system" || args[0] == "/sys" || args[0] == "/tool") {
-        if args.len() > 1 {
-            // Join all arguments after the command
-            let mut processed = vec![args[0].clone()];
-            let joined_arg = args[1..].join(" ");
-            processed.push(joined_arg);
-            processed
-        } else {
-            args
-        }
-    } else {
-        args
-    }
-}
-
-// Model command completion
-fn model_compl(
-    line: &str,
-    pos: usize,
-    model_names: &[String],
-) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
-    let line_to_pos = &line[..pos];
-    if let Some(space_pos) = line_to_pos.rfind(' ') {
-        let model_prefix_start = space_pos + 1;
-        if model_prefix_start <= line_to_pos.len() {
-            let model_prefix = &line_to_pos[model_prefix_start..];
-            let mut candidates = model_names
-                .iter()
-                .filter(|name| name.starts_with(model_prefix))
-                .map(|name| CompletionCandidate::new(name))
-                .collect::<Vec<_>>();
-
-            if "list".starts_with(model_prefix) && !model_names.contains(&"list".to_string()) {
-                candidates.push(CompletionCandidate::new("list"));
-            }
-            return Ok((model_prefix_start, candidates));
-        }
-    }
-    Ok((0, Vec::new()))
-}
-
-// Profile command completion
-fn profile_compl(
-    line: &str,
-    pos: usize,
-    profile_names: &[String],
-) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
-    let line_to_pos = &line[..pos];
-    if let Some(space_pos) = line_to_pos.rfind(' ') {
-        let profile_prefix_start = space_pos + 1;
-        if profile_prefix_start <= line_to_pos.len() {
-            let profile_prefix = &line_to_pos[profile_prefix_start..];
-            let mut candidates = profile_names
-                .iter()
-                .filter(|name| name.starts_with(profile_prefix))
-                .map(|name| CompletionCandidate::new(name))
-                .collect::<Vec<_>>();
-
-            if "list".starts_with(profile_prefix) && !profile_names.contains(&"list".to_string()) {
-                candidates.push(CompletionCandidate::new("list"));
-            }
-            return Ok((profile_prefix_start, candidates));
-        }
-    }
-    Ok((0, Vec::new()))
-}
-
-// -------------
-// REPL completion
-// -------------
-#[derive(Helper, Validator, Highlighter)]
-struct Repl {
-    pub command_names: Vec<String>,
-    pub tool_names: Vec<String>,
-    pub model_names: Vec<String>,
-    pub profile_names: Vec<String>,
-}
-
-#[derive(Debug)]
-struct CompletionCandidate {
-    text: String,
-    display_string: String,
-}
-
-impl CompletionCandidate {
-    pub fn new(text: &str) -> Self {
-        let display_string = style_chat_text(text, ChatMessageType::Footer).to_string();
-        Self {
-            text: text.to_owned(),
-            display_string,
-        }
-    }
-}
-
-impl Candidate for CompletionCandidate {
-    fn display(&self) -> &str {
-        &self.display_string
-    }
-
-    fn replacement(&self) -> &str {
-        &self.text
-    }
-}
-
-impl Completer for Repl {
-    type Candidate = CompletionCandidate;
-
-    fn complete(
-        &self,
-        line: &str,
-        pos: usize,
-        _ctx: &rustyline::Context<'_>,
-    ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
-        let is_command = line.starts_with('/') || line.starts_with('!') || line.starts_with('@');
-        if !is_command {
-            return Ok((0, Vec::new()));
-        }
-
-        let args = shlex::split(line).unwrap_or_default();
-        if let Ok(cli_command) = CliCommand::try_parse_from(&args) {
-            return match cli_command.command {
-                Command::Tool { .. } => tool_compl(line, pos, &self.tool_names),
-                Command::Model { .. } => model_compl(line, pos, &self.model_names),
-                Command::Profile { .. } => profile_compl(line, pos, &self.profile_names),
-                _ => Ok((0, Vec::new())),
-            };
-        }
-
-        let candidates = self
-            .command_names
-            .iter()
-            .filter(|name| name.starts_with(line))
-            .map(|name| CompletionCandidate::new(name))
-            .collect();
-
-        Ok((0, candidates))
-    }
-}
-
-impl Hinter for Repl {
-    type Hint = String;
-
-    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
-        if line.is_empty() || pos < line.len() {
-            return None;
-        }
-        if line.starts_with('/') {
-            // Suggest command completions
-            self.command_names
-                .iter()
-                .find(|&cmd_name| cmd_name.starts_with(line))
-                .map(|cmd_name| cmd_name[line.len()..].into())
-        } else {
-            None
-        }
-    }
-}
-
-fn tool_compl(
-    line: &str,
-    pos: usize,
-    tool_names: &[String],
-) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
-    let line_to_pos = &line[..pos];
-    if let Some(space_pos) = line_to_pos.rfind(' ') {
-        let tool_prefix_start = space_pos + 1;
-        if tool_prefix_start <= line_to_pos.len() {
-            let tool_prefix = &line_to_pos[tool_prefix_start..];
-            let candidates = tool_names
-                .iter()
-                .filter(|name| name.starts_with(tool_prefix))
-                .map(|name| CompletionCandidate::new(name))
-                .collect();
-            return Ok((tool_prefix_start, candidates));
-        }
-    }
-
-    Ok((0, Vec::new()))
-}
-
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
-    println!("Welcome to arey chat! Type '/help' for commands, '/q' to exit.");
+    println!("Welcome to arey chat! Use '/command --help' for usage, '/q' to exit.");
 
     let config = rustyline::Config::builder()
         .history_ignore_dups(true)?
@@ -460,6 +41,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
             .lock()
             .await
             .available_tools
+            .clone()
             .keys()
             .map(|s| s.to_string())
             .collect()
@@ -496,23 +78,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     loop {
         let prompt = {
             let chat_guard = chat.lock().await;
-            let model_key = chat_guard.model_key().await;
-            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
-
-            let tools = chat_guard.tools().await;
-            let tools_str = if !tools.is_empty() {
-                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
-                format!(" | tools: {}", tool_names.join(", "))
-            } else {
-                String::new()
-            };
-
-            let prompt_meta = format!("[model: {}{}{}]", model_key, agent_str, tools_str);
-            format!(
-                "\n{}\n{}",
-                style_chat_text(&prompt_meta, ChatMessageType::Prompt),
-                style_chat_text("> ", ChatMessageType::Prompt)
-            )
+            format_status_prompt(&chat_guard)
         };
         let readline = rl.readline(&prompt);
         match readline {
@@ -529,7 +95,6 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                     || trimmed_line.starts_with('@');
 
                 if is_command {
-                    // TODO: error handling
                     let processed_args = parse_command_line(trimmed_line);
 
                     match CliCommand::try_parse_from(processed_args) {
@@ -539,7 +104,16 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                             }
                         }
                         Err(e) => {
-                            e.print()?;
+                            // Use Clap's built-in help system
+                            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                                || e.kind() == clap::error::ErrorKind::DisplayVersion
+                            {
+                                e.print()?;
+                            } else {
+                                // For other errors, still print them but suggest using --help
+                                e.print()?;
+                                eprintln!("Use '/command --help' for usage information.");
+                            }
                         }
                     }
                 } else {
@@ -568,6 +142,20 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     }
 }
 
+/// Recursively removes control characters from JSON values
+fn clean_value(value: &mut serde_json::Value) {
+    match value {
+        Value::String(s) => {
+            let cleaned = s.replace(|c: char| c.is_control(), "");
+            *s = cleaned;
+        }
+        Value::Array(a) => a.iter_mut().for_each(clean_value),
+        Value::Object(m) => m.values_mut().for_each(clean_value),
+        _ => {}
+    }
+}
+
+/// Process a message and generate a response.
 async fn process_message(
     chat: Arc<Mutex<Chat<'_>>>,
     renderer: &mut TerminalRenderer<'_>,
@@ -593,7 +181,7 @@ async fn process_message(
     let mut stream_error = false;
     let was_cancelled = {
         // Get stream response
-        let chat_guard = chat_clone.lock().await;
+        let mut chat_guard = chat_clone.lock().await;
         let available_tools = chat_guard.available_tools.clone();
         let mut stream = {
             chat_guard.add_messages(user_messages, tool_messages).await;
@@ -701,61 +289,6 @@ async fn process_message(
     println!("{}", style_chat_text(&footer, ChatMessageType::Footer));
 
     Ok(true)
-}
-
-/// Format the last message block (from last user message to end) into a string.
-fn format_message_block(messages: &[ChatMessage]) -> Result<String> {
-    // Find start of last block (last user message)
-    let start_idx = messages
-        .iter()
-        .rposition(|msg| msg.sender == SenderType::User)
-        .unwrap_or(0);
-
-    let last_block = &messages[start_idx..];
-
-    if last_block.is_empty() {
-        return Ok("No recent messages to display".to_string());
-    }
-
-    let mut out = String::new();
-
-    out.push_str("\n=== LAST MESSAGE BLOCK ===\n");
-    for (i, msg) in last_block.iter().enumerate() {
-        // Format sender with type-specific style
-        let sender_tag = match msg.sender {
-            SenderType::User => "USER:".to_string(),
-            SenderType::Assistant => "ASSISTANT:".to_string(),
-            SenderType::Tool => "TOOL:".to_string(),
-            SenderType::System => "SYSTEM:".to_string(),
-        };
-
-        // Truncate long messages
-        let max_length = 500;
-        let mut content = msg.text.clone();
-        let is_truncated = content.len() > max_length;
-
-        if is_truncated {
-            content.truncate(max_length);
-            content.push_str("\n... [truncated]");
-        }
-
-        out.push_str(&format!("{} {}\n", sender_tag, content));
-
-        // Show tool calls if any
-        if !msg.tools.is_empty() {
-            out.push_str("  Tools:\n");
-            for tool in &msg.tools {
-                out.push_str(&format!("    - {}: {}\n", tool.name, tool.arguments));
-            }
-        }
-
-        if i < last_block.len() - 1 {
-            out.push_str("------\n");
-        }
-    }
-    out.push_str("========================\n");
-
-    Ok(out)
 }
 
 /// Returns set of tool results as messages
@@ -884,208 +417,18 @@ mod tests {
     use anyhow::Result;
     use arey_core::{
         completion::{ChatMessage, SenderType},
-        config::{Config, get_config},
         tools::{Tool, ToolError, ToolResult},
     };
     use async_trait::async_trait;
-    use rustyline::history::DefaultHistory;
     use serde_json::{Value, json};
     use std::sync::Arc;
     use std::vec;
-    use tempfile::NamedTempFile;
     use tokio::sync::Mutex;
 
-    const BASE_TEST_CONFIG: &str = r#"
-models:
-  test-model-1:
-    provider: test
-  test-model-2:
-    provider: test
-agents:
-  test-agent:
-    prompt: "You are a test agent."
-profiles:
-  test-profile:
-    temperature: 0.8
-    repeat_penalty: 1.1
-    top_k: 40
-    top_p: 0.9
-chat:
-  model: test-model-1
-  agent: test-agent
-task:
-  model: test-model-1
-"#;
-
-    fn get_test_config_from_str(content: &str) -> Result<Config> {
-        let mut file = NamedTempFile::new().unwrap();
-        std::io::Write::write_all(&mut file, content.as_bytes()).unwrap();
-        get_config(Some(file.path().to_path_buf()))
-            .map_err(|e| anyhow::anyhow!("Failed to create temp config file. Error {}", e))
-    }
-
-    #[derive(Debug)]
-    struct MockTool;
-
-    #[async_trait]
-    impl Tool for MockTool {
-        fn name(&self) -> String {
-            "mock_tool".to_string()
-        }
-
-        fn description(&self) -> String {
-            "A mock tool for testing".to_string()
-        }
-
-        fn parameters(&self) -> Value {
-            json!({})
-        }
-
-        async fn execute(&self, _args: &Value) -> std::result::Result<Value, ToolError> {
-            Ok(json!("mock tool output"))
-        }
-    }
-
-    #[test]
-    fn test_repl_completer_for_commands() {
-        let repl = Repl {
-            command_names: vec!["/help".to_string(), "/clear".to_string()],
-            tool_names: vec![],
-            model_names: vec![],
-            profile_names: vec![],
-        };
-        let line = "/c";
-        let history = DefaultHistory::new();
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 0);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "/clear");
-    }
-
-    #[test]
-    fn test_profile_command_completion() {
-        use rustyline::history::DefaultHistory;
-        let history = DefaultHistory::new();
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec![],
-            model_names: vec![],
-            profile_names: vec!["profile1".to_string(), "profile2".to_string()],
-        };
-        let line = "/profile pro";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 9); // "/profile ".len()
-        assert_eq!(candidates.len(), 2);
-    }
-
-    #[test]
-    fn test_tool_command_completion() {
-        use rustyline::history::DefaultHistory;
-        let history = DefaultHistory::new();
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec!["search".to_string(), "browse".to_string()],
-            model_names: vec![],
-            profile_names: vec![],
-        };
-        let line = "/tool se";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 6); // "/tool ".len()
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "search");
-    }
-
-    #[test]
-    fn test_model_command_completion() {
-        use rustyline::history::DefaultHistory;
-
-        let history = DefaultHistory::new();
-
-        // Test command-line completion for the model command
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec![],
-            model_names: vec!["model1".to_string(), "model2".to_string()],
-            profile_names: vec![],
-        };
-
-        // Simulate user typing "/model mod"
-        let line = "/model mod";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-
-        // Expecting completion to start at the model prefix (after the space)
-        assert_eq!(start, 7); // "/model ".len() is 7
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0].replacement(), "model1");
-        assert_eq!(candidates[1].replacement(), "model2");
-
-        // Simulate user typing "/model l"
-        let line = "/model l";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 7);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "list");
-    }
-
-    #[test]
-    fn test_repl_completer_for_subcommands() {
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec!["search".to_string()],
-            model_names: vec!["model-1".to_string()],
-            profile_names: vec!["prof-1".to_string()],
-        };
-        let history = DefaultHistory::new();
-        let ctx = rustyline::Context::new(&history);
-
-        // Test tool completion delegation
-        let line = "/tool s";
-        let (start, candidates) = repl.complete(line, line.len(), &ctx).unwrap();
-        assert_eq!(start, 6);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "search");
-
-        // Test profile completion delegation
-        let line = "/profile p";
-        let (start, candidates) = repl.complete(line, line.len(), &ctx).unwrap();
-        assert_eq!(start, 9);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "prof-1");
-    }
-
-    #[test]
-    fn test_repl_hinter() {
-        let repl = Repl {
-            command_names: vec!["/help".to_string(), "/clear".to_string()],
-            tool_names: vec![],
-            model_names: vec![],
-            profile_names: vec![],
-        };
-        let history = DefaultHistory::new();
-        let ctx = rustyline::Context::new(&history);
-
-        // Test successful hint
-        let line = "/h";
-        let hint = repl.hint(line, line.len(), &ctx).unwrap();
-        assert_eq!(hint, "elp");
-
-        // Test no hint for non-command
-        assert!(repl.hint("abc", 3, &ctx).is_none());
-        // Test no hint when cursor is not at the end
-        assert!(repl.hint("/help", 3, &ctx).is_none());
-        // Test no hint for empty line
-        assert!(repl.hint("", 0, &ctx).is_none());
-    }
+    use crate::cli::chat::test_utils::{
+        MockTool, create_test_config_with_custom_agent, create_test_config_with_error_model,
+        create_test_config_with_tool_call_model,
+    };
 
     #[tokio::test]
     async fn test_process_tools() -> Result<()> {
@@ -1197,100 +540,6 @@ task:
         Ok(())
     }
 
-    #[test]
-    fn test_format_message_block_empty() {
-        let messages = vec![];
-        let result = format_message_block(&messages).unwrap();
-        assert_eq!(result, "No recent messages to display");
-    }
-
-    #[test]
-    fn test_format_message_block_single_user() {
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: "Test".to_string(),
-            tools: vec![],
-        }];
-        let result = format_message_block(&messages).unwrap();
-        let expected = r#"
-=== LAST MESSAGE BLOCK ===
-USER: Test
-========================
-"#;
-        assert!(result.contains(expected.trim()));
-    }
-
-    #[test]
-    fn test_format_message_block_multiple_turns() {
-        let messages = vec![
-            ChatMessage {
-                sender: SenderType::User,
-                text: "First".to_string(),
-                tools: vec![],
-            },
-            ChatMessage {
-                sender: SenderType::Assistant,
-                text: "First Response".to_string(),
-                tools: vec![],
-            },
-            ChatMessage {
-                sender: SenderType::User,
-                text: "Second".to_string(),
-                tools: vec![],
-            },
-            ChatMessage {
-                sender: SenderType::Assistant,
-                text: "Second Response".to_string(),
-                tools: vec![],
-            },
-        ];
-        let result = format_message_block(&messages).unwrap();
-        let expected = r#"
-=== LAST MESSAGE BLOCK ===
-USER: Second
-------
-ASSISTANT: Second Response
-========================
-"#;
-        assert!(result.contains(expected.trim()));
-    }
-
-    #[test]
-    fn test_format_message_block_truncation() {
-        let long_text = "a".repeat(600);
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: long_text,
-            tools: vec![],
-        }];
-        let result = format_message_block(&messages).unwrap();
-        let truncated_part = "a".repeat(500) + "\n... [truncated]";
-        assert!(result.contains(&truncated_part));
-        assert!(result.contains("[truncated]"));
-    }
-
-    #[test]
-    fn test_format_message_block_tools() {
-        let messages = vec![ChatMessage {
-            sender: SenderType::User,
-            text: "Run tool".to_string(),
-            tools: vec![ToolCall {
-                id: "id1".to_string(),
-                name: "tool1".to_string(),
-                arguments: "{\"arg\":1}".to_string(),
-            }],
-        }];
-        let result = format_message_block(&messages).unwrap();
-        let expected = r#"
-=== LAST MESSAGE BLOCK ===
-USER: Run tool
-  Tools:
-    - tool1: {"arg":1}
-========================
-"#;
-        assert!(result.contains(expected.trim()));
-    }
-
     #[tokio::test]
     async fn test_process_tools_cleans_control_characters() -> Result<()> {
         #[derive(Debug)]
@@ -1338,244 +587,9 @@ USER: Run tool
     }
 
     #[tokio::test]
-    async fn test_model_command_execute() -> Result<()> {
-        // 1. Setup config
-        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
-
-        // 2. Create Chat instance
-        let available_tools = HashMap::new();
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
-        let chat_session = Arc::new(Mutex::new(chat));
-
-        // 3. Check initial model
-        assert_eq!(chat_session.lock().await.model_key().await, "test-model-1");
-
-        // 4. Test successful model switch
-        let switch_to_2 = Command::Model {
-            name: Some("test-model-2".to_string()),
-        };
-        let result = switch_to_2.execute(chat_session.clone()).await?;
-        assert!(result, "execute should return true to continue REPL");
-        assert_eq!(chat_session.lock().await.model_key().await, "test-model-2");
-
-        // 5. Test switching to a non-existent model
-        let switch_to_bad = Command::Model {
-            name: Some("bad-model".to_string()),
-        };
-        let result = switch_to_bad.execute(chat_session.clone()).await?;
-        assert!(result, "execute should return true even on error");
-        // Model should not have changed
-        assert_eq!(chat_session.lock().await.model_key().await, "test-model-2");
-
-        // 6. Test /model list (just ensure it runs without panic)
-        let list_models = Command::Model {
-            name: Some("list".to_string()),
-        };
-        assert!(list_models.execute(chat_session.clone()).await?);
-
-        // 7. Test /model (just ensure it runs without panic)
-        let current_model = Command::Model { name: None };
-        assert!(current_model.execute(chat_session.clone()).await?);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_profile_command_execute() -> Result<()> {
-        // 1. Setup config
-        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
-
-        // 2. Create Chat instance
-        let chat = Chat::new(&config, Some("test-model-2".to_string()), HashMap::new()).await?;
-        assert_eq!(chat.agent_name(), "test-agent".to_string());
-        let chat_session = Arc::new(Mutex::new(chat));
-
-        // 3. Test that switching profile fails, as it's not supported in chat mode
-        let switch_to_prof = Command::Profile {
-            name: Some("test-profile".to_string()),
-        };
-        // The command will print an error but not exit the REPL loop
-        assert!(switch_to_prof.execute(chat_session.clone()).await?);
-
-        let chat_guard = chat_session.lock().await;
-        assert_eq!(
-            chat_guard.agent_name(),
-            "test-agent",
-            "Agent should not have changed after a failed attempt to set profile"
-        );
-        drop(chat_guard);
-
-        // 5. Test /model list (ensure it runs)
-        let list_models = Command::Model {
-            name: Some("list".to_string()),
-        };
-        assert!(list_models.execute(chat_session.clone()).await?);
-
-        // 6. Test /model (ensure it shows current model)
-        let current_model = Command::Model { name: None };
-        assert!(current_model.execute(chat_session.clone()).await?);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_tool_command_and_prompt() -> Result<()> {
-        // 1. Setup config
-        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
-
-        // 2. Create Chat instance with a mock tool
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("mock_tool", mock_tool)]);
-
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
-        let chat_session = Arc::new(Mutex::new(chat));
-
-        // 3. Test setting a tool
-        let set_tool_cmd = Command::Tool {
-            names: vec!["mock_tool".to_string()],
-        };
-        let result = set_tool_cmd.execute(chat_session.clone()).await?;
-        assert!(result, "execute should return true to continue REPL");
-
-        // Check that the tool is actually set
-        {
-            let chat_guard = chat_session.lock().await;
-            let tools = chat_guard.tools().await;
-            assert_eq!(tools.len(), 1);
-            assert_eq!(tools[0].name(), "mock_tool");
-        }
-
-        // 4. Test prompt generation
-        let prompt_meta = {
-            let chat_guard = chat_session.lock().await;
-            let model_key = chat_guard.model_key().await;
-            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
-            let tools = chat_guard.tools().await;
-            let tools_str = if !tools.is_empty() {
-                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
-                format!(" | tools: {}", tool_names.join(", "))
-            } else {
-                String::new()
-            };
-            format!("[model: {}{}{}]", model_key, agent_str, tools_str)
-        };
-
-        assert_eq!(
-            prompt_meta,
-            "[model: test-model-1 | agent: test-agent | tools: mock_tool]"
-        );
-
-        // 5. Test clearing tools
-        let clear_tools_cmd = Command::Tool { names: vec![] };
-        clear_tools_cmd.execute(chat_session.clone()).await?;
-
-        let prompt_meta_after_clear = {
-            let chat_guard = chat_session.lock().await;
-            let model_key = chat_guard.model_key().await;
-            let agent_str = format!(" | agent: {}", chat_guard.agent_name());
-            let tools = chat_guard.tools().await;
-            let tools_str = if !tools.is_empty() {
-                let tool_names: Vec<_> = tools.iter().map(|t| t.name()).collect();
-                format!(" | tools: {}", tool_names.join(", "))
-            } else {
-                String::new()
-            };
-            format!("[model: {}{}{}]", model_key, agent_str, tools_str)
-        };
-
-        assert_eq!(
-            prompt_meta_after_clear,
-            "[model: test-model-1 | agent: test-agent]"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_command_execute_various() -> Result<()> {
-        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
-        let chat_session = Arc::new(Mutex::new(chat));
-
-        // Test Clear command
-        chat_session
-            .lock()
-            .await
-            .add_messages(
-                vec![ChatMessage {
-                    sender: SenderType::User,
-                    text: "hello".to_string(),
-                    tools: vec![],
-                }],
-                vec![],
-            )
-            .await;
-        assert!(
-            !chat_session
-                .lock()
-                .await
-                .get_all_messages()
-                .await
-                .is_empty()
-        );
-        let clear_cmd = Command::Clear;
-        assert!(clear_cmd.execute(chat_session.clone()).await?);
-        assert!(
-            chat_session
-                .lock()
-                .await
-                .get_all_messages()
-                .await
-                .is_empty()
-        );
-
-        // Test Log command
-        chat_session
-            .lock()
-            .await
-            .add_messages(
-                vec![ChatMessage {
-                    sender: SenderType::User,
-                    text: "log this".to_string(),
-                    tools: vec![],
-                }],
-                vec![],
-            )
-            .await;
-        let log_cmd = Command::Log;
-        assert!(log_cmd.execute(chat_session.clone()).await?);
-
-        // Test Tool command error
-        let set_bad_tool_cmd = Command::Tool {
-            names: vec!["nonexistent_tool".to_string()],
-        };
-        assert!(set_bad_tool_cmd.execute(chat_session.clone()).await?);
-        assert!(chat_session.lock().await.tools().await.is_empty());
-
-        // Test Prompt command
-        let new_prompt = "You are a helpful coding assistant.";
-        let set_prompt_cmd = Command::System {
-            prompt: Some(new_prompt.to_string()),
-        };
-        assert!(set_prompt_cmd.execute(chat_session.clone()).await?);
-        assert_eq!(chat_session.lock().await.system_prompt().await, new_prompt);
-
-        // Test viewing current prompt (no arguments)
-        let view_prompt_cmd = Command::System { prompt: None };
-        assert!(view_prompt_cmd.execute(chat_session.clone()).await?);
-
-        // Test Exit command
-        let exit_cmd = Command::Exit;
-        assert!(!exit_cmd.execute(chat_session.clone()).await?);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_process_message_simple_response() -> Result<()> {
         // 1. Setup Chat and Renderer
-        let config = get_test_config_from_str(BASE_TEST_CONFIG)?;
+        let config = create_test_config_with_custom_agent()?;
         let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
@@ -1598,18 +612,7 @@ USER: Run tool
 
     #[tokio::test]
     async fn test_process_message_with_tool_call() -> Result<()> {
-        let tool_call_config = r#"
-models:
-  tool-call-model:
-    provider: test
-    response_mode: "tool_call"
-profiles: {}
-chat:
-  model: tool-call-model
-task:
-  model: tool-call-model
-"#;
-        let config = get_test_config_from_str(tool_call_config)?;
+        let config = create_test_config_with_tool_call_model()?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools: HashMap<&str, Arc<dyn Tool>> =
             HashMap::from([("mock_tool", mock_tool)]);
@@ -1639,18 +642,7 @@ task:
 
     #[tokio::test]
     async fn test_process_message_stream_error() -> Result<()> {
-        let error_config = r#"
-models:
-  error-model:
-    provider: test
-    response_mode: "error"
-profiles: {}
-chat:
-  model: error-model
-task:
-  model: error-model
-"#;
-        let config = get_test_config_from_str(error_config)?;
+        let config = create_test_config_with_error_model()?;
         let chat = Chat::new(&config, Some("error-model".to_string()), HashMap::new()).await?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
@@ -1672,47 +664,5 @@ task:
             output
         );
         Ok(())
-    }
-
-    #[test]
-    fn test_system_command_parsing_edge_cases() {
-        let test_cases = vec![
-            // Test normal case with spaces
-            ("/system you are an expert", Some("you are an expert")),
-            // Test apostrophes (the main issue)
-            ("/system you're an expert", Some("you're an expert")),
-            // Test quotes (should still work with shlex)
-            ("/system \"quoted text\"", Some("quoted text")),
-            // Test mixed punctuation
-            ("/system hello, world!", Some("hello, world!")),
-            // Test no arguments (should work)
-            ("/system", None),
-            // Test alias
-            ("/sys you're an expert", Some("you're an expert")),
-        ];
-
-        for (input, expected_prompt) in test_cases {
-            // Use the shared parsing function
-            let processed_args = parse_command_line(input);
-
-            let result = CliCommand::try_parse_from(processed_args);
-            assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
-
-            let cli_command = result.unwrap();
-            match cli_command.command {
-                Command::System { prompt } => {
-                    assert_eq!(
-                        prompt,
-                        expected_prompt.map(|s| s.to_string()),
-                        "Failed for input: '{}'",
-                        input
-                    );
-                }
-                _ => panic!(
-                    "Expected System command for input: '{}', got {:?}",
-                    input, cli_command.command
-                ),
-            }
-        }
     }
 }

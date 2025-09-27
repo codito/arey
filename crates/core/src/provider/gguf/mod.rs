@@ -125,18 +125,14 @@ impl CompletionModel for GgufBaseModel {
         self.metrics.clone()
     }
 
-    async fn load(&mut self, _text: &str) -> Result<()> {
-        Ok(())
-    }
-
     #[instrument(skip_all)]
     async fn complete(
-        &mut self,
+        &self,
         messages: &[ChatMessage],
         tools: Option<&[Arc<dyn Tool>]>,
         settings: &std::collections::HashMap<String, String>,
         cancel_token: CancellationToken,
-    ) -> BoxStream<'_, Result<Completion, anyhow::Error>> {
+    ) -> BoxStream<'static, Result<Completion, anyhow::Error>> {
         // Create channel for results
         let (tx, rx) = mpsc::channel(32);
         let max_tokens = settings
@@ -163,7 +159,7 @@ impl CompletionModel for GgufBaseModel {
         tokio::task::spawn_blocking(move || {
             if let Err(e) = (|| -> Result<()> {
                 let (start_re, end_re) = template::get_tool_call_regexes(&model_basename);
-                let mut tool_parser = ToolCallParser::new(start_re, end_re)
+                let tool_parser = ToolCallParser::new(start_re, end_re)
                     .context("Failed to create tool call parser")?;
                 let model = model_ref.blocking_lock();
 

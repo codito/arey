@@ -8,7 +8,11 @@ use std::io::stdout;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+mod commands;
+mod compl;
+mod prompt;
 mod repl;
+mod test_utils;
 
 /// Executes the chat command, starting an interactive REPL session.
 pub async fn execute(

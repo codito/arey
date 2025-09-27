@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo:*)"
+      "Bash(cargo:*)",
+      "Bash(find:*)",
+      "Bash(git diff:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

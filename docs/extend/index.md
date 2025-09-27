@@ -2,10 +2,9 @@
 
 You can extend `arey` to customize various use cases.
 
-1. **Persona** can help use the LLM in a specific behavior or style. A persona
-   can use any of the below extensions. See [persona] for a guide to create, or
-   use characters.
-2. **Tools** can perform an external task. E.g. get latest weather, calculate an
+1. **Agents** define AI personas with specific prompts, tool access, and behavioral
+   settings. Agents are the primary way to customize LLM behavior. See [agent configuration](../config.md#agents) for details.
+2. **Tools** can perform external tasks. E.g. get latest weather, calculate an
    expression, search. Please refer to [tools] for more guidance.
 3. **Variables** are tokens that allow the LLM to retrieve specific information
    at runtime from various tools. E.g., refer to the shell history, or browser
@@ -14,7 +13,8 @@ You can extend `arey` to customize various use cases.
    up-to-date knowledge on anything. E.g., Wikipedia or personal notes. More
    details are in [knowledge] guide.
 
-[persona]: ./persona.md
+> **Note**: The legacy [Persona](./persona.md) system has been replaced by the unified Agent system.
+
 [tools]: ./tools.md
 [variables]: #
 [knowledge]: #
@@ -23,7 +23,7 @@ You can extend `arey` to customize various use cases.
 
 | Mechanism      | How to use             | Example                          |
 | -------------- | ---------------------- | -------------------------------- |
-| Persona        | @character or /persona | @socrates advise on <situation>  |
+| Agent          | @agent_name            | @coder Write a function to...   |
 | Tool           | !tool or /tool         | !calc 2+3, or !weather           |
 | Variables      | $source or /vars       | Summarize ${browser.tab} content |
 | Knowledge base | #source or /kb         | Define stoicism from #notes      |
