@@ -374,7 +374,6 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use std::sync::Arc;
-    use tempfile::NamedTempFile;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path},
@@ -410,50 +409,7 @@ mod tests {
         body
     }
 
-    fn create_temp_config_file(server_uri: &str) -> NamedTempFile {
-        let config_file = NamedTempFile::new().unwrap();
-        let config_dir = config_file.path().parent().unwrap();
-
-        // Create agents directory in the same directory as the config file
-        let agents_dir = config_dir.join("agents");
-        std::fs::create_dir_all(&agents_dir).unwrap();
-
-        // Create the test agent file
-        let test_agent_path = agents_dir.join("test-agent.yml");
-        let test_agent_content = r#"
-name: "test-agent"
-prompt: "You are a test agent."
-tools: [ "mock_tool" ]
-profile:
-  temperature: 0.1
-"#;
-        std::fs::write(&test_agent_path, test_agent_content).unwrap();
-
-        // Create the main config file
-        let config_content = format!(
-            r#"
-models:
-  test-model:
-    provider: openai
-    base_url: "{server_uri}"
-    api_key: "MOCK_OPENAI_API_KEY"
-chat:
-  model: test-model
-  agent: "test-agent"
-task:
-  model: test-model
-  agent: "test-agent"
-profiles:
-  test-profile:
-    temperature: 0.5
-    top_p: 0.9
-    repeat_penalty: 1.1
-    top_k: 40
-"#,
-        );
-        std::io::Write::write_all(&mut config_file.as_file(), config_content.as_bytes()).unwrap();
-        config_file
-    }
+    use crate::test_utils::create_temp_config_file_with_agent as create_temp_config_file;
 
     async fn get_test_config(server: &MockServer) -> Result<Config> {
         let config_file = create_temp_config_file(&server.uri());

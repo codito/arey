@@ -81,7 +81,6 @@ mod tests {
     use super::*;
     use arey_core::config::get_config;
     use serde_json::json;
-    use tempfile::NamedTempFile;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path},
@@ -117,26 +116,7 @@ mod tests {
         body
     }
 
-    fn create_temp_config_file(server_uri: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        let config_content = format!(
-            r#"
-models:
-  test-model:
-    name: test-model
-    provider: openai
-    base_url: "{server_uri}"
-    api_key: "MOCK_OPENAI_API_KEY"
-profiles: {{}}
-chat:
-    model: test-model
-task:
-  model: test-model
-"#,
-        );
-        std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
-        file
-    }
+    use crate::test_utils::create_temp_config_file;
 
     #[tokio::test]
     async fn test_execute_success() -> Result<()> {

@@ -48,3 +48,4 @@ once_cell.workspace = true
 
 [features]
 cuda = ["arey-core/cuda"]
+vulkan = ["arey-core/vulkan"]

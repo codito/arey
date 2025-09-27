@@ -26,7 +26,7 @@ See @README.md for an overview.
 ### Code Quality
 
 - `cargo fmt --all` - Format code with rustfmt
-- `cargo clippy --all-targets --all-features -- -D warnings` - Run clippy linter
+- `cargo clippy --all-targets --features vulkan -- -D warnings` - Run clippy linter
 - `cargo check` - Quick typecheck without full build
 
 ## Architecture

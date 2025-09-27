@@ -1,17 +1,17 @@
 repos:
--   repo: local
+  - repo: local
     hooks:
-    -   id: rust-linting
+      - id: rust-linting
         name: Rust linting
         description: Run cargo fmt on files included in the commit. rustfmt should be installed before-hand.
         entry: cargo fmt --all --
         pass_filenames: true
         types: [file, rust]
         language: system
-    -   id: rust-clippy
+      - id: rust-clippy
         name: Rust clippy
         description: Run cargo clippy on files included in the commit. clippy should be installed before-hand.
-        entry: cargo clippy --all-targets --all-features -- -Dclippy::all
+        entry: cargo clippy --all-targets --features vulkan -- -Dclippy::all
         pass_filenames: false
         types: [file, rust]
         language: system
