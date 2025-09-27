@@ -78,6 +78,8 @@ jobs:
         key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
     - name: Build
       run: cargo build --release ${{ matrix.cuda && '--features cuda' || matrix.vulkan && '--features vulkan' || '' }}
+      env:
+        LD_LIBRARY_PATH: ${{ matrix.os == 'ubuntu-latest' && matrix.vulkan && env.VULKAN_SDK + '/lib' || '' }}
     - name: Package artifacts (Linux)
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
