@@ -58,7 +58,12 @@ jobs:
         log-file-suffix: '${{matrix.os}}.txt'
     - name: Install Vulkan
       if: matrix.vulkan
-      uses: humbletim/install-vulkan-sdk@v1.2
+      uses: jakoch/install-vulkan-sdk-action@v1
+      with:
+        vulkan_version: latest
+        install_runtime: true
+        cache: true
+        stripdown: true
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
