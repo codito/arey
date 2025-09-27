@@ -211,7 +211,7 @@ mod test {
     };
 
     use super::*;
-    use tempfile::{NamedTempFile, tempdir};
+    use tempfile::tempdir;
 
     const SAMPLE_PLAY_CONTENT: &str = r#"---
 model: test-model
@@ -255,25 +255,7 @@ Test prompt
         body
     }
 
-    fn create_temp_config_file(server_uri: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        let config_content = format!(
-            r#"
-models:
-  test-model:
-    provider: openai
-    base_url: "{server_uri}"
-    api_key: "MOCK_OPENAI_API_KEY"
-profiles: {{}}
-chat:
-  model: test-model
-task:
-  model: test-model
-"#,
-        );
-        std::io::Write::write_all(&mut file, config_content.as_bytes()).unwrap();
-        file
-    }
+    use crate::test_utils::create_temp_config_file;
 
     async fn get_test_config(server: &MockServer) -> Result<Config> {
         let config_file = create_temp_config_file(&server.uri());

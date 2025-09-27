@@ -401,42 +401,13 @@ pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigErro
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        fs::{self, File},
-        io::Write,
-        path::PathBuf,
-    };
+    use std::{collections::HashMap, fs, path::PathBuf};
 
     use tempfile::tempdir;
 
     use super::*;
     use crate::agent::AgentConfig;
-
-    fn create_temp_config(content: &str) -> PathBuf {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("arey.yml");
-        fs::create_dir_all(temp_dir.path()).unwrap();
-        File::create(&config_path)
-            .unwrap()
-            .write_all(content.as_bytes())
-            .unwrap();
-        // Keep the temp directory alive by leaking it (this is just for tests)
-        let _ = Box::leak(Box::new(temp_dir));
-        config_path
-    }
-
-    fn dummy_model_config(name: &str) -> crate::model::ModelConfig {
-        crate::model::ModelConfig {
-            name: name.to_string(),
-            key: "".to_string(), // Default empty
-            provider: crate::model::ModelProvider::Gguf,
-            settings: HashMap::from([(
-                "n_ctx".to_string(),
-                serde_yaml::Value::Number(4096.into()),
-            )]),
-        }
-    }
+    use crate::test_utils::{create_temp_config, dummy_model_config};
 
     // Dummy config content for tests
     const DUMMY_CONFIG_CONTENT: &str = r#"
