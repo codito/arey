@@ -48,3 +48,4 @@ reqwest = { workspace = true, features = ["json"] }
 
 [features]
 cuda = ["llama-cpp-2/cuda"]
+vulkan = ["llama-cpp-2/vulkan"]
