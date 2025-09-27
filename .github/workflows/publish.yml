@@ -72,14 +72,7 @@ jobs:
           target
         key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
     - name: Build
-      run: |
-        if [ "${{ matrix.cuda }}" = "true" ]; then
-          cargo build --release --features cuda
-        elif [ "${{ matrix.vulkan }}" = "true" ]; then
-          cargo build --release --features vulkan
-        else
-          cargo build --release
-        fi
+      run: cargo build --release ${{ matrix.cuda && '--features cuda' || matrix.vulkan && '--features vulkan' || '' }}
     - name: Package artifacts (Linux)
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
