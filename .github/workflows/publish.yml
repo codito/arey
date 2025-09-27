@@ -58,12 +58,11 @@ jobs:
         log-file-suffix: '${{matrix.os}}.txt'
     - name: Install Vulkan
       if: matrix.vulkan
-      uses: jakoch/install-vulkan-sdk-action@v1
-      with:
-        vulkan_version: latest
-        install_runtime: true
-        cache: true
-        stripdown: true
+      run: |
+        wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+        sudo apt-get update
+        sudo apt-get install -y vulkan-sdk
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -78,8 +77,6 @@ jobs:
         key: ${{ runner.os }}-publish-${{ matrix.artifact_name }}-${{ hashFiles('Cargo.lock') }}
     - name: Build
       run: cargo build --release ${{ matrix.cuda && '--features cuda' || matrix.vulkan && '--features vulkan' || '' }}
-      env:
-        LD_LIBRARY_PATH: ${{ matrix.os == 'ubuntu-latest' && matrix.vulkan && format('{0}/lib', env.VULKAN_SDK) || '' }}
     - name: Package artifacts (Linux)
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
