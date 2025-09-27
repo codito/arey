@@ -58,9 +58,7 @@ jobs:
         log-file-suffix: '${{matrix.os}}.txt'
     - name: Install Vulkan
       if: matrix.vulkan
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y vulkan-sdk glslang-dev spirv-tools
+      uses: humbletim/install-vulkan-sdk@v1.2.0
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
