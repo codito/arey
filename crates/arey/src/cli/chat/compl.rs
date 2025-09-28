@@ -41,6 +41,7 @@ pub struct Repl {
     pub tool_names: Vec<String>,
     pub model_names: Vec<String>,
     pub profile_names: Vec<String>,
+    pub agent_names: Vec<String>,
 }
 
 impl Completer for Repl {
@@ -60,9 +61,23 @@ impl Completer for Repl {
         let args = parse_command_line(line);
         if let Ok(cli_command) = CliCommand::try_parse_from(&args) {
             return match cli_command.command {
-                Command::Tool { .. } => tool_compl(line, pos, &self.tool_names),
-                Command::Model { .. } => model_compl(line, pos, &self.model_names),
-                Command::Profile { .. } => profile_compl(line, pos, &self.profile_names),
+                Command::Tool { .. } => {
+                    let mut candidates = self.tool_names.clone();
+                    candidates.push("clear".to_string());
+                    compl(line, pos, &candidates)
+                }
+                Command::Model { .. } => {
+                    let candidates = self.model_names.clone();
+                    compl(line, pos, &candidates)
+                }
+                Command::Profile { .. } => {
+                    let candidates = self.profile_names.clone();
+                    compl(line, pos, &candidates)
+                }
+                Command::Agent { .. } => {
+                    let candidates = self.agent_names.clone();
+                    compl(line, pos, &candidates)
+                }
                 _ => Ok((0, Vec::new())),
             };
         }
@@ -97,78 +112,25 @@ impl Hinter for Repl {
     }
 }
 
-// Model command completion
-fn model_compl(
+/// Command completion function
+fn compl(
     line: &str,
     pos: usize,
-    model_names: &[String],
+    names: &[String],
 ) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
     let line_to_pos = &line[..pos];
     if let Some(space_pos) = line_to_pos.rfind(' ') {
-        let model_prefix_start = space_pos + 1;
-        if model_prefix_start <= line_to_pos.len() {
-            let model_prefix = &line_to_pos[model_prefix_start..];
-            let mut candidates = model_names
+        let prefix_start = space_pos + 1;
+        if prefix_start <= line_to_pos.len() {
+            let prefix = &line_to_pos[prefix_start..];
+            let candidates = names
                 .iter()
-                .filter(|name| name.starts_with(model_prefix))
+                .filter(|name| name.starts_with(prefix))
                 .map(|name| CompletionCandidate::new(name))
                 .collect::<Vec<_>>();
-
-            if "list".starts_with(model_prefix) && !model_names.contains(&"list".to_string()) {
-                candidates.push(CompletionCandidate::new("list"));
-            }
-            return Ok((model_prefix_start, candidates));
+            return Ok((prefix_start, candidates));
         }
     }
-    Ok((0, Vec::new()))
-}
-
-// Profile command completion
-fn profile_compl(
-    line: &str,
-    pos: usize,
-    profile_names: &[String],
-) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
-    let line_to_pos = &line[..pos];
-    if let Some(space_pos) = line_to_pos.rfind(' ') {
-        let profile_prefix_start = space_pos + 1;
-        if profile_prefix_start <= line_to_pos.len() {
-            let profile_prefix = &line_to_pos[profile_prefix_start..];
-            let mut candidates = profile_names
-                .iter()
-                .filter(|name| name.starts_with(profile_prefix))
-                .map(|name| CompletionCandidate::new(name))
-                .collect::<Vec<_>>();
-
-            if "list".starts_with(profile_prefix) && !profile_names.contains(&"list".to_string()) {
-                candidates.push(CompletionCandidate::new("list"));
-            }
-            return Ok((profile_prefix_start, candidates));
-        }
-    }
-    Ok((0, Vec::new()))
-}
-
-/// Tool command completion
-fn tool_compl(
-    line: &str,
-    pos: usize,
-    tool_names: &[String],
-) -> Result<(usize, Vec<CompletionCandidate>), ReadlineError> {
-    let line_to_pos = &line[..pos];
-    if let Some(space_pos) = line_to_pos.rfind(' ') {
-        let tool_prefix_start = space_pos + 1;
-        if tool_prefix_start <= line_to_pos.len() {
-            let tool_prefix = &line_to_pos[tool_prefix_start..];
-            let candidates = tool_names
-                .iter()
-                .filter(|name| name.starts_with(tool_prefix))
-                .map(|name| CompletionCandidate::new(name))
-                .collect();
-            return Ok((tool_prefix_start, candidates));
-        }
-    }
-
     Ok((0, Vec::new()))
 }
 
@@ -184,6 +146,7 @@ mod tests {
             tool_names: vec![],
             model_names: vec![],
             profile_names: vec![],
+            agent_names: vec![],
         };
         let line = "/c";
         let history = DefaultHistory::new();
@@ -196,107 +159,13 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_command_completion() {
-        let history = DefaultHistory::new();
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec![],
-            model_names: vec![],
-            profile_names: vec!["profile1".to_string(), "profile2".to_string()],
-        };
-        let line = "/profile pro";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 9); // "/profile ".len()
-        assert_eq!(candidates.len(), 2);
-    }
-
-    #[test]
-    fn test_tool_command_completion() {
-        let history = DefaultHistory::new();
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec!["search".to_string(), "browse".to_string()],
-            model_names: vec![],
-            profile_names: vec![],
-        };
-        let line = "/tool se";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 6); // "/tool ".len()
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "search");
-    }
-
-    #[test]
-    fn test_model_command_completion() {
-        let history = DefaultHistory::new();
-
-        // Test command-line completion for the model command
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec![],
-            model_names: vec!["model1".to_string(), "model2".to_string()],
-            profile_names: vec![],
-        };
-
-        // Simulate user typing "/model mod"
-        let line = "/model mod";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-
-        // Expecting completion to start at the model prefix (after the space)
-        assert_eq!(start, 7); // "/model ".len() is 7
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0].replacement(), "model1");
-        assert_eq!(candidates[1].replacement(), "model2");
-
-        // Simulate user typing "/model l"
-        let line = "/model l";
-        let (start, candidates) = repl
-            .complete(line, line.len(), &rustyline::Context::new(&history))
-            .unwrap();
-        assert_eq!(start, 7);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "list");
-    }
-
-    #[test]
-    fn test_repl_completer_for_subcommands() {
-        let repl = Repl {
-            command_names: vec![],
-            tool_names: vec!["search".to_string()],
-            model_names: vec!["model-1".to_string()],
-            profile_names: vec!["prof-1".to_string()],
-        };
-        let history = DefaultHistory::new();
-        let ctx = rustyline::Context::new(&history);
-
-        // Test tool completion delegation
-        let line = "/tool s";
-        let (start, candidates) = repl.complete(line, line.len(), &ctx).unwrap();
-        assert_eq!(start, 6);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "search");
-
-        // Test profile completion delegation
-        let line = "/profile p";
-        let (start, candidates) = repl.complete(line, line.len(), &ctx).unwrap();
-        assert_eq!(start, 9);
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].replacement(), "prof-1");
-    }
-
-    #[test]
     fn test_repl_hinter() {
         let repl = Repl {
             command_names: vec!["/help".to_string(), "/clear".to_string()],
             tool_names: vec![],
             model_names: vec![],
             profile_names: vec![],
+            agent_names: vec![],
         };
         let history = DefaultHistory::new();
         let ctx = rustyline::Context::new(&history);
@@ -312,5 +181,112 @@ mod tests {
         assert!(repl.hint("/help", 3, &ctx).is_none());
         // Test no hint for empty line
         assert!(repl.hint("", 0, &ctx).is_none());
+    }
+
+    #[test]
+    fn test_completion_function_basic() {
+        let names = vec!["model1".to_string(), "model2".to_string()];
+
+        // Test basic name completion
+        let result = compl("/model m", 8, &names).unwrap();
+        assert_eq!(result.0, 7); // "/model ".len()
+        assert_eq!(result.1.len(), 2); // model1, model2
+        assert_eq!(result.1[0].replacement(), "model1");
+        assert_eq!(result.1[1].replacement(), "model2");
+    }
+
+    #[test]
+    fn test_completion_function_all_commands() {
+        let tool_names = vec![
+            "search".to_string(),
+            "browse".to_string(),
+            "clear".to_string(),
+        ];
+        let model_names = vec!["gpt-4".to_string(), "claude".to_string()];
+
+        // Test tool completion with search
+        let result = compl("/tool s", 7, &tool_names).unwrap();
+        assert_eq!(result.0, 6); // "/tool ".len()
+        assert_eq!(result.1.len(), 1);
+        assert_eq!(result.1[0].replacement(), "search");
+
+        // Test tool completion with "clear"
+        let result = compl("/tool c", 7, &tool_names).unwrap();
+        assert_eq!(result.0, 6);
+        assert_eq!(result.1.len(), 1);
+        assert_eq!(result.1[0].replacement(), "clear");
+
+        // Test model completion
+        let result = compl("/model g", 8, &model_names).unwrap();
+        assert_eq!(result.0, 7);
+        assert_eq!(result.1.len(), 1);
+        assert_eq!(result.1[0].replacement(), "gpt-4");
+
+        // Test no matches
+        let result = compl("/tool x", 7, &tool_names).unwrap();
+        assert_eq!(result.0, 6);
+        assert_eq!(result.1.len(), 0);
+    }
+
+    #[test]
+    fn test_completion_function_edge_cases() {
+        // Test with empty names
+        let result = compl("/agent l", 8, &[]).unwrap();
+        assert_eq!(result.0, 7);
+        assert_eq!(result.1.len(), 0);
+
+        // Test with no space in command (edge case)
+        let result = compl("/agent", 6, &["test".to_string()]).unwrap();
+        assert_eq!(result.0, 0);
+        assert_eq!(result.1.len(), 0);
+
+        // Test with multiple matches
+        let names = vec!["clear".to_string(), "load".to_string()];
+        let result = compl("/tool l", 7, &names).unwrap();
+        assert_eq!(result.0, 6);
+        assert_eq!(result.1.len(), 1); // "load" only
+    }
+
+    #[test]
+    fn test_repl_integration_with_all_commands() {
+        let repl = Repl {
+            command_names: vec![],
+            tool_names: vec!["search".to_string()],
+            model_names: vec!["gpt-4".to_string(), "claude".to_string()],
+            profile_names: vec!["creative".to_string(), "precise".to_string()],
+            agent_names: vec!["coder".to_string(), "researcher".to_string()],
+        };
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // Test tool completion (now supports list)
+        let (start, candidates) = repl.complete("/tool s", 7, &ctx).unwrap();
+        assert_eq!(start, 6);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "search");
+
+        // Test tool completion with "clear"
+        let (start, candidates) = repl.complete("/tool c", 7, &ctx).unwrap();
+        assert_eq!(start, 6);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "clear");
+
+        // Test model completion
+        let (start, candidates) = repl.complete("/model gp", 8, &ctx).unwrap();
+        assert_eq!(start, 7);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "gpt-4");
+
+        // Test profile completion
+        let (start, candidates) = repl.complete("/profile cr", 10, &ctx).unwrap();
+        assert_eq!(start, 9);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "creative");
+
+        // Test agent completion (with list)
+        let (start, candidates) = repl.complete("/agent r", 8, &ctx).unwrap();
+        assert_eq!(start, 7);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].replacement(), "researcher");
     }
 }

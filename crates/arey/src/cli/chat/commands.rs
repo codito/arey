@@ -23,35 +23,36 @@ pub enum Command {
     Log,
     /// Manage chat models.
     ///
-    /// With no arguments, shows the current model.
-    /// Use "list" to see available models.
+    /// With no arguments, shows the current model and available models.
     #[command(alias = "m", alias = "mod")]
     Model {
-        /// Model name to switch to, or "list"
+        /// Model name to switch to
         name: Option<String>,
     },
     /// Manage chat profiles.
     ///
-    /// With no arguments, shows the current profile.
-    /// Use "list" to see available profiles.
+    /// With no arguments, shows the current profile and available profiles.
     #[command(alias = "p")]
     Profile {
-        /// Profile name to switch to, or "list"
+        /// Profile name to switch to
         name: Option<String>,
     },
-    /// Set tools for the chat session. E.g. /tool search
+    /// Manage chat tools.
+    ///
+    /// With no arguments, shows current active tools and available tools.
+    /// Use "clear" to remove all active tools.
+    /// Provide tool names to set active tools.
     #[command(alias = "t")]
     Tool {
-        /// Names of the tools to use
+        /// Tool names to set, or "clear"
         names: Vec<String>,
     },
     /// Manage chat agents.
     ///
-    /// With no arguments, shows the current agent and source.
-    /// Use "list" to see available agents with their sources.
+    /// With no arguments, shows the current agent and available agents with their sources.
     #[command(alias = "a")]
     Agent {
-        /// Agent name to switch to, or "list"
+        /// Agent name to switch to
         name: Option<String>,
     },
     /// Set or view the system prompt for the current session.
@@ -100,17 +101,45 @@ impl Command {
     }
 
     async fn execute_tool(&self, session: Arc<Mutex<Chat<'_>>>, names: &[String]) -> Result<bool> {
-        let mut chat_guard = session.lock().await;
-        match chat_guard.set_tools(names).await {
-            Ok(()) => {
-                if names.is_empty() {
-                    println!("Tools cleared.");
-                } else {
+        if names.len() == 1 && names[0] == "clear" {
+            // Clear all tools
+            let mut chat_guard = session.lock().await;
+            let current_tools = chat_guard.tools();
+            if current_tools.is_empty() {
+                println!("No tools are currently active.");
+            } else {
+                let tool_names: Vec<String> =
+                    current_tools.iter().map(|t| t.name().to_string()).collect();
+                chat_guard.set_tools(&[]).await?;
+                println!("Tools cleared: {}", tool_names.join(", "));
+            }
+        } else if names.is_empty() {
+            // Show current and available tools
+            let chat_guard = session.lock().await;
+            let current_tools = chat_guard.tools();
+            let available_tools = chat_guard.available_tool_names();
+
+            if current_tools.is_empty() {
+                println!("No tools are currently active.");
+            } else {
+                let tool_names: Vec<String> =
+                    current_tools.iter().map(|t| t.name().to_string()).collect();
+                println!("Current tools: {}", tool_names.join(", "));
+            }
+
+            if !available_tools.is_empty() {
+                println!("Available tools: {}", available_tools.join(", "));
+            }
+        } else {
+            // Set new tools
+            let mut chat_guard = session.lock().await;
+            match chat_guard.set_tools(names).await {
+                Ok(()) => {
                     println!("Tools set: {}", names.join(", "));
                 }
-            }
-            Err(e) => {
-                eprintln!("Error setting tools: {e}");
+                Err(e) => {
+                    eprintln!("Error setting tools: {e}");
+                }
             }
         }
         Ok(true)
@@ -123,37 +152,33 @@ impl Command {
     ) -> Result<bool> {
         match name {
             Some(name) => {
-                if name == "list" {
-                    let chat_guard = session.lock().await;
-                    let model_names = chat_guard.available_model_names();
-                    println!("Available models: {}", model_names.join(", "));
-                } else {
-                    let mut chat_guard = session.lock().await;
-                    let spinner = crate::cli::ux::GenerationSpinner::new(format!(
-                        "Loading model '{}'...",
-                        &name
-                    ));
+                let mut chat_guard = session.lock().await;
+                let spinner =
+                    crate::cli::ux::GenerationSpinner::new(format!("Loading model '{}'...", &name));
 
-                    match chat_guard.set_model(name).await {
-                        Ok(()) => {
-                            spinner.clear();
-                            println!("Model switched to: {}", name);
-                        }
-                        Err(e) => {
-                            spinner.clear();
-                            let error_msg = format!("Error switching model: {}", e);
-                            eprintln!(
-                                "{}",
-                                style_chat_text(&error_msg, crate::cli::ux::ChatMessageType::Error)
-                            );
-                        }
+                match chat_guard.set_model(name).await {
+                    Ok(()) => {
+                        spinner.clear();
+                        println!("Model switched to: {}", name);
+                    }
+                    Err(e) => {
+                        spinner.clear();
+                        let error_msg = format!("Error switching model: {}", e);
+                        eprintln!(
+                            "{}",
+                            style_chat_text(&error_msg, crate::cli::ux::ChatMessageType::Error)
+                        );
                     }
                 }
             }
             None => {
                 let chat_guard = session.lock().await;
                 let model_key = chat_guard.model_key();
+                let model_names = chat_guard.available_model_names();
                 println!("Current model: {}", model_key);
+                if !model_names.is_empty() {
+                    println!("Available models: {}", model_names.join(", "));
+                }
             }
         }
         Ok(true)
@@ -166,53 +191,46 @@ impl Command {
     ) -> Result<bool> {
         match name {
             Some(name) => {
-                if name == "list" {
-                    let chat_guard = session.lock().await;
-                    let profile_names = chat_guard.available_profile_names();
-                    println!("Available profiles: {}", profile_names.join(", "));
-                } else {
-                    let mut chat_guard = session.lock().await;
-                    match chat_guard.set_profile(name) {
-                        Ok(()) => {
-                            println!("Profile switched to: {}", name);
-                            // Show detailed profile information
-                            if let Some((_profile_name, profile_data)) =
-                                chat_guard.current_profile()
-                            {
-                                match serde_yaml::to_string(&profile_data) {
-                                    Ok(yaml) => {
-                                        // Trim to avoid printing empty "{}" for empty-but-not-null data.
-                                        let trimmed = yaml.trim();
-                                        if !trimmed.is_empty() && trimmed != "{}" {
-                                            print!("{yaml}"); // `to_string` includes a newline
-                                        }
+                let mut chat_guard = session.lock().await;
+                match chat_guard.set_profile(name) {
+                    Ok(()) => {
+                        println!("Profile switched to: {}", name);
+                        // Show detailed profile information
+                        if let Some((_profile_name, profile_data)) = chat_guard.current_profile() {
+                            match serde_yaml::to_string(&profile_data) {
+                                Ok(yaml) => {
+                                    // Trim to avoid printing empty "{}" for empty-but-not-null data.
+                                    let trimmed = yaml.trim();
+                                    if !trimmed.is_empty() && trimmed != "{}" {
+                                        print!("{yaml}"); // `to_string` includes a newline
                                     }
-                                    Err(e) => {
-                                        let error_msg =
-                                            format!("Error formatting profile data: {e}");
-                                        eprintln!(
-                                            "{}",
-                                            style_chat_text(
-                                                &error_msg,
-                                                crate::cli::ux::ChatMessageType::Error
-                                            )
-                                        );
-                                    }
+                                }
+                                Err(e) => {
+                                    let error_msg = format!("Error formatting profile data: {e}");
+                                    eprintln!(
+                                        "{}",
+                                        style_chat_text(
+                                            &error_msg,
+                                            crate::cli::ux::ChatMessageType::Error
+                                        )
+                                    );
                                 }
                             }
                         }
-                        Err(e) => {
-                            let error_msg = format!("Error switching profile: {}", e);
-                            eprintln!(
-                                "{}",
-                                style_chat_text(&error_msg, crate::cli::ux::ChatMessageType::Error)
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Error switching profile: {}", e);
+                        eprintln!(
+                            "{}",
+                            style_chat_text(&error_msg, crate::cli::ux::ChatMessageType::Error)
+                        );
                     }
                 }
             }
             None => {
                 let chat_guard = session.lock().await;
+                let profile_names = chat_guard.available_profile_names();
+
                 if let Some((profile_name, profile_data)) = chat_guard.current_profile() {
                     println!("Current profile: {profile_name}");
                     match serde_yaml::to_string(&profile_data) {
@@ -234,6 +252,10 @@ impl Command {
                 } else {
                     println!("No profile is active.");
                 }
+
+                if !profile_names.is_empty() {
+                    println!("Available profiles: {}", profile_names.join(", "));
+                }
             }
         }
         Ok(true)
@@ -246,41 +268,22 @@ impl Command {
     ) -> Result<bool> {
         match name {
             Some(name) => {
-                if name == "list" {
-                    let chat_guard = session.lock().await;
-                    let agents = chat_guard.available_agents_with_sources();
-                    if agents.is_empty() {
-                        println!("No agents available.");
-                    } else {
-                        println!("Available agents:");
-                        for (agent_name, source) in agents {
-                            let source_str = match source {
-                                arey_core::agent::AgentSource::BuiltIn => "built-in",
-                                arey_core::agent::AgentSource::UserFile(_) => "user",
-                            };
-                            println!("  {} ({})", agent_name, source_str);
-                        }
-                    }
-                } else {
-                    let mut chat_guard = session.lock().await;
-                    let spinner = crate::cli::ux::GenerationSpinner::new(format!(
-                        "Loading agent '{}'...",
-                        &name
-                    ));
+                let mut chat_guard = session.lock().await;
+                let spinner =
+                    crate::cli::ux::GenerationSpinner::new(format!("Loading agent '{}'...", &name));
 
-                    match chat_guard.set_agent(name).await {
-                        Ok(()) => {
-                            spinner.clear();
-                            println!("Agent switched to: {}", name);
-                        }
-                        Err(e) => {
-                            spinner.clear();
-                            let error_msg = format!("Error switching agent: {}", e);
-                            eprintln!(
-                                "{}",
-                                style_chat_text(&error_msg, crate::cli::ux::ChatMessageType::Error)
-                            );
-                        }
+                match chat_guard.set_agent(name).await {
+                    Ok(()) => {
+                        spinner.clear();
+                        println!("Agent switched to: {}", name);
+                    }
+                    Err(e) => {
+                        spinner.clear();
+                        let error_msg = format!("Error switching agent: {}", e);
+                        eprintln!(
+                            "{}",
+                            style_chat_text(&error_msg, crate::cli::ux::ChatMessageType::Error)
+                        );
                     }
                 }
             }
@@ -289,6 +292,18 @@ impl Command {
                 let agent_name = chat_guard.agent_name();
                 let source = chat_guard.format_agent_source(&agent_name);
                 println!("Current agent: {} ({})", agent_name, source);
+
+                let agents = chat_guard.available_agents_with_sources();
+                if !agents.is_empty() {
+                    println!("Available agents:");
+                    for (agent_name, source) in agents {
+                        let source_str = match source {
+                            arey_core::agent::AgentSource::BuiltIn => "built-in",
+                            arey_core::agent::AgentSource::UserFile(_) => "user",
+                        };
+                        println!("  {} ({})", agent_name, source_str);
+                    }
+                }
             }
         }
         Ok(true)
@@ -596,21 +611,6 @@ USER: Run tool
     }
 
     #[tokio::test]
-    async fn test_model_command_list() -> Result<()> {
-        let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
-        let chat_session = Arc::new(Mutex::new(chat));
-
-        // Test /model list (just ensure it runs without panic)
-        let list_cmd = Command::Model {
-            name: Some("list".to_string()),
-        };
-        assert!(list_cmd.execute(chat_session.clone()).await?);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_model_command_current() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
         let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
@@ -682,21 +682,6 @@ USER: Run tool
     }
 
     #[tokio::test]
-    async fn test_profile_command_list() -> Result<()> {
-        let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
-        let chat_session = Arc::new(Mutex::new(chat));
-
-        // Test /profile list (just ensure it runs without panic)
-        let list_profiles = Command::Profile {
-            name: Some("list".to_string()),
-        };
-        assert!(list_profiles.execute(chat_session.clone()).await?);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_profile_command_current() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
         let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
@@ -756,11 +741,31 @@ USER: Run tool
         set_tool_cmd.execute(chat_session.clone()).await?;
 
         // Test clearing tools
-        let clear_tools_cmd = Command::Tool { names: vec![] };
+        let clear_tools_cmd = Command::Tool {
+            names: vec!["clear".to_string()],
+        };
         clear_tools_cmd.execute(chat_session.clone()).await?;
 
         let tools = chat_session.lock().await.tools();
         assert!(tools.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_command_current() -> Result<()> {
+        // Create Chat instance with a mock tool
+        let config = create_test_config_with_custom_agent()?;
+        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
+        let available_tools: HashMap<&str, Arc<dyn Tool>> =
+            HashMap::from([("mock_tool", mock_tool)]);
+
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // Test /tool (no arguments) - should show current tools
+        let current_cmd = Command::Tool { names: vec![] };
+        assert!(current_cmd.execute(chat_session.clone()).await?);
 
         Ok(())
     }

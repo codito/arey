@@ -9,6 +9,7 @@ use anyhow::Result;
 use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType,
 };
+use arey_core::config::get_history_file_path;
 use arey_core::tools::{Tool, ToolCall, ToolResult};
 use clap::{CommandFactory, Parser};
 use futures::StreamExt;
@@ -18,16 +19,16 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, error};
 
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
-    println!("Welcome to arey chat! Use '/command --help' for usage, '/q' to exit.");
+    println!("Welcome to arey chat! Ask anything. Use '/help' for usage, '/q' to exit.");
 
     let config = rustyline::Config::builder()
-        .history_ignore_dups(true)?
-        .history_ignore_space(true)
         .completion_type(CompletionType::List)
+        .history_ignore_space(true) // Ignore lines starting with space
+        .auto_add_history(true) // Add new entries to history
         .build();
 
     let command_names = CliCommand::command()
@@ -67,13 +68,57 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
             .collect()
     };
 
+    let agent_names = {
+        let chat_guard = chat.clone();
+        chat_guard
+            .lock()
+            .await
+            .available_agent_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    };
+
     let mut rl = Editor::with_config(config)?;
+
+    // Try to set up file history, fall back to in-memory if it fails
+    let history_file_path = match get_history_file_path() {
+        Ok(path) => Some(path),
+        Err(e) => {
+            error!(
+                "Warning: Could not create history file: {}. Using in-memory history.",
+                e
+            );
+            None
+        }
+    };
+
+    if let Some(ref path) = history_file_path
+        && let Err(e) = rl.load_history(path)
+    {
+        error!(
+            "Warning: Could not load history file: {}. Starting with empty history.",
+            e
+        );
+    }
+
     rl.set_helper(Some(Repl {
         command_names,
         tool_names,
         model_names,
         profile_names,
+        agent_names,
     }));
+
+    // Helper function to save history on exit
+    let save_history_on_exit = |rl: &mut Editor<_, _>| -> Result<()> {
+        if let Some(ref path) = history_file_path
+            && let Err(e) = rl.save_history(path)
+        {
+            error!("Warning: Could not save history file: {}", e);
+        }
+        Ok(())
+    };
 
     loop {
         let prompt = {
@@ -83,7 +128,6 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
         let readline = rl.readline(&prompt);
         match readline {
             Ok(line) => {
-                rl.add_history_entry(&line)?;
                 let trimmed_line = line.trim();
 
                 if trimmed_line.is_empty() {
@@ -100,6 +144,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                     match CliCommand::try_parse_from(processed_args) {
                         Ok(cli_command) => {
                             if !cli_command.command.execute(chat.clone()).await? {
+                                save_history_on_exit(&mut rl)?;
                                 return Ok(()); // Exit REPL
                             }
                         }
@@ -123,6 +168,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                         tools: vec![],
                     }];
                     if !process_message(chat.clone(), renderer, user_messages, vec![]).await? {
+                        save_history_on_exit(&mut rl)?;
                         return Ok(());
                     }
                 }
@@ -132,6 +178,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                 continue;
             }
             Err(ReadlineError::Eof) => {
+                save_history_on_exit(&mut rl)?;
                 println!("\nBye!");
                 return Ok(());
             }
@@ -664,5 +711,18 @@ mod tests {
             output
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_history_file_path_from_config() {
+        // This test verifies that the function from config.rs can be called
+        // The actual functionality is tested in config.rs
+        let result = arey_core::config::get_history_file_path();
+
+        // The function may fail if environment variables are not set
+        // which is expected in some test environments
+        if let Ok(path) = result {
+            assert!(path.ends_with("arey/history.txt"));
+        }
     }
 }
