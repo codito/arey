@@ -227,6 +227,11 @@ impl<'a> Chat<'a> {
         self.config.agents.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Get available tool names
+    pub fn available_tool_names(&self) -> Vec<&str> {
+        self.available_tools.keys().copied().collect()
+    }
+
     /// Get available agents with their sources
     pub fn available_agents_with_sources(&self) -> Vec<(&str, &AgentSource)> {
         self.config

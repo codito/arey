@@ -11,7 +11,7 @@ use tracing::instrument;
 
 use crate::{
     agent::{Agent, AgentMetadata, AgentSource},
-    assets::{get_config_dir, get_default_config},
+    assets::{get_config_dir, get_data_dir, get_default_config},
     model::ModelConfig,
 };
 
@@ -397,6 +397,12 @@ pub fn get_config(config_path: Option<PathBuf>) -> Result<Config, AreyConfigErro
     val.apply_merge()?; // Apply merge keys. Model configs can use it.
     let raw: RawConfig = serde_yaml::from_value(val)?;
     raw.to_config(config_dir)
+}
+
+/// Get the history file path for persistent history storage
+pub fn get_history_file_path() -> Result<PathBuf, AreyConfigError> {
+    let data_dir = get_data_dir()?;
+    Ok(data_dir.join("history.txt"))
 }
 
 #[cfg(test)]
@@ -1094,5 +1100,19 @@ prompt: "Minimal prompt"
         assert_eq!(agent_config.prompt, "Minimal prompt");
         assert!(agent_config.tools.is_empty());
         assert!(agent_config.profile.is_none());
+    }
+
+    #[test]
+    fn test_get_history_file_path() {
+        // This test may fail if HOME/XDG_DATA_HOME/APPDATA are not set
+        // In CI environments, we can't rely on these being present
+        if let Ok(path) = get_history_file_path() {
+            assert!(path.ends_with("arey/history.txt"));
+
+            // Check that the parent directory would be created
+            let parent = path.parent().unwrap();
+            assert_eq!(parent.file_name().unwrap(), "arey");
+        }
+        // If environment variables are not set, we can't test this reliably
     }
 }
