@@ -32,7 +32,7 @@ tracing-subscriber = { workspace = true, features = [
     "registry",
     "env-filter",
 ] }
-syntect = { version = "5.2.0", default-features = false, features = [
+syntect = { version = "5.3.0", default-features = false, features = [
     "parsing",
     "default-syntaxes",
     "plist-load",
