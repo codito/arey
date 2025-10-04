@@ -110,8 +110,7 @@ const DEFAULT_TOOL_CALL_END_TAG: &str = "</tool_call>";
 
 static MODEL_SPECIFIC_TAGS: Lazy<HashMap<&'static str, (&'static str, &'static str)>> =
     Lazy::new(|| {
-        let mut m: HashMap<&'static str, (&'static str, &'static str)> = HashMap::new();
-        m.insert("granite", ("<|tool_call|>", ""));
+        let m: HashMap<&'static str, (&'static str, &'static str)> = HashMap::new();
         m
     });
 
@@ -158,8 +157,7 @@ impl ToolCallParser {
                 .context("Invalid regex for complete tool call")?,
             start_tag_re: Regex::new(&escape(start_tag_pattern))
                 .context("Invalid regex for tool call start tag")?,
-            // Heuristic: Granite uses a different start tag and its content is a JSON array of tool calls.
-            expects_array: start_tag_pattern == "<|tool_call|>",
+            expects_array: false,
         })
     }
 
@@ -172,7 +170,7 @@ impl ToolCallParser {
         let mut plain_text = String::new();
         let mut last_end = 0;
 
-        // Special handling for models without a tool call end tag (e.g., Granite).
+        // Special handling for models without a tool call end tag.
         if self.complete_call_re.as_str() == "$^" {
             if let Some(mat) = self.start_tag_re.find(&buffer) {
                 plain_text.push_str(&buffer[..mat.start()]);
@@ -419,15 +417,21 @@ mod tests {
 
     #[test]
     fn test_get_tool_call_regexes() {
-        // Test default case
+        // Test default case - all models should return default tags now
         let (default_start, default_end) = get_tool_call_regexes("any-other-model");
         assert_eq!(default_start, DEFAULT_TOOL_CALL_START_TAG);
         assert_eq!(default_end, DEFAULT_TOOL_CALL_END_TAG);
 
-        // Test model-specific case
-        let (specific_start, specific_end) = get_tool_call_regexes("Granite-3.3-8b-Instruct");
-        assert_eq!(specific_start, "<|tool_call|>");
-        assert_eq!(specific_end, "");
+        // Test case-insensitive matching for any model name
+        let (model_start, model_end) = get_tool_call_regexes("Some-Model-3.3-8b-Instruct");
+        assert_eq!(model_start, DEFAULT_TOOL_CALL_START_TAG);
+        assert_eq!(model_end, DEFAULT_TOOL_CALL_END_TAG);
+
+        // Test case-insensitive matching
+        let (model_lower_start, model_lower_end) =
+            get_tool_call_regexes("some-model-3.3-8b-instruct");
+        assert_eq!(model_lower_start, DEFAULT_TOOL_CALL_START_TAG);
+        assert_eq!(model_lower_end, DEFAULT_TOOL_CALL_END_TAG);
     }
 
     #[test]
@@ -613,37 +617,70 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_call_parser_granite_array_of_calls() {
+    fn test_tool_call_parser_streaming_with_no_end_tag() {
+        // Test behavior for models that use only start tags with no end tags
+        // When expects_array=false, this gets treated as plain text
         let parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
-        let chunk = r#"<|tool_call|>[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]"#;
-        let (text, calls) = parser.parse(chunk);
+        let chunk1 = "<|tool_call|>[{\"name\":\"search\",\"arguments\":{\"query\":\"rust\"}}";
+        let (text, calls) = parser.parse(chunk1);
 
-        assert!(text.is_empty());
-        assert_eq!(calls.len(), 2);
+        // With expects_array=false, this gets treated as plain text and output immediately
+        assert!(text.contains("[{\"name\":\"search\",\"arguments\":{\"query\":\"rust\"}}"));
+        assert_eq!(calls.len(), 0);
 
-        assert_eq!(calls[0].name, "search");
-        assert_eq!(calls[0].arguments, "{\"query\":\"rust\"}");
-        assert_eq!(calls[1].name, "weather");
-        assert_eq!(calls[1].arguments, "{\"location\":\"moon\"}");
+        // Add more content
+        let chunk2 = ",{\"name\":\"weather\",\"arguments\":{\"location\":\"moon\"}}]";
+        let (text, calls) = parser.parse(chunk2);
 
-        let final_text = parser.flush();
-        assert!(final_text.is_empty());
+        // Additional content is also treated as plain text (separate chunk)
+        assert!(text.contains(",{\"name\":\"weather\",\"arguments\":{\"location\":\"moon\"}}]"));
+        assert!(text.contains("weather"));
+        assert_eq!(calls.len(), 0);
     }
 
     #[test]
-    fn test_tool_call_parser_granite_array_streaming() {
-        let parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
-        let chunk1 = r#"<|tool_call|>[{"name": "search", "arguments": {"query": "rust"}}, "#;
+    fn test_tool_call_parser_streaming_with_end_tags() {
+        // Test streaming behavior for models that use both start and end tags
+        let parser = ToolCallParser::new("<|tool_start|>", "<|tool_end|>").unwrap();
+
+        // Send first chunk with incomplete tool call
+        let chunk1 = "<|tool_start|>{\"name\":\"search\",\"arguments\":{\"query\":\"rust\"";
         let (text, calls) = parser.parse(chunk1);
         assert_eq!(text, "");
         assert_eq!(calls.len(), 0);
 
-        let chunk2 = r#"{"name": "weather", "arguments": {"location": "moon"}}]"#;
+        // Complete the tool call
+        let chunk2 = "}}<|tool_end|>";
         let (text, calls) = parser.parse(chunk2);
         assert_eq!(text, "");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "search");
+        assert_eq!(calls[0].arguments, "{\"query\":\"rust\"}");
+    }
+
+    #[test]
+    fn test_tool_call_parser_multiple_complete_calls_in_one_chunk() {
+        // Test multiple complete tool calls in a single chunk (generic capability)
+        let parser = ToolCallParser::new("<|tool_call|>", "<|tool_end|>").unwrap();
+        let chunk = "<|tool_call|>{\"name\":\"search\",\"arguments\":{\"query\":\"rust\"}}<|tool_end|>Some text<|tool_call|>{\"name\":\"weather\",\"arguments\":{\"location\":\"moon\"}}<|tool_end|>";
+        let (text, calls) = parser.parse(chunk);
+
+        assert_eq!(text, "Some text");
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "search");
         assert_eq!(calls[1].name, "weather");
+    }
+
+    #[test]
+    fn test_flush_preserves_incomplete_tool_call() {
+        // Test that incomplete tool calls are preserved in buffer when flushed
+        let parser = ToolCallParser::new("<|tool_call|>", "<|tool_end|>").unwrap();
+        parser.parse("<|tool_call|>{\"name\":\"search\",\"arguments\":{\"query\":");
+        let flushed = parser.flush();
+        assert_eq!(
+            flushed,
+            "<|tool_call|>{\"name\":\"search\",\"arguments\":{\"query\":"
+        );
     }
 
     #[test]
@@ -653,14 +690,6 @@ mod tests {
         let (text, calls) = parser.parse(chunk);
         assert_eq!(text, "<tool_call>{invalid json}</tool_call>");
         assert!(calls.is_empty());
-    }
-
-    #[test]
-    fn test_flush_returns_partial_buffer() {
-        let parser = ToolCallParser::new("<|tool_call|>", "").unwrap();
-        parser.parse("<|tool_call|>[{\"name\":\"test");
-        let flushed = parser.flush();
-        assert_eq!(flushed, "<|tool_call|>[{\"name\":\"test");
     }
 
     #[test]
@@ -713,5 +742,51 @@ mod tests {
         assert_eq!(calls[1].arguments, r#"{"query":"rust"}"#);
         assert_eq!(calls[2].name, "search");
         assert_eq!(calls[2].arguments, r#"{"query":"ai"}"#);
+    }
+
+    #[test]
+    fn test_parse_tool_call_array_function() {
+        // Test the array parsing function directly (generic capability)
+        let array_json = r#"[{"name":"search","arguments":{"query":"rust"}},{"name":"weather","arguments":{"location":"moon"}}]"#;
+        let result = parse_tool_call_array(array_json);
+
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name, "search");
+        assert_eq!(parsed[1].name, "weather");
+    }
+
+    #[test]
+    fn test_parse_tool_call_array_empty() {
+        // Test empty array
+        let array_json = "[]";
+        let result = parse_tool_call_array(array_json);
+
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_tool_call_array_invalid_json() {
+        // Test invalid JSON
+        let invalid_json = "[invalid json]";
+        let result = parse_tool_call_array(invalid_json);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_tool_call_array_malformed_tool_calls() {
+        // Test array with partially malformed tool calls (missing arguments field)
+        let malformed_json = r#"[{"name":"search","arguments":null}, {"name":"weather","arguments":{"location":"moon"}}]"#;
+        let result = parse_tool_call_array(malformed_json);
+
+        // Should parse successfully as it's valid JSON structure
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name, "search");
+        assert_eq!(parsed[1].name, "weather");
     }
 }

@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use arey_core::agent::{Agent, AgentSource};
 use arey_core::completion::{CancellationToken, ChatMessage, Completion};
 use arey_core::config::{Config, ProfileConfig};
-use arey_core::get_completion_llm;
 use arey_core::session::Session;
 use arey_core::tools::Tool;
 use futures::{StreamExt, stream::BoxStream};
@@ -154,13 +153,8 @@ impl<'a> Chat<'a> {
             .cloned()
             .context(format!("Model '{model_name}' not found in config."))?;
 
-        // Create new model instance
-        let new_model = get_completion_llm(model_config.clone())
-            .context("Failed to create new model instance")?;
-
-        // Update the session with the new model
-        self.session
-            .update_model(model_name.to_string(), new_model)?;
+        // Session handles model creation and old model cleanup
+        self.session.set_model(model_config)?;
 
         Ok(())
     }

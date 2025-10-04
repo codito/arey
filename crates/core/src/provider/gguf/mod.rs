@@ -69,7 +69,6 @@ impl ModelConfig {
             .with_n_batch(self.get_setting::<u32>("n_batch").unwrap_or(512))
             .with_n_ctx(self.get_setting::<u32>("n_ctx").and_then(NonZeroU32::new))
             .with_offload_kqv(self.get_setting::<bool>("offload_kqv").unwrap_or(true))
-            .with_flash_attention(self.get_setting::<bool>("flash_attn").unwrap_or(false))
     }
 }
 
