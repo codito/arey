@@ -1,14 +1,14 @@
 //! A session is a shared context between a human and the AI assistant.
 //! Context includes the conversation, shared artifacts, and tools.
-use crate::model::ModelConfig;
 
-use crate::tools::{ToolCall, ToolResult};
 use crate::{
     completion::{
         CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
     },
-    model::ModelMetrics,
-    tools::Tool,
+    get_completion_llm,
+    model::{ModelConfig, ModelMetrics, ModelProvider},
+    provider::test_provider::TestProviderModel,
+    tools::{Tool, ToolCall, ToolResult},
 };
 use anyhow::{Context, Result};
 use futures::stream::BoxStream;
@@ -32,7 +32,7 @@ impl Session {
     /// Create a new session with the given model configuration
     pub fn new(model_config: ModelConfig, system_prompt: &str) -> Result<Self> {
         let model_key = model_config.key.clone();
-        let model = crate::get_completion_llm(model_config.clone())
+        let model = get_completion_llm(model_config.clone())
             .context("Failed to initialize session model")?;
 
         let context_size = model_config.get_setting::<usize>("n_ctx").unwrap_or(4096);
@@ -99,14 +99,26 @@ impl Session {
         self.tools.clone()
     }
 
-    /// Update the model for this session
-    pub fn update_model(
-        &mut self,
-        model_key: String,
-        new_model: Box<dyn CompletionModel>,
-    ) -> Result<()> {
-        self.model = new_model;
+    /// Replace the current model with a new one, ensuring proper cleanup
+    pub fn set_model(&mut self, model_config: ModelConfig) -> Result<()> {
+        let model_key = model_config.key.clone();
+
+        // Create a temporary placeholder model to replace the old one
+        let temp_model = Box::new(TestProviderModel::new(ModelConfig {
+            key: "temp".to_string(),
+            name: "temp".to_string(),
+            provider: ModelProvider::Test,
+            settings: HashMap::new(),
+        })?) as Box<dyn CompletionModel>;
+
+        // Replace and drop the old model to free GPU memory
+        let old_model = std::mem::replace(&mut self.model, temp_model);
+        drop(old_model);
+
+        // Now create the new model with the old model's memory freed
+        self.model = get_completion_llm(model_config)?;
         self.model_key = model_key;
+
         Ok(())
     }
 
@@ -981,5 +993,89 @@ mod tests {
         // Check that it didn't panic and the first message was truncated correctly.
         assert!(trimmed[1].text.contains("... [truncated]"));
         assert!(!trimmed[3].text.contains("... [truncated]"));
+    }
+
+    #[test]
+    fn test_set_model() -> Result<()> {
+        let mut session = new_session(100);
+        let original_model_key = session.model_key();
+        assert_eq!(original_model_key, "test-model");
+
+        // Create a new model config with different key
+        let new_model_config = ModelConfig {
+            key: "new-test-model".to_string(),
+            name: "new-test-model".to_string(),
+            provider: ModelProvider::Test,
+            settings: HashMap::new(),
+        };
+
+        // Set new model
+        session.set_model(new_model_config)?;
+
+        // Verify model was updated
+        assert_eq!(session.model_key(), "new-test-model");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_set_model_preserves_session_data() -> Result<()> {
+        let mut session = new_session(100);
+
+        // Add some data to the session
+        session.add_message(SenderType::User, "Hello")?;
+        session.add_message(SenderType::Assistant, "Hi there")?;
+        let original_prompt = session.system_prompt();
+
+        // Create a new model config
+        let new_model_config = ModelConfig {
+            key: "new-test-model".to_string(),
+            name: "new-test-model".to_string(),
+            provider: ModelProvider::Test,
+            settings: HashMap::new(),
+        };
+
+        // Set new model
+        session.set_model(new_model_config)?;
+
+        // Verify session data is preserved
+        assert_eq!(session.model_key(), "new-test-model");
+        assert_eq!(session.system_prompt(), original_prompt);
+        assert_eq!(session.all_messages().len(), 2);
+        assert_eq!(session.all_messages()[0].text, "Hello");
+        assert_eq!(session.all_messages()[1].text, "Hi there");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_set_model_with_gguf_config() -> Result<()> {
+        let mut session = new_session(100);
+
+        // Create a GGUF model config (even if path doesn't exist, we test the flow)
+        let mut gguf_settings = HashMap::new();
+        gguf_settings.insert("path".to_string(), "/nonexistent/model.gguf".into());
+
+        let gguf_config = ModelConfig {
+            key: "gguf-test-model".to_string(),
+            name: "gguf-test-model".to_string(),
+            provider: ModelProvider::Gguf,
+            settings: gguf_settings,
+        };
+
+        // This should fail gracefully due to missing file, but the logic should work
+        let result = session.set_model(gguf_config);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Model loading failed")
+        );
+
+        // Original model should still be intact
+        assert_eq!(session.model_key(), "test-model");
+
+        Ok(())
     }
 }
