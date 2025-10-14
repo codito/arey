@@ -101,7 +101,7 @@ jobs:
         id: release
         if: github.ref == 'refs/heads/master'
         run: |
-          npx release-please release-pr --token=$GITHUB_TOKEN --repo-url=codito/arey --debug
+          npx release-please release-pr --token=${{ secrets.GITHUB_TOKEN }} --repo-url=codito/arey --debug
     outputs:
       build_version: ${{ steps.release.outputs.tag_name }}
       release_created: ${{ steps.release.outputs.release_created }}
