@@ -93,39 +93,42 @@ jobs:
         name: ${{ matrix.artifact_name }}
         path: dist/${{ matrix.artifact_name }}.*
 
-  release-please:
+  version:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
     steps:
-    - name: release-please
-      id: release
-      if: github.ref == 'refs/heads/master'
-      run: |
-        npm i release-please -g
-        release-please release-pr --token $GITHUB_TOKEN --repo-url codito/arey --debug
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-type: rust
+    outputs:
+      build_version: ${{ steps.release.outputs.tag_name }}
+      release_created: ${{ steps.release.outputs.release_created }}
 
-  publish-to-crates-io:
-    name: publish to crates.io
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [release-please, build]
-    runs-on: ubuntu-latest
+  # publish-to-crates-io:
+  #   name: publish to crates.io
+  #   needs: [version, build]
+  #   if: ${{ needs.version.outputs.release_created }} # only publish tagged versions
+  #   runs-on: ubuntu-latest
 
-    steps:
-    - uses: actions/checkout@v4
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        components: rust-src, rustfmt, clippy
-    - name: Publish to crates.io
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-      run: cargo publish
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Install Rust toolchain
+  #     uses: dtolnay/rust-toolchain@stable
+  #     with:
+  #       toolchain: stable
+  #       components: rust-src, rustfmt, clippy
+  #   - name: Publish to crates.io
+  #     env:
+  #       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+  #     run: cargo publish
 
   github-release:
     name: sign release
-    needs: [publish-to-crates-io, build]
+    needs: [version, build]
+    if: ${{ needs.version.outputs.release_created }} # only publish tagged versions
     runs-on: ubuntu-latest
 
     permissions:
@@ -148,6 +151,6 @@ jobs:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         gh release upload \
-          '${{ github.ref_name }}' \
-          artifacts/*/* \
-          --repo '${{ github.repository }}'
+            '${{ needs.version.outputs.build_version }}' \
+            artifacts/*/* \
+            --repo '${{ github.repository }}'
