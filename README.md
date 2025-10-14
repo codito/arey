@@ -26,16 +26,18 @@ https://github.com/codito/arey/assets/28766/6b886e49-6124-4256-84d9-20449c783a34
 git clone https://github.com/codito/arey.git
 cd arey
 cargo build --release
+
+# Build with vulkan
+cargo build --features vulkan --release
+
+# Build with CUDA
+cargo build --features cuda --release
+
+# Run the `crates/arey` package
 ```
 
 **Binary releases:**
 Download the latest release from [GitHub Releases](https://github.com/codito/arey/releases).
-
-**Package managers:**
-
-- Cargo: `cargo install arey` or `cargo binstall arey`.
-
-Windows troubleshooting notes are [here](docs/windows.md).
 
 ## Usage
 
