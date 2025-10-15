@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.8](https://github.com/codito/arey/compare/arey-v0.0.7...arey-v0.0.8) (2025-10-15)
+
+
+### Features
+
+* add vulkan feature support and CI builds ([#61](https://github.com/codito/arey/issues/61)) ([021e345](https://github.com/codito/arey/commit/021e3453251d1dc591c774798b048ecd0208a021))
+* agents infra and misc updates ([#60](https://github.com/codito/arey/issues/60)) ([eb73c84](https://github.com/codito/arey/commit/eb73c843894c6c4df2ad3d3a0fb91a26b4cf89e0))
+
+
+### Bug Fixes
+
+* drop current gguf model on switch. Granite 4 tool call format fixed. ([#68](https://github.com/codito/arey/issues/68)) ([90b8fc0](https://github.com/codito/arey/commit/90b8fc0078a0bfa747459016fead8063c4b72bbd))
+
 ## [0.0.7](https://github.com/codito/arey/compare/arey-v0.0.6...arey-v0.0.7) (2025-10-04)
 
 
