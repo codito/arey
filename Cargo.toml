@@ -40,7 +40,7 @@ tokio-stream = "0.1.17"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["local-time"] }
 tempfile = "3.23.0"
-url = "2.5.0"
+url = "2.5.7"
 wiremock = "0.6.5"
 
 # [workspace.dev-dependencies]
