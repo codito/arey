@@ -447,6 +447,17 @@ impl Session {
             }
         }
 
+        // Add system prompt at beginning of the messages
+        if !system_prompt.is_empty() {
+            final_messages.insert(
+                0,
+                ChatMessage {
+                    sender: SenderType::System,
+                    text: system_prompt.to_string(),
+                    ..Default::default()
+                },
+            );
+        }
         final_messages
     }
 }
@@ -595,7 +606,8 @@ mod tests {
         ];
         let system_prompt = session.system_prompt.clone();
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 2);
+
+        assert_eq!(trimmed.len(), 3);
     }
 
     #[test]
@@ -611,8 +623,9 @@ mod tests {
         // U2 block (10) fits. current_tokens=10.
         // U1 block (20) doesn't fit with U2 (10+20 > 29). Trim U1 block.
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 1);
-        assert_eq!(trimmed[0].text, "U2");
+
+        assert_eq!(trimmed.len(), 2);
+        assert_eq!(trimmed[1].text, "U2");
     }
 
     #[test]
@@ -628,8 +641,9 @@ mod tests {
         // U2 block (10) fits. U1+A1 block (20) doesn't fit with U2 (10+20 > 24).
         // Should keep only U2 block (most recent).
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 1);
-        assert_eq!(trimmed[0].text, "U2");
+
+        assert_eq!(trimmed.len(), 2);
+        assert_eq!(trimmed[1].text, "U2");
     }
 
     #[test]
@@ -645,8 +659,9 @@ mod tests {
         // U2 block (10) fits. U1+A1 block (20) doesn't fit with U2 (10+20 > 18).
         // Should keep only U2 block.
         let trimmed = session.get_trimmed_messages(&messages, 0, system_prompt);
-        assert_eq!(trimmed.len(), 1);
-        assert_eq!(trimmed[0].text, "U2");
+
+        assert_eq!(trimmed.len(), 2);
+        assert_eq!(trimmed[1].text, "U2");
     }
 
     #[test]
@@ -662,8 +677,9 @@ mod tests {
         // U2 block (10) fits. current_tokens=10.
         // U1 block (20) doesn't fit with U2 (10+20 > 20). Trim U1 block.
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 1);
-        assert_eq!(trimmed[0].text, "U2");
+
+        assert_eq!(trimmed.len(), 2);
+        assert_eq!(trimmed[1].text, "U2");
     }
 
     #[test]
@@ -671,8 +687,11 @@ mod tests {
         let session = new_session(30);
         let messages = Vec::new();
         let system_prompt = session.system_prompt.clone();
+
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 0);
+
+        // Only system prompt
+        assert_eq!(trimmed.len(), 1);
     }
 
     #[test]
@@ -687,10 +706,10 @@ mod tests {
         // available_tokens = 100-1=99.
         // All messages fit easily.
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 3);
-        assert_eq!(trimmed[0].text, "U1");
-        assert_eq!(trimmed[1].text, "A1");
-        assert_eq!(trimmed[2].text, "U2");
+        assert_eq!(trimmed.len(), 4);
+        assert_eq!(trimmed[1].text, "U1");
+        assert_eq!(trimmed[2].text, "A1");
+        assert_eq!(trimmed[3].text, "U2");
     }
 
     #[test]
@@ -725,7 +744,7 @@ mod tests {
         let system_prompt = session.system_prompt.clone();
         let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
         // Sys(1)+U1_block(30)+U2_est(3) = 34 > 35. All still fit.
-        assert_eq!(trimmed.len(), 3);
+        assert_eq!(trimmed.len(), 4);
 
         let metrics2 = CompletionMetrics {
             prompt_tokens: 35, // 20+10 known, so U2 cost is 5
@@ -757,10 +776,10 @@ mod tests {
 
         // Should have trimmed the oldest block (U1+A1) to fit within context
         // Keeping: U2(5) + A2(5) + U3(est.7) = 17 tokens + system(1) = 18 tokens total
-        assert_eq!(trimmed.len(), 3); // U2, A2, U3 - U1+A1 was trimmed
-        assert_eq!(trimmed[0].text, "User message 2"); // First message should be U2
-        assert_eq!(trimmed[1].text, "Assistant response 2"); // Second message should be A2
-        assert_eq!(trimmed[2].text, "User message 3 is also quite long"); // Third message should be U3
+        assert_eq!(trimmed.len(), 4); // Sys prompt, U2, A2, U3 - U1+A1 was trimmed
+        assert_eq!(trimmed[1].text, "User message 2"); // First message should be U2
+        assert_eq!(trimmed[2].text, "Assistant response 2"); // Second message should be A2
+        assert_eq!(trimmed[3].text, "User message 3 is also quite long"); // Third message should be U3
     }
 
     #[test]
@@ -789,7 +808,7 @@ mod tests {
         let system_prompt = session.system_prompt.clone();
         let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
         // Should include all messages since they fit in context
-        assert_eq!(trimmed.len(), 4);
+        assert_eq!(trimmed.len(), 5);
     }
 
     #[test]
@@ -924,11 +943,11 @@ mod tests {
         // Check that it didn't panic and the tool message was truncated correctly.
         // The tool result is very large (1070 chars) and should be truncated to 512 chars
         assert!(
-            trimmed[2].text.contains("... [truncated]"),
+            trimmed[3].text.contains("... [truncated]"),
             "Expected tool result to be truncated. Text: {}...",
-            &trimmed[2].text[..100.min(trimmed[2].text.len())]
+            &trimmed[3].text[..100.min(trimmed[2].text.len())]
         );
-        assert!(!trimmed[3].text.contains("... [truncated]")); // Follow-up message should not be truncated
+        assert!(!trimmed[4].text.contains("... [truncated]")); // Follow-up message should not be truncated
     }
 
     #[test]
@@ -1022,8 +1041,8 @@ mod tests {
         let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
 
         // Check that it didn't panic and the first message was truncated correctly.
-        assert!(trimmed[1].text.contains("... [truncated]"));
-        assert!(!trimmed[3].text.contains("... [truncated]"));
+        assert!(trimmed[2].text.contains("... [truncated]"));
+        assert!(!trimmed[4].text.contains("... [truncated]"));
     }
 
     #[test]
