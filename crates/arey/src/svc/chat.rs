@@ -295,19 +295,9 @@ impl<'a> Chat<'a> {
     }
 
     /// Adds messages to the conversation history.
-    pub async fn add_messages(
-        &mut self,
-        user_messages: Vec<ChatMessage>,
-        tool_messages: Vec<ChatMessage>,
-    ) {
-        for message in user_messages {
-            if let Err(e) = self.session.add_message(message.sender, &message.text) {
-                eprintln!("Failed to add message: {}", e);
-            }
-        }
-
-        for message in tool_messages {
-            if let Err(e) = self.session.add_message(message.sender, &message.text) {
+    pub async fn add_messages(&mut self, messages: Vec<ChatMessage>) {
+        for message in messages {
+            if let Err(e) = self.session.add_message(message) {
                 eprintln!("Failed to add message: {}", e);
             }
         }
@@ -542,25 +532,20 @@ mod tests {
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
         let mut chat = Chat::new(&config, None, available_tools).await?;
 
-        chat.add_messages(
-            vec![ChatMessage {
-                sender: SenderType::User,
-                text: "Hello".to_string(),
-                tools: Vec::new(),
-            }],
-            Vec::new(),
-        )
+        chat.add_messages(vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Hello".to_string(),
+            ..Default::default()
+        }])
         .await;
         assert!(chat.get_last_assistant_message().is_none());
 
-        chat.add_messages(
-            vec![ChatMessage {
-                sender: SenderType::Assistant,
-                text: "Hi there!".to_string(),
-                tools: Vec::new(),
-            }],
-            Vec::new(),
-        )
+        chat.add_messages(vec![ChatMessage {
+            sender: SenderType::Assistant,
+            text: "Hi there!".to_string(),
+            metrics: Some(Default::default()),
+            ..Default::default()
+        }])
         .await;
 
         let last_message = chat.get_last_assistant_message();
@@ -580,21 +565,19 @@ mod tests {
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
         let mut chat = Chat::new(&config, None, available_tools).await?;
 
-        chat.add_messages(
-            vec![
-                ChatMessage {
-                    sender: SenderType::User,
-                    text: "Hello".to_string(),
-                    tools: Vec::new(),
-                },
-                ChatMessage {
-                    sender: SenderType::Assistant,
-                    text: "Hi there!".to_string(),
-                    tools: Vec::new(),
-                },
-            ],
-            Vec::new(),
-        )
+        chat.add_messages(vec![
+            ChatMessage {
+                sender: SenderType::User,
+                text: "Hello".to_string(),
+                ..Default::default()
+            },
+            ChatMessage {
+                sender: SenderType::Assistant,
+                text: "Hi there!".to_string(),
+                metrics: Some(Default::default()),
+                ..Default::default()
+            },
+        ])
         .await;
 
         assert!(chat.get_last_assistant_message().is_some());
@@ -720,14 +703,11 @@ mod tests {
         assert_eq!(original_prompt, "You are a test agent.");
 
         // Add some messages to test preservation
-        chat.add_messages(
-            vec![ChatMessage {
-                sender: SenderType::User,
-                text: "Hello".to_string(),
-                tools: vec![],
-            }],
-            vec![],
-        )
+        chat.add_messages(vec![ChatMessage {
+            sender: SenderType::User,
+            text: "Hello".to_string(),
+            ..Default::default()
+        }])
         .await;
 
         // Verify we have tools initially

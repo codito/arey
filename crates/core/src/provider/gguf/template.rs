@@ -301,7 +301,7 @@ mod tests {
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: "Hello".into(),
-            tools: vec![],
+            ..Default::default()
         }];
 
         let result = apply_chat_template(DEFAULT_TEMPLATE, &messages, None);
@@ -316,16 +316,17 @@ mod tests {
             ChatMessage {
                 sender: SenderType::User,
                 text: "What's the weather in Boston?".into(),
-                tools: vec![],
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "".into(),
-                tools: vec![ToolCall {
+                tools: Some(vec![ToolCall {
                     id: "call_123".to_string(),
                     name: "get_weather".to_string(),
                     arguments: serde_json::to_string("{\"location\": \"Boston\"}").unwrap(),
-                }],
+                }]),
+                metrics: Some(Default::default()),
             },
         ];
 
@@ -344,21 +345,22 @@ mod tests {
             ChatMessage {
                 sender: SenderType::User,
                 text: "What's the weather in Boston?".into(),
-                tools: vec![],
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "".into(),
-                tools: vec![ToolCall {
+                tools: Some(vec![ToolCall {
                     id: "call_123".to_string(),
                     name: "get_weather".to_string(),
                     arguments: "{\"location\": \"Boston\"}".to_string(),
-                }],
+                }]),
+                metrics: Some(Default::default()),
             },
             ChatMessage {
                 sender: SenderType::Tool,
                 text: r#"{"temperature": 22, "unit": "celsius"}"#.into(),
-                tools: vec![],
+                ..Default::default()
             },
         ];
 
@@ -378,7 +380,7 @@ mod tests {
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: "Hello".into(),
-            tools: vec![],
+            ..Default::default()
         }];
 
         let result = apply_chat_template("", &messages, None);
@@ -393,16 +395,17 @@ mod tests {
             ChatMessage {
                 sender: SenderType::User,
                 text: "What's the weather in Boston?".into(),
-                tools: vec![],
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "".into(),
-                tools: vec![ToolCall {
+                tools: Some(vec![ToolCall {
                     id: "call_123".to_string(),
                     name: "get_weather".to_string(),
                     arguments: serde_json::to_string("{\"location\": \"Boston\"}").unwrap(),
-                }],
+                }]),
+                metrics: Some(Default::default()),
             },
         ];
 
@@ -440,7 +443,7 @@ mod tests {
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: "Test".into(),
-            tools: vec![],
+            ..Default::default()
         }];
 
         let template_with_format = r#"{{ strftime_now("%Y-%m-%d %H:%M:%S") }}"#;
@@ -711,12 +714,13 @@ mod tests {
             ChatMessage {
                 sender: SenderType::User,
                 text: "How are you?".into(),
-                tools: vec![],
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "I'm doing well!".into(),
-                tools: vec![],
+                metrics: Some(Default::default()),
+                ..Default::default()
             },
         ];
 

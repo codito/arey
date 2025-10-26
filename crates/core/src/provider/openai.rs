@@ -84,14 +84,12 @@ impl OpenAIBaseModel {
                     .unwrap(),
             ),
             SenderType::Assistant => {
-                let assistant_msg = if !msg.tools.is_empty() {
-                    let tools = msg
-                        .tools
-                        .iter()
-                        .map(|t| t.clone().into())
-                        .collect::<Vec<_>>();
+                let assistant_msg = if let Some(tools) = &msg.tools
+                    && !tools.is_empty()
+                {
+                    let tool_calls = tools.iter().map(|t| t.clone().into()).collect::<Vec<_>>();
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
-                        .tool_calls(tools)
+                        .tool_calls(tool_calls)
                         .build()
                 } else {
                     async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
@@ -198,7 +196,6 @@ impl CompletionModel for OpenAIBaseModel {
                 }));
             }
         };
-        debug!("OpenAI request: {:?}", request);
 
         let request_value = match serde_json::to_value(&request) {
             Ok(v) => v,
@@ -208,6 +205,7 @@ impl CompletionModel for OpenAIBaseModel {
                 }));
             }
         };
+        debug!("OpenAI request: {:?}", request_value);
 
         // Start the timer
         let start_time = Instant::now();
@@ -342,10 +340,6 @@ impl CompletionModel for OpenAIBaseModel {
 
         Box::pin(outer_stream)
     }
-
-    // async fn free(&mut self) {
-    //     // No resources to free
-    // }
 }
 
 #[cfg(test)]
@@ -566,7 +560,7 @@ mod tests {
         let messages = vec![ChatMessage {
             text: "Hello".to_string(),
             sender: SenderType::User,
-            tools: Vec::new(),
+            ..Default::default()
         }];
 
         let cancel_token = CancellationToken::new(); // Create a token for the test
@@ -621,7 +615,7 @@ mod tests {
         let messages = vec![ChatMessage {
             text: "What's the weather in Paris?".to_string(),
             sender: SenderType::User,
-            tools: Vec::new(),
+            ..Default::default()
         }];
         let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
 

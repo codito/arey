@@ -165,9 +165,9 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                     let user_messages = vec![ChatMessage {
                         text: line.to_string(),
                         sender: SenderType::User,
-                        tools: vec![],
+                        ..Default::default()
                     }];
-                    if !process_message(chat.clone(), renderer, user_messages, vec![]).await? {
+                    if !process_message(chat.clone(), renderer, user_messages).await? {
                         save_history_on_exit(&mut rl)?;
                         return Ok(());
                     }
@@ -206,8 +206,7 @@ fn clean_value(value: &mut serde_json::Value) {
 async fn process_message(
     chat: Arc<Mutex<Chat<'_>>>,
     renderer: &mut TerminalRenderer<'_>,
-    user_messages: Vec<ChatMessage>,
-    tool_messages: Vec<ChatMessage>,
+    messages: Vec<ChatMessage>, // User input or tool responses
 ) -> Result<bool> {
     let mut metrics = CompletionMetrics::default();
     let mut finish_reason: Option<String> = None;
@@ -222,16 +221,19 @@ async fn process_message(
     // Clone for async block
     let chat_clone = chat.clone();
 
-    // Child tool messages are created if LLM requires a set of tools to be invoked for responding
-    // to a user message.
-    let mut child_tool_messages: Vec<ChatMessage> = vec![];
+    // Store tool call responses if LLM requires a set of tools to be invoked for responding to a
+    // user message.
+    let mut assistant_message_text = String::new();
+    let mut assistant_message_tools: Vec<ToolCall> = vec![];
+    let mut assistant_tool_responses: Vec<ChatMessage> = vec![];
+
     let mut stream_error = false;
     let was_cancelled = {
         // Get stream response
         let mut chat_guard = chat_clone.lock().await;
         let available_tools = chat_guard.available_tools.clone();
         let mut stream = {
-            chat_guard.add_messages(user_messages, tool_messages).await;
+            chat_guard.add_messages(messages).await;
             chat_guard.stream_response(cancel_token.clone()).await?
         };
 
@@ -268,6 +270,7 @@ async fn process_message(
                             match response {
                                 Ok(Completion::Response(chunk)) => {
                                     if !&chunk.text.is_empty() {
+                                        assistant_message_text.push_str(&chunk.text);
                                         renderer.render_markdown(&chunk.text)?;
                                     }
 
@@ -277,8 +280,8 @@ async fn process_message(
 
                                     // Tool messages can come in chunks, we collate all
                                     if let Some(tools) = &chunk.tool_calls {
-                                        child_tool_messages =
-                                            process_tools(&available_tools, tools).await?;
+                                        assistant_message_tools.extend(tools.clone());
+                                        assistant_tool_responses = process_tools(&available_tools, tools).await?;
                                     }
                                 }
                                 Ok(Completion::Metrics(m)) => {
@@ -309,16 +312,28 @@ async fn process_message(
         return Ok(true);
     }
 
+    {
+        // Add the assistant message to the chat history
+        let mut chat_guard = chat.lock().await;
+        chat_guard
+            .add_messages(vec![ChatMessage {
+                sender: SenderType::Assistant,
+                text: assistant_message_text,
+                tools: Some(assistant_message_tools),
+                metrics: Some(metrics.clone()),
+            }])
+            .await;
+    }
+
     // After a successful stream, flush any remaining partial lines from the renderer.
     renderer.render_markdown("\n")?;
 
     // If the model produced tool calls, recursively call this function to process them.
-    if !child_tool_messages.is_empty() {
+    if !assistant_tool_responses.is_empty() {
         return Box::pin(process_message(
             chat_clone,
             renderer,
-            vec![],
-            child_tool_messages,
+            assistant_tool_responses,
         ))
         .await;
     }
@@ -448,7 +463,7 @@ async fn process_tools(
         tool_messages.push(ChatMessage {
             text: serde_json::to_string(&result)?,
             sender: SenderType::Tool,
-            tools: vec![],
+            ..Default::default()
         });
     }
 
@@ -647,13 +662,14 @@ mod tests {
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
-            tools: vec![],
+            ..Default::default()
         };
-        process_message(chat_session, &mut renderer, vec![user_message], vec![]).await?;
+        process_message(chat_session.clone(), &mut renderer, vec![user_message]).await?;
 
         // 3. Assert rendered output
         let output = String::from_utf8(buffer).unwrap();
         assert!(output.contains("Hello world"));
+        assert_eq!(2, chat_session.lock().await.get_all_messages().len());
         Ok(())
     }
 
@@ -678,12 +694,13 @@ mod tests {
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
-            tools: vec![],
+            ..Default::default()
         };
-        process_message(chat_session, &mut renderer, vec![user_message], vec![]).await?;
+        process_message(chat_session.clone(), &mut renderer, vec![user_message]).await?;
 
         let output = String::from_utf8(buffer).unwrap();
         assert!(output.contains("Tool output is mock tool output"));
+        assert_eq!(4, chat_session.lock().await.get_all_messages().len());
         Ok(())
     }
 
@@ -699,9 +716,9 @@ mod tests {
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
-            tools: vec![],
+            ..Default::default()
         };
-        process_message(chat_session, &mut renderer, vec![user_message], vec![]).await?;
+        process_message(chat_session.clone(), &mut renderer, vec![user_message]).await?;
 
         // Expect no output to renderer, error is printed to stderr
         let output = String::from_utf8(buffer).unwrap();
@@ -710,6 +727,7 @@ mod tests {
             "Output should be empty. Output: {}",
             output
         );
+        assert_eq!(1, chat_session.lock().await.get_all_messages().len());
         Ok(())
     }
 

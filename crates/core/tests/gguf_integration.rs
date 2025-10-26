@@ -91,7 +91,7 @@ async fn test_gguf_model_complete() {
     let messages = vec![ChatMessage {
         sender: SenderType::User,
         text: "Once upon a time,".to_string(),
-        tools: Vec::new(),
+        ..Default::default()
     }];
 
     let mut settings = HashMap::new();
@@ -136,7 +136,7 @@ async fn test_gguf_model_kv_cache() {
     let messages1 = vec![ChatMessage {
         sender: SenderType::User,
         text: "The first three letters of the alphabet are:".to_string(),
-        tools: Vec::new(),
+        ..Default::default()
     }];
 
     let mut settings = HashMap::new();
@@ -179,7 +179,7 @@ async fn test_gguf_model_kv_cache() {
     let messages2 = vec![ChatMessage {
         sender: SenderType::User,
         text: "The first three letters of the alphabet are: A, B, C. What comes next?".to_string(),
-        tools: Vec::new(),
+        ..Default::default()
     }];
     let third_latency = get_prompt_latency(&mut model, &messages2, &settings).await;
     assert!(third_latency > 0.0, "Third latency should be positive");

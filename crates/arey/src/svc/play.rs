@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use arey_core::{
-    completion::{CancellationToken, Completion, CompletionMetrics, SenderType},
+    completion::{CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType},
     config::{AreyConfigError, Config},
     model::ModelConfig,
     session::Session,
@@ -181,7 +181,11 @@ impl PlayFile {
         let completion_profile = self.completion_profile.clone();
 
         // Add the message first
-        session.add_message(SenderType::User, &prompt)?;
+        session.add_message(ChatMessage {
+            sender: SenderType::User,
+            text: prompt,
+            ..Default::default()
+        })?;
 
         let settings: HashMap<String, String> = completion_profile
             .iter()
