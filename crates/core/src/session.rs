@@ -76,15 +76,8 @@ impl Session {
     }
 
     /// Add a new message to the conversation history
-    pub fn add_message(&mut self, sender: SenderType, text: &str) -> Result<()> {
-        self.messages.push((
-            ChatMessage {
-                sender,
-                text: text.to_string(),
-                tools: Vec::new(),
-            },
-            None,
-        ));
+    pub fn add_message(&mut self, message: ChatMessage) -> Result<()> {
+        self.messages.push((message, None));
         Ok(())
     }
 
@@ -534,7 +527,9 @@ mod tests {
     #[test]
     fn test_add_message() {
         let mut session = new_session(100);
-        let _ = session.add_message(SenderType::User, "Hello");
+
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Hello"));
+
         assert_eq!(session.messages.len(), 1);
         assert_eq!(session.messages[0].0.text, "Hello");
         assert_eq!(session.messages[0].1, None);
@@ -543,7 +538,7 @@ mod tests {
     #[tokio::test]
     async fn test_record_completion_simple() {
         let mut session = new_session(100);
-        let _ = session.add_message(SenderType::User, "User 1");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "User 1"));
 
         let metrics = CompletionMetrics {
             prompt_tokens: 10,
@@ -561,8 +556,11 @@ mod tests {
     #[tokio::test]
     async fn test_record_completion_multiple_unknown() {
         let mut session = new_session(100);
-        let _ = session.add_message(SenderType::User, "This is a slightly longer message."); // 34 chars
-        let _ = session.add_message(SenderType::User, "Short one."); // 10 chars
+        let _ = session.add_message(new_chat_msg(
+            SenderType::User,
+            "This is a slightly longer message.",
+        )); // 34 chars
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Short one.")); // 10 chars
 
         let metrics = CompletionMetrics {
             prompt_tokens: 100,
@@ -612,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_get_trimmed_messages_keeps_blocks() {
-        let session = new_session(25); // very small context to force trimming
+        let session = new_session(25); // Very small context to force trimming
         let messages = vec![
             (new_chat_msg(SenderType::User, "U1"), Some(10)),
             (new_chat_msg(SenderType::Assistant, "A1"), Some(10)),
@@ -693,10 +691,10 @@ mod tests {
         let mut session = new_session(35); // Reduced from 50 to force trimming
 
         // Turn 1
-        let _ = session.add_message(
+        let _ = session.add_message(new_chat_msg(
             SenderType::User,
             "User message 1, quite long to ensure it costs something",
-        );
+        ));
         let metrics1 = CompletionMetrics {
             prompt_tokens: 20,
             completion_tokens: 10,
@@ -710,7 +708,7 @@ mod tests {
         assert_eq!(session.messages[1].1, Some(10));
 
         // Turn 2
-        let _ = session.add_message(SenderType::User, "User message 2"); // est. 3 tokens
+        let _ = session.add_message(new_chat_msg(SenderType::User, "User message 2")); // est. 3 tokens
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
             .messages
             .iter()
@@ -736,7 +734,10 @@ mod tests {
         // Turn 3: force trimming - with context of 35, system (1) + available = 34 tokens
         // Messages: U1(20) + A1(10) + U2(5) + A2(5) + U3(est.7) = 47 tokens total
         // Expected to trim U1+A1 block (30 tokens), keeping U2+A2+U3 (17 tokens)
-        let _ = session.add_message(SenderType::User, "User message 3 is also quite long"); // est. 7 tokens
+        let _ = session.add_message(new_chat_msg(
+            SenderType::User,
+            "User message 3 is also quite long",
+        )); // est. 7 tokens
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
             .messages
             .iter()
@@ -756,14 +757,17 @@ mod tests {
     #[test]
     fn test_trim_messages_with_tool_calls() {
         let mut session = new_session(200); // Larger context to fit all messages
-        let _ = session.add_message(SenderType::User, "Use the search tool");
-        let _ = session.add_message(SenderType::Assistant, "I'll search for that information.");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
+        let _ = session.add_message(new_chat_msg(
+            SenderType::Assistant,
+            "I'll search for that information.",
+        ));
 
         // Simulate tool calls in the assistant message
         session.messages[1].0.tools = vec![new_tool_call("search"), new_tool_call("calculate")];
 
-        let _ = session.add_message(SenderType::Tool, "Search result");
-        let _ = session.add_message(SenderType::Tool, "Calculation result");
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Search result"));
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Calculation result"));
 
         // Get trimmed messages with limited context
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
@@ -780,16 +784,19 @@ mod tests {
     #[test]
     fn test_trim_messages_oversized_tool_call() {
         let mut session = new_session(50); // Very small context to force trimming
-        let _ = session.add_message(SenderType::User, "Use the search tool");
-        let _ = session.add_message(SenderType::Assistant, "I'll search for that information.");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
+        let _ = session.add_message(new_chat_msg(
+            SenderType::Assistant,
+            "I'll search for that information.",
+        ));
 
         // Simulate a large tool call that exceeds context
         session.messages[1].0.tools = vec![new_tool_call("search")];
 
-        let _ = session.add_message(SenderType::Tool, "Search result");
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Search result"));
 
         // Add an extra message that should be trimmed
-        let _ = session.add_message(SenderType::User, "Follow up question");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Follow up question"));
 
         // Get trimmed messages with limited context
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
@@ -806,8 +813,11 @@ mod tests {
     #[test]
     fn test_trim_messages_with_invalid_tool_result() {
         let mut session = new_session(100);
-        let _ = session.add_message(SenderType::User, "Use the search tool");
-        let _ = session.add_message(SenderType::Assistant, "I'll search for that information.");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
+        let _ = session.add_message(new_chat_msg(
+            SenderType::Assistant,
+            "I'll search for that information.",
+        ));
 
         // Simulate tool calls in the assistant message
         session.messages[1].0.tools = vec![new_tool_call("search")];
@@ -817,10 +827,10 @@ mod tests {
             r#"{{"call":{{"id":"search_id","name":"search","arguments":"{{}}"}},"output":""{}""#,
             "invalid json ".repeat(100)
         );
-        let _ = session.add_message(SenderType::Tool, &invalid_json);
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, &invalid_json));
 
         // Add another tool result (this will be the last one, forcing the first to be truncated)
-        let _ = session.add_message(SenderType::Tool, "Second tool result");
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Second tool result"));
 
         // Get trimmed messages
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
@@ -843,7 +853,7 @@ mod tests {
     #[test]
     fn test_record_completion_with_tools() {
         let mut session = new_session(100);
-        let _ = session.add_message(SenderType::User, "Use the search tool");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
 
         let mut assistant_message =
             new_chat_msg(SenderType::Assistant, "I'll search for that information.");
@@ -864,7 +874,7 @@ mod tests {
     #[test]
     fn test_trim_messages_extremely_large_tool_result() {
         let mut session = new_session(30); // Very small context to force truncation
-        let _ = session.add_message(SenderType::User, "Use the search tool");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
 
         let mut assistant_message =
             new_chat_msg(SenderType::Assistant, "I'll search for that information.");
@@ -881,10 +891,10 @@ mod tests {
         let _ = session.record_completion(tool_message, &Default::default());
 
         // Create another tool result (this will be the last one and won't be truncated)
-        let _ = session.add_message(SenderType::Tool, "Small result");
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Small result"));
 
         // Create another message
-        let _ = session.add_message(SenderType::User, "Follow up");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Follow up"));
 
         // Get trimmed messages
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
@@ -924,8 +934,8 @@ mod tests {
     #[test]
     fn test_clear_history() {
         let mut session = new_session(100);
-        let _ = session.add_message(SenderType::User, "Hello");
-        let _ = session.add_message(SenderType::Assistant, "Hi there");
+        let _ = session.add_message(new_chat_msg(SenderType::User, "Hello"));
+        let _ = session.add_message(new_chat_msg(SenderType::Assistant, "Hi there"));
         assert_eq!(session.messages.len(), 2);
 
         session.clear_history().unwrap();
@@ -976,10 +986,10 @@ mod tests {
             .map(|out| serde_json::to_string(out).unwrap())
             .collect();
 
-        let _ = session.add_message(SenderType::User, "U1");
-        let _ = session.add_message(SenderType::Tool, &serialized_outputs[0]);
-        let _ = session.add_message(SenderType::User, "U2");
-        let _ = session.add_message(SenderType::Tool, &serialized_outputs[1]);
+        let _ = session.add_message(new_chat_msg(SenderType::User, "U1"));
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, &serialized_outputs[0]));
+        let _ = session.add_message(new_chat_msg(SenderType::User, "U2"));
+        let _ = session.add_message(new_chat_msg(SenderType::Tool, &serialized_outputs[1]));
 
         // Get trimmed messages using the same pattern as other tests
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
@@ -1023,8 +1033,8 @@ mod tests {
         let mut session = new_session(100);
 
         // Add some data to the session
-        session.add_message(SenderType::User, "Hello")?;
-        session.add_message(SenderType::Assistant, "Hi there")?;
+        session.add_message(new_chat_msg(SenderType::User, "Hello"))?;
+        session.add_message(new_chat_msg(SenderType::Assistant, "Hi there"))?;
         let original_prompt = session.system_prompt();
 
         // Create a new model config

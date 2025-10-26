@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arey_core::agent::Agent;
-use arey_core::completion::{CancellationToken, Completion, SenderType};
+use arey_core::completion::{CancellationToken, ChatMessage, Completion, SenderType};
 use arey_core::config::Config;
 use arey_core::model::ModelConfig;
 use arey_core::session::Session;
@@ -97,7 +97,11 @@ impl<'a> Task<'a> {
 
         // Add the user instruction to the session
         session
-            .add_message(SenderType::User, &self.instruction)
+            .add_message(ChatMessage {
+                sender: SenderType::User,
+                text: self.instruction.clone(),
+                tools: Vec::new(),
+            })
             .context("Failed to add instruction message")?;
 
         let mut settings = HashMap::new();

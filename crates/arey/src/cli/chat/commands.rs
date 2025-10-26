@@ -797,14 +797,11 @@ USER: Run tool
         chat_session
             .lock()
             .await
-            .add_messages(
-                vec![ChatMessage {
-                    sender: SenderType::User,
-                    text: "hello".to_string(),
-                    tools: vec![],
-                }],
-                vec![],
-            )
+            .add_messages(vec![ChatMessage {
+                sender: SenderType::User,
+                text: "hello".to_string(),
+                tools: vec![],
+            }])
             .await;
         assert!(!chat_session.lock().await.get_all_messages().is_empty());
 
@@ -826,14 +823,11 @@ USER: Run tool
         chat_session
             .lock()
             .await
-            .add_messages(
-                vec![ChatMessage {
-                    sender: SenderType::User,
-                    text: "log this".to_string(),
-                    tools: vec![],
-                }],
-                vec![],
-            )
+            .add_messages(vec![ChatMessage {
+                sender: SenderType::User,
+                text: "log this".to_string(),
+                tools: vec![],
+            }])
             .await;
 
         // Test log command

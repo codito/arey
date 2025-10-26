@@ -198,7 +198,6 @@ impl CompletionModel for OpenAIBaseModel {
                 }));
             }
         };
-        debug!("OpenAI request: {:?}", request);
 
         let request_value = match serde_json::to_value(&request) {
             Ok(v) => v,
@@ -208,6 +207,7 @@ impl CompletionModel for OpenAIBaseModel {
                 }));
             }
         };
+        debug!("OpenAI request: {:?}", request_value);
 
         // Start the timer
         let start_time = Instant::now();
@@ -342,10 +342,6 @@ impl CompletionModel for OpenAIBaseModel {
 
         Box::pin(outer_stream)
     }
-
-    // async fn free(&mut self) {
-    //     // No resources to free
-    // }
 }
 
 #[cfg(test)]
