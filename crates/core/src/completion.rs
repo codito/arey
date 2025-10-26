@@ -57,9 +57,28 @@ impl SenderType {
 
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
-    pub text: String,
+    /// The sender of the message.
     pub sender: SenderType,
-    pub tools: Vec<ToolCall>,
+
+    /// The text of the message.
+    pub text: String,
+
+    /// The tool calls associated with the message. Only valid for Assistant messages.
+    pub tools: Option<Vec<ToolCall>>,
+
+    /// Completion metrics for the message. Only valid for Assistant messages.
+    pub metrics: Option<CompletionMetrics>,
+}
+
+impl Default for ChatMessage {
+    fn default() -> Self {
+        Self {
+            sender: SenderType::User,
+            text: String::new(),
+            tools: None,
+            metrics: None,
+        }
+    }
 }
 
 pub enum Completion {

@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     let mut messages = vec![ChatMessage {
         text: "What's the current weather in London?".to_string(),
         sender: SenderType::User,
-        tools: vec![],
+        ..Default::default()
     }];
     println!("> {}", messages.last().unwrap().text);
 
@@ -128,7 +128,8 @@ async fn main() -> Result<()> {
     messages.push(ChatMessage {
         text: assistant_content.clone(),
         sender: SenderType::Assistant,
-        tools: vec![],
+        metrics: Some(Default::default()),
+        ..Default::default()
     });
 
     if !tool_calls.is_empty() {
@@ -152,7 +153,7 @@ async fn main() -> Result<()> {
             tool_result_messages.push(ChatMessage {
                 sender: SenderType::Tool,
                 text: serde_json::to_string(&ToolResult { call, output }).unwrap(),
-                tools: vec![],
+                ..Default::default()
             });
         }
         messages.extend(tool_result_messages);

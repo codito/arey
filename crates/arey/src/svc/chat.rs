@@ -535,7 +535,7 @@ mod tests {
         chat.add_messages(vec![ChatMessage {
             sender: SenderType::User,
             text: "Hello".to_string(),
-            tools: Vec::new(),
+            ..Default::default()
         }])
         .await;
         assert!(chat.get_last_assistant_message().is_none());
@@ -543,7 +543,8 @@ mod tests {
         chat.add_messages(vec![ChatMessage {
             sender: SenderType::Assistant,
             text: "Hi there!".to_string(),
-            tools: Vec::new(),
+            metrics: Some(Default::default()),
+            ..Default::default()
         }])
         .await;
 
@@ -568,12 +569,13 @@ mod tests {
             ChatMessage {
                 sender: SenderType::User,
                 text: "Hello".to_string(),
-                tools: Vec::new(),
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "Hi there!".to_string(),
-                tools: Vec::new(),
+                metrics: Some(Default::default()),
+                ..Default::default()
             },
         ])
         .await;
@@ -704,7 +706,7 @@ mod tests {
         chat.add_messages(vec![ChatMessage {
             sender: SenderType::User,
             text: "Hello".to_string(),
-            tools: vec![],
+            ..Default::default()
         }])
         .await;
 

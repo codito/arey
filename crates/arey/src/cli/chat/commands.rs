@@ -431,9 +431,11 @@ fn format_message_block(messages: &[arey_core::completion::ChatMessage]) -> Resu
         out.push_str(&format!("{} {}\n", sender_tag, content));
 
         // Show tool calls if any
-        if !msg.tools.is_empty() {
+        if let Some(tools) = msg.tools.as_ref()
+            && !tools.is_empty()
+        {
             out.push_str("  Tools:\n");
-            for tool in &msg.tools {
+            for tool in tools {
                 out.push_str(&format!("    - {}: {}\n", tool.name, tool.arguments));
             }
         }
@@ -511,7 +513,7 @@ mod tests {
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: "Test".to_string(),
-            tools: vec![],
+            ..Default::default()
         }];
         let result = format_message_block(&messages).unwrap();
         let expected = r#"
@@ -528,22 +530,24 @@ USER: Test
             ChatMessage {
                 sender: SenderType::User,
                 text: "First".to_string(),
-                tools: vec![],
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "First Response".to_string(),
-                tools: vec![],
+                metrics: Some(Default::default()),
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::User,
                 text: "Second".to_string(),
-                tools: vec![],
+                ..Default::default()
             },
             ChatMessage {
                 sender: SenderType::Assistant,
                 text: "Second Response".to_string(),
-                tools: vec![],
+                metrics: Some(Default::default()),
+                ..Default::default()
             },
         ];
         let result = format_message_block(&messages).unwrap();
@@ -563,7 +567,7 @@ ASSISTANT: Second Response
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: long_text,
-            tools: vec![],
+            ..Default::default()
         }];
         let result = format_message_block(&messages).unwrap();
         let truncated_part = "a".repeat(500) + "\n... [truncated]";
@@ -576,11 +580,12 @@ ASSISTANT: Second Response
         let messages = vec![ChatMessage {
             sender: SenderType::User,
             text: "Run tool".to_string(),
-            tools: vec![ToolCall {
+            tools: Some(vec![ToolCall {
                 id: "id1".to_string(),
                 name: "tool1".to_string(),
                 arguments: "{\"arg\":1}".to_string(),
-            }],
+            }]),
+            ..Default::default()
         }];
         let result = format_message_block(&messages).unwrap();
         let expected = r#"
@@ -800,7 +805,7 @@ USER: Run tool
             .add_messages(vec![ChatMessage {
                 sender: SenderType::User,
                 text: "hello".to_string(),
-                tools: vec![],
+                ..Default::default()
             }])
             .await;
         assert!(!chat_session.lock().await.get_all_messages().is_empty());
@@ -826,7 +831,7 @@ USER: Run tool
             .add_messages(vec![ChatMessage {
                 sender: SenderType::User,
                 text: "log this".to_string(),
-                tools: vec![],
+                ..Default::default()
             }])
             .await;
 

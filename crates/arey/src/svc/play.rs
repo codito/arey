@@ -184,7 +184,7 @@ impl PlayFile {
         session.add_message(ChatMessage {
             sender: SenderType::User,
             text: prompt,
-            tools: Vec::new(),
+            ..Default::default()
         })?;
 
         let settings: HashMap<String, String> = completion_profile

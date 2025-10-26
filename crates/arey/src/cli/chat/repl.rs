@@ -165,7 +165,7 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
                     let user_messages = vec![ChatMessage {
                         text: line.to_string(),
                         sender: SenderType::User,
-                        tools: vec![],
+                        ..Default::default()
                     }];
                     if !process_message(chat.clone(), renderer, user_messages).await? {
                         save_history_on_exit(&mut rl)?;
@@ -319,7 +319,8 @@ async fn process_message(
             .add_messages(vec![ChatMessage {
                 sender: SenderType::Assistant,
                 text: assistant_message_text,
-                tools: assistant_message_tools,
+                tools: Some(assistant_message_tools),
+                metrics: Some(metrics.clone()),
             }])
             .await;
     }
@@ -462,7 +463,7 @@ async fn process_tools(
         tool_messages.push(ChatMessage {
             text: serde_json::to_string(&result)?,
             sender: SenderType::Tool,
-            tools: vec![],
+            ..Default::default()
         });
     }
 
@@ -661,7 +662,7 @@ mod tests {
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
-            tools: vec![],
+            ..Default::default()
         };
         process_message(chat_session.clone(), &mut renderer, vec![user_message]).await?;
 
@@ -693,7 +694,7 @@ mod tests {
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
-            tools: vec![],
+            ..Default::default()
         };
         process_message(chat_session.clone(), &mut renderer, vec![user_message]).await?;
 
@@ -715,7 +716,7 @@ mod tests {
         let user_message = ChatMessage {
             sender: SenderType::User,
             text: "Hi".to_string(),
-            tools: vec![],
+            ..Default::default()
         };
         process_message(chat_session.clone(), &mut renderer, vec![user_message]).await?;
 

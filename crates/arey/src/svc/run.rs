@@ -100,7 +100,7 @@ impl<'a> Task<'a> {
             .add_message(ChatMessage {
                 sender: SenderType::User,
                 text: self.instruction.clone(),
-                tools: Vec::new(),
+                ..Default::default()
             })
             .context("Failed to add instruction message")?;
 

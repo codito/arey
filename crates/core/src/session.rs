@@ -2,9 +2,7 @@
 //! Context includes the conversation, shared artifacts, and tools.
 
 use crate::{
-    completion::{
-        CancellationToken, ChatMessage, Completion, CompletionMetrics, CompletionModel, SenderType,
-    },
+    completion::{CancellationToken, ChatMessage, Completion, CompletionModel, SenderType},
     get_completion_llm,
     model::{ModelConfig, ModelMetrics, ModelProvider},
     provider::test_provider::TestProviderModel,
@@ -77,7 +75,58 @@ impl Session {
 
     /// Add a new message to the conversation history
     pub fn add_message(&mut self, message: ChatMessage) -> Result<()> {
-        self.messages.push((message, None));
+        if message.sender != SenderType::Assistant {
+            self.messages.push((message, None));
+            return Ok(());
+        }
+
+        // Add assistant message. Assume assistant message is fully received.
+        // Back-fill token counts for messages sent in the last prompt and adds the
+        // assistant's response with its token count.
+        let messages = &mut self.messages;
+
+        let mut known_prompt_tokens: usize = 0;
+        let mut unknown_message_indices = Vec::new();
+        let mut total_unknown_chars = 0;
+
+        // Identify messages that were part of the prompt and don't have a token count yet.
+        for (i, (msg, count)) in messages.iter().enumerate() {
+            if let Some(count) = *count {
+                known_prompt_tokens += count;
+            } else {
+                unknown_message_indices.push(i);
+                // Use character length as a heuristic for distribution.
+                total_unknown_chars += msg.text.len();
+            }
+        }
+
+        // Calculate new tokens added by the assistant's response.
+        let metrics = message.clone().metrics.unwrap();
+        let new_tokens = (metrics.prompt_tokens as usize).saturating_sub(known_prompt_tokens);
+
+        if !unknown_message_indices.is_empty() {
+            if total_unknown_chars > 0 {
+                let mut distributed_tokens: usize = 0;
+                let last_index = unknown_message_indices.len() - 1;
+
+                // Distribute tokens proportionally, giving remainder to the last message.
+                for (i, msg_idx) in unknown_message_indices.iter().enumerate() {
+                    let msg_chars = messages[*msg_idx].0.text.len();
+                    let msg_tokens = if i == last_index {
+                        new_tokens.saturating_sub(distributed_tokens)
+                    } else {
+                        (new_tokens * msg_chars) / total_unknown_chars
+                    };
+                    messages[*msg_idx].1 = Some(msg_tokens);
+                    distributed_tokens += msg_tokens;
+                }
+            } else if unknown_message_indices.len() == 1 {
+                // Handle case where there's one message with no text.
+                messages[unknown_message_indices[0]].1 = Some(new_tokens);
+            }
+        }
+
+        messages.push((message, Some(metrics.completion_tokens as usize)));
         Ok(())
     }
 
@@ -179,59 +228,6 @@ impl Session {
             .map(|(m, _)| m.clone())
     }
 
-    /// Back-fills token counts for messages sent in the last prompt and adds the
-    /// assistant's response with its token count. This should be called after a
-    /// response has been fully received.
-    pub fn record_completion(
-        &mut self,
-        assistant_message: ChatMessage,
-        metrics: &CompletionMetrics,
-    ) -> Result<()> {
-        let messages = &mut self.messages;
-
-        let mut known_prompt_tokens: usize = 0;
-        let mut unknown_message_indices = Vec::new();
-        let mut total_unknown_chars = 0;
-
-        // Identify messages that were part of the prompt and don't have a token count yet.
-        for (i, (msg, count)) in messages.iter().enumerate() {
-            if let Some(count) = *count {
-                known_prompt_tokens += count;
-            } else {
-                unknown_message_indices.push(i);
-                // Use character length as a heuristic for distribution.
-                total_unknown_chars += msg.text.len();
-            }
-        }
-
-        let new_tokens = (metrics.prompt_tokens as usize).saturating_sub(known_prompt_tokens);
-
-        if !unknown_message_indices.is_empty() {
-            if total_unknown_chars > 0 {
-                let mut distributed_tokens: usize = 0;
-                let last_index = unknown_message_indices.len() - 1;
-
-                // Distribute tokens proportionally, giving remainder to the last message.
-                for (i, msg_idx) in unknown_message_indices.iter().enumerate() {
-                    let msg_chars = messages[*msg_idx].0.text.len();
-                    let msg_tokens = if i == last_index {
-                        new_tokens.saturating_sub(distributed_tokens)
-                    } else {
-                        (new_tokens * msg_chars) / total_unknown_chars
-                    };
-                    messages[*msg_idx].1 = Some(msg_tokens);
-                    distributed_tokens += msg_tokens;
-                }
-            } else if unknown_message_indices.len() == 1 {
-                // Handle case where there's one message with no text.
-                messages[unknown_message_indices[0]].1 = Some(new_tokens);
-            }
-        }
-
-        messages.push((assistant_message, Some(metrics.completion_tokens as usize)));
-        Ok(())
-    }
-
     /// Trims a single, oversized block of messages to fit within the available token budget.
     ///
     /// This function works backwards from the end of the block, prioritizing newer messages.
@@ -307,10 +303,12 @@ impl Session {
         // Heuristic for messages without a known token count.
         let estimate_tokens = |msg: &ChatMessage| -> usize {
             let mut tokens = msg.text.len() / 4;
-            for tool_call in &msg.tools {
-                tokens += tool_call.name.len() / 4;
-                if let Ok(input_str) = serde_json::to_string(&tool_call.arguments) {
-                    tokens += input_str.len() / 4;
+            if let Some(tools) = &msg.tools {
+                for tool_call in tools {
+                    tokens += tool_call.name.len() / 4;
+                    if let Ok(input_str) = serde_json::to_string(&tool_call.arguments) {
+                        tokens += input_str.len() / 4;
+                    }
                 }
             }
             tokens
@@ -457,7 +455,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::{
-        completion::Completion,
+        completion::{Completion, CompletionMetrics},
         model::ModelProvider,
         tools::{ToolCall, ToolResult},
     };
@@ -497,7 +495,20 @@ mod tests {
         ChatMessage {
             sender,
             text: text.to_string(),
-            tools: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    fn new_assistant_msg(
+        text: &str,
+        metrics: CompletionMetrics,
+        tools: Vec<ToolCall>,
+    ) -> ChatMessage {
+        ChatMessage {
+            sender: SenderType::Assistant,
+            text: text.to_string(),
+            tools: Some(tools),
+            metrics: Some(metrics),
         }
     }
 
@@ -536,7 +547,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_record_completion_simple() {
+    async fn test_add_message_assistant_simple() {
         let mut session = new_session(100);
         let _ = session.add_message(new_chat_msg(SenderType::User, "User 1"));
 
@@ -545,8 +556,7 @@ mod tests {
             completion_tokens: 20,
             ..Default::default()
         };
-        let _ =
-            session.record_completion(new_chat_msg(SenderType::Assistant, "Response 1"), &metrics);
+        let _ = session.add_message(new_assistant_msg("Response 1", metrics, Vec::new()));
 
         assert_eq!(session.messages.len(), 2);
         assert_eq!(session.messages[0].1, Some(10));
@@ -554,7 +564,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_record_completion_multiple_unknown() {
+    async fn test_add_message_assistant_multiple_unknown() {
         let mut session = new_session(100);
         let _ = session.add_message(new_chat_msg(
             SenderType::User,
@@ -567,8 +577,7 @@ mod tests {
             completion_tokens: 20,
             ..Default::default()
         };
-        let _ =
-            session.record_completion(new_chat_msg(SenderType::Assistant, "Response 1"), &metrics);
+        let _ = session.add_message(new_assistant_msg("Response 1", metrics, Vec::new()));
         assert_eq!(session.messages.len(), 3);
         // 100 * (34 / (34+10)) = 77.27 -> 77
         assert_eq!(session.messages[0].1, Some(77));
@@ -588,8 +597,6 @@ mod tests {
         let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
         assert_eq!(trimmed.len(), 2);
     }
-
-    // Removed concurrency-specific tests - no longer applicable to synchronous Session
 
     #[test]
     fn test_get_trimmed_messages_simple_trim() {
@@ -700,10 +707,11 @@ mod tests {
             completion_tokens: 10,
             ..Default::default()
         };
-        let _ = session.record_completion(
-            new_chat_msg(SenderType::Assistant, "Assistant response 1"),
-            &metrics1,
-        );
+        let _ = session.add_message(new_assistant_msg(
+            "Assistant response 1",
+            metrics1,
+            Vec::new(),
+        ));
         assert_eq!(session.messages[0].1, Some(20));
         assert_eq!(session.messages[1].1, Some(10));
 
@@ -724,10 +732,11 @@ mod tests {
             completion_tokens: 5,
             ..Default::default()
         };
-        let _ = session.record_completion(
-            new_chat_msg(SenderType::Assistant, "Assistant response 2"),
-            &metrics2,
-        );
+        let _ = session.add_message(new_assistant_msg(
+            "Assistant response 2",
+            metrics2,
+            Vec::new(),
+        ));
         assert_eq!(session.messages[2].1, Some(5));
         assert_eq!(session.messages[3].1, Some(5));
 
@@ -758,13 +767,15 @@ mod tests {
     fn test_trim_messages_with_tool_calls() {
         let mut session = new_session(200); // Larger context to fit all messages
         let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-        let _ = session.add_message(new_chat_msg(
-            SenderType::Assistant,
+        let _ = session.add_message(new_assistant_msg(
             "I'll search for that information.",
+            CompletionMetrics::default(),
+            Vec::new(),
         ));
 
         // Simulate tool calls in the assistant message
-        session.messages[1].0.tools = vec![new_tool_call("search"), new_tool_call("calculate")];
+        session.messages[1].0.tools =
+            Some(vec![new_tool_call("search"), new_tool_call("calculate")]);
 
         let _ = session.add_message(new_chat_msg(SenderType::Tool, "Search result"));
         let _ = session.add_message(new_chat_msg(SenderType::Tool, "Calculation result"));
@@ -785,13 +796,14 @@ mod tests {
     fn test_trim_messages_oversized_tool_call() {
         let mut session = new_session(50); // Very small context to force trimming
         let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-        let _ = session.add_message(new_chat_msg(
-            SenderType::Assistant,
+        let _ = session.add_message(new_assistant_msg(
             "I'll search for that information.",
+            CompletionMetrics::default(),
+            Vec::new(),
         ));
 
         // Simulate a large tool call that exceeds context
-        session.messages[1].0.tools = vec![new_tool_call("search")];
+        session.messages[1].0.tools = Some(vec![new_tool_call("search")]);
 
         let _ = session.add_message(new_chat_msg(SenderType::Tool, "Search result"));
 
@@ -814,13 +826,14 @@ mod tests {
     fn test_trim_messages_with_invalid_tool_result() {
         let mut session = new_session(100);
         let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-        let _ = session.add_message(new_chat_msg(
-            SenderType::Assistant,
+        let _ = session.add_message(new_assistant_msg(
             "I'll search for that information.",
+            CompletionMetrics::default(),
+            Vec::new(),
         ));
 
         // Simulate tool calls in the assistant message
-        session.messages[1].0.tools = vec![new_tool_call("search")];
+        session.messages[1].0.tools = Some(vec![new_tool_call("search")]);
 
         // Add a tool result with invalid JSON (make it long enough to trigger truncation)
         let invalid_json = format!(
@@ -855,32 +868,36 @@ mod tests {
         let mut session = new_session(100);
         let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
 
-        let mut assistant_message =
-            new_chat_msg(SenderType::Assistant, "I'll search for that information.");
-        assistant_message.tools = vec![new_tool_call("search")];
-
         let metrics = CompletionMetrics {
             prompt_tokens: 10,
             completion_tokens: 20,
             ..Default::default()
         };
-        let _ = session.record_completion(assistant_message, &metrics);
+        let assistant_message = new_assistant_msg(
+            "I'll search for that information.",
+            metrics,
+            vec![new_tool_call("search")],
+        );
+
+        let _ = session.add_message(assistant_message);
 
         assert_eq!(session.messages.len(), 2);
         assert_eq!(session.messages[1].1, Some(20));
-        assert_eq!(session.messages[1].0.tools.len(), 1);
+        assert_eq!(session.messages[1].0.tools.as_ref().unwrap().len(), 1);
     }
 
     #[test]
     fn test_trim_messages_extremely_large_tool_result() {
-        let mut session = new_session(30); // Very small context to force truncation
+        let mut session = new_session(300); // Very small context to force truncation
         let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
 
-        let mut assistant_message =
-            new_chat_msg(SenderType::Assistant, "I'll search for that information.");
-        assistant_message.tools = vec![new_tool_call("search")];
+        let assistant_message = new_assistant_msg(
+            "I'll search for that information.",
+            CompletionMetrics::default(),
+            vec![new_tool_call("search")],
+        );
 
-        let _ = session.record_completion(assistant_message, &Default::default());
+        let _ = session.add_message(assistant_message);
 
         // Create a very large tool result
         let large_tool_result =
@@ -888,13 +905,13 @@ mod tests {
                 + &"x".repeat(1000)
                 + r#""#;
         let tool_message = new_chat_msg(SenderType::Tool, &large_tool_result);
-        let _ = session.record_completion(tool_message, &Default::default());
+        let _ = session.add_message(tool_message);
 
         // Create another tool result (this will be the last one and won't be truncated)
         let _ = session.add_message(new_chat_msg(SenderType::Tool, "Small result"));
 
         // Create another message
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Follow up"));
+        // let _ = session.add_message(new_chat_msg(SenderType::User, "Follow up"));
 
         // Get trimmed messages
         let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
@@ -935,7 +952,11 @@ mod tests {
     fn test_clear_history() {
         let mut session = new_session(100);
         let _ = session.add_message(new_chat_msg(SenderType::User, "Hello"));
-        let _ = session.add_message(new_chat_msg(SenderType::Assistant, "Hi there"));
+        let _ = session.add_message(new_assistant_msg(
+            "Hi there",
+            CompletionMetrics::default(),
+            Vec::new(),
+        ));
         assert_eq!(session.messages.len(), 2);
 
         session.clear_history().unwrap();
@@ -1034,7 +1055,11 @@ mod tests {
 
         // Add some data to the session
         session.add_message(new_chat_msg(SenderType::User, "Hello"))?;
-        session.add_message(new_chat_msg(SenderType::Assistant, "Hi there"))?;
+        session.add_message(new_assistant_msg(
+            "Hi there",
+            CompletionMetrics::default(),
+            Vec::new(),
+        ))?;
         let original_prompt = session.system_prompt();
 
         // Create a new model config
