@@ -1010,7 +1010,7 @@ mod tests {
         // The euro sign '€' is 3 bytes and starts at byte index 511 of `content`.
         let long_string = "a".to_string().repeat(510) + "€"; // 513 bytes as a string slice.
 
-        let tool_outputs = vec![
+        let tool_outputs = [
             ToolResult {
                 call: new_tool_call("tool_1"),
                 output: Value::String(long_string),
