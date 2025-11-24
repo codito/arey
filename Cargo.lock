@@ -363,9 +363,9 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "cc"
-version = "1.2.44"
+version = "1.2.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37521ac7aabe3d13122dc382493e20c9416f299d2ccd5b3a5340a2570cdeb0f3"
+checksum = "cd405d82c84ff7f35739f175f67d8b9fb7687a0e84ccdc78bd3568839827cf07"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -776,9 +776,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52051878f80a721bb68ebfbc930e07b65ba72f2da88968ea5c06fd6ca3d3a127"
+checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
 
 [[package]]
 name = "find_cuda_helper"
@@ -1482,9 +1482,9 @@ checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 
 [[package]]
 name = "llama-cpp-2"
-version = "0.1.124"
+version = "0.1.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa5755c171abb00d1fb74a68ad4ac8e3b95193f9fa1c2da88e79de5a15081333"
+checksum = "a6611337b4abaae091918aacbbf2a25525b25818efc88de935ad249a7f979e4b"
 dependencies = [
  "enumflags2",
  "llama-cpp-sys-2",
@@ -1495,9 +1495,9 @@ dependencies = [
 
 [[package]]
 name = "llama-cpp-sys-2"
-version = "0.1.124"
+version = "0.1.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dea2c8ba38b170c6c6b208d568b86c063cef250e7d311c322e4c3efab900abff"
+checksum = "fcf4f0b93f111d7cc2ae702b2dd20efb4a9a19297addb3e63c1cfb97e6a13c6f"
 dependencies = [
  "bindgen",
  "cc",
