@@ -35,7 +35,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 notify.workspace = true
 minijinja = { version = "2.14.0", features = ["builtins", "json"] }
-minijinja-contrib = { version = "2.13.0", features = ["pycompat"] }
+minijinja-contrib = { version = "2.14.0", features = ["pycompat"] }
 llama-cpp-2 = "=0.1.130"
 
 [dev-dependencies]
