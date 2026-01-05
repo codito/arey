@@ -41,7 +41,7 @@ llama-cpp-2 = "=0.1.130"
 [dev-dependencies]
 tempfile = { workspace = true, features = [] }
 wiremock = { workspace = true, features = [] }
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread"] }
 reqwest = { workspace = true, features = ["json"] }
 
 
