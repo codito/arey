@@ -36,7 +36,7 @@ serde_yaml = "0.9"
 shellexpand = "3.1.1"
 thiserror = "2.0"
 tokio = { version = "1.49", features = ["full"] }
-tokio-stream = "0.1.17"
+tokio-stream = "0.1.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["local-time"] }
 tempfile = "3.24.0"
