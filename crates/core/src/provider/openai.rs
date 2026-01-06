@@ -7,11 +7,14 @@ use crate::model::{ModelConfig, ModelMetrics};
 use crate::tools::{ToolCall, ToolResult};
 use anyhow::{Result, anyhow};
 use async_openai::config::OpenAIConfig;
+use async_openai::types::chat::{ChatCompletionToolChoiceOption, ToolChoiceOptions};
 use async_openai::{
     Client as OpenAIClient,
-    types::{
-        ChatCompletionRequestMessage, ChatCompletionStreamOptions, CreateChatCompletionRequestArgs,
-        FinishReason,
+    types::chat::{
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions,
+        CreateChatCompletionRequestArgs, FinishReason,
     },
 };
 use async_trait::async_trait;
@@ -78,7 +81,7 @@ impl OpenAIBaseModel {
     fn to_openai_message(msg: &ChatMessage) -> ChatCompletionRequestMessage {
         match msg.sender {
             SenderType::System => ChatCompletionRequestMessage::System(
-                async_openai::types::ChatCompletionRequestSystemMessageArgs::default()
+                ChatCompletionRequestSystemMessageArgs::default()
                     .content(msg.text.as_str())
                     .build()
                     .unwrap(),
@@ -88,11 +91,11 @@ impl OpenAIBaseModel {
                     && !tools.is_empty()
                 {
                     let tool_calls = tools.iter().map(|t| t.clone().into()).collect::<Vec<_>>();
-                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                    ChatCompletionRequestAssistantMessageArgs::default()
                         .tool_calls(tool_calls)
                         .build()
                 } else {
-                    async_openai::types::ChatCompletionRequestAssistantMessageArgs::default()
+                    ChatCompletionRequestAssistantMessageArgs::default()
                         .content(msg.text.as_str())
                         .build()
                 };
@@ -100,7 +103,7 @@ impl OpenAIBaseModel {
                 ChatCompletionRequestMessage::Assistant(assistant_msg.unwrap())
             }
             SenderType::User => ChatCompletionRequestMessage::User(
-                async_openai::types::ChatCompletionRequestUserMessageArgs::default()
+                ChatCompletionRequestUserMessageArgs::default()
                     .content(msg.text.as_str())
                     .build()
                     .unwrap(),
@@ -121,7 +124,7 @@ impl OpenAIBaseModel {
                 // println!("{tool_output:?}");
                 // println!("{content}");
                 ChatCompletionRequestMessage::Tool(
-                    async_openai::types::ChatCompletionRequestToolMessageArgs::default()
+                    ChatCompletionRequestToolMessageArgs::default()
                         .tool_call_id(tool_output.call.id)
                         .content(content)
                         .build()
@@ -169,7 +172,8 @@ impl CompletionModel for OpenAIBaseModel {
 
         // Build request
         let stream_options = ChatCompletionStreamOptions {
-            include_usage: true,
+            include_obfuscation: None,
+            include_usage: Some(true),
         };
         let mut request_builder = CreateChatCompletionRequestArgs::default();
         request_builder
@@ -183,7 +187,9 @@ impl CompletionModel for OpenAIBaseModel {
         if let Some(tools) = tools {
             let openai_tools: Vec<_> = tools.iter().map(|t| t.to_openai_tool()).collect();
             if !openai_tools.is_empty() {
-                request_builder.tools(openai_tools).tool_choice("auto");
+                request_builder.tools(openai_tools).tool_choice(
+                    ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto),
+                );
             }
         }
         let request = request_builder.build();

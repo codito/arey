@@ -1,6 +1,6 @@
-use async_openai::types::{
-    ChatCompletionMessageToolCall, ChatCompletionTool, ChatCompletionToolType, CompletionUsage,
-    FinishReason, FunctionCall, FunctionCallStream,
+use async_openai::types::chat::{
+    ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls, ChatCompletionTool,
+    ChatCompletionTools, CompletionUsage, FinishReason, FunctionCall, FunctionCallStream,
 };
 use serde::Deserialize;
 
@@ -36,16 +36,15 @@ pub(super) struct ChatCompletionToolCallChunk {
 
 impl dyn Tool {
     /// Converts a tool into `ChatCompletionTool` openai format.
-    pub fn to_openai_tool(&self) -> ChatCompletionTool {
-        ChatCompletionTool {
-            r#type: async_openai::types::ChatCompletionToolType::Function,
-            function: async_openai::types::FunctionObject {
+    pub fn to_openai_tool(&self) -> ChatCompletionTools {
+        ChatCompletionTools::Function(ChatCompletionTool {
+            function: async_openai::types::chat::FunctionObject {
                 name: self.name(),
                 description: Some(self.description()),
                 parameters: Some(self.parameters()),
                 strict: None,
             },
-        }
+        })
     }
 }
 
@@ -63,7 +62,7 @@ impl From<ChatCompletionToolCallChunk> for ToolCall {
     }
 }
 
-impl From<ToolCall> for ChatCompletionMessageToolCall {
+impl From<ToolCall> for ChatCompletionMessageToolCalls {
     fn from(val: ToolCall) -> Self {
         // Use name as id if it is not available (Gemini bug)
         // See https://discuss.ai.google.dev/t/tool-calling-with-openai-api-not-working/60140/5
@@ -72,13 +71,12 @@ impl From<ToolCall> for ChatCompletionMessageToolCall {
         } else {
             val.id
         };
-        ChatCompletionMessageToolCall {
+        ChatCompletionMessageToolCalls::Function(ChatCompletionMessageToolCall {
             id,
-            r#type: ChatCompletionToolType::Function,
             function: FunctionCall {
                 name: val.name,
                 arguments: val.arguments,
             },
-        }
+        })
     }
 }
