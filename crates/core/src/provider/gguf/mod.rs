@@ -192,20 +192,28 @@ impl CompletionModel for GgufBaseModel {
                         }
 
                         // Find the common prefix between the old and new prompt
-                        let common_len = all_tokens
+                        let mut common_len = all_tokens
                             .iter()
                             .zip(cached.tokens.iter())
                             .take_while(|(a, b)| a == b)
                             .count();
 
+                        // Limit the common length to the length of the cached sequence
+                        common_len =
+                            std::cmp::min(common_len, 1 + ctx.kv_cache_seq_pos_max(0) as usize);
+                        debug!(
+                            "Common prefix length: {common_len}, Cache size: {}",
+                            cached.tokens.len()
+                        );
+
                         // If the prompt has changed, remove the divergent part of the KV cache
                         if common_len < cached.tokens.len() {
                             // Seq ID 0, remove from common_len to the end of the cached sequence.
-                            ctx.clear_kv_cache_seq(
-                                Some(0),
-                                Some(common_len as u32),
-                                Some(cached.tokens.len() as u32),
-                            )?;
+                            ctx.clear_kv_cache_seq(Some(0), Some(common_len as u32), None)?;
+                            debug!(
+                                "Cleared KV cache from {common_len}, New size: {}",
+                                1 + ctx.kv_cache_seq_pos_max(0)
+                            );
                         }
                         (all_tokens, common_len)
                     } else {
