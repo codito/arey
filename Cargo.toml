@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
-async-openai = { version = "0.32.2", features = ["byot", "chat-completion"] }
+async-openai = { version = "0.32.3", features = ["byot", "chat-completion"] }
 async-stream = "0.3"
 async-trait = "0.1.89"
 chrono = "0.4"
