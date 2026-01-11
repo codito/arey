@@ -333,6 +333,7 @@ impl Session {
         let mut current_tokens = 0;
         let mut current_block_tokens = 0;
 
+        // Iterate backwards to find the oldest message that fits in the context window.
         for i in (0..messages.len()).rev() {
             let msg = &messages[i];
             current_block_tokens += get_token_count(msg);
@@ -354,6 +355,8 @@ impl Session {
                             current_block_tokens, available_tokens
                         );
                         let oversized_block = &messages[i..];
+
+                        // TODO: trimming this block and the tool msg trimming needs to be merged.
                         return self.trim_oversized_block(
                             oversized_block,
                             available_tokens,
@@ -362,87 +365,95 @@ impl Session {
                     } else {
                         // This is an older block that doesn't fit. We stop here and
                         // only include the newer blocks that have already been approved.
+                        // TODO: we should consider truncating the oversized block instead of discarding it.
                         break;
                     }
                 }
             }
         }
-        debug!("Token trimming: start index: {}", start_index);
 
         let mut final_messages: Vec<ChatMessage> = messages[start_index..]
             .iter()
             .map(|(m, _)| m.clone())
             .collect();
 
-        // Truncate all but the last tool message to a reasonable limit.
-        let last_tool_idx = final_messages
-            .iter()
-            .rposition(|m| m.sender == SenderType::Tool);
+        // Skip token trimming if the entire message history fits within the context window.
+        if current_tokens + current_block_tokens <= available_tokens {
+            debug!(
+                "Token trimming: Trimming messages to fit within the context window. New start index: {}",
+                start_index
+            );
 
-        if let Some(last_idx) = last_tool_idx {
-            const MAX_TOOL_RESPONSE_CHARS: usize = 512;
-            const TRUNCATION_MARKER: &str = "... [truncated]";
+            // Truncate all but the last tool message to a reasonable limit.
+            let last_tool_idx = final_messages
+                .iter()
+                .rposition(|m| m.sender == SenderType::Tool);
 
-            for (i, msg) in final_messages.iter_mut().enumerate() {
-                if i < last_idx
-                    && msg.sender == SenderType::Tool
-                    && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
-                {
-                    // Deserialize or handle errors gracefully
-                    let mut tool_output = match serde_json::from_str::<ToolResult>(
-                        msg.text.as_str(),
-                    ) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            error!(
-                                "Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}",
-                                msg.text, e
-                            );
-                            ToolResult {
-                                call: ToolCall {
-                                    id: "invalid".to_string(),
-                                    name: "invalid".to_string(),
-                                    arguments: "{}".to_string(),
-                                },
-                                output: serde_json::Value::String(msg.text.clone()),
+            if let Some(last_idx) = last_tool_idx {
+                const MAX_TOOL_RESPONSE_CHARS: usize = 512;
+                const TRUNCATION_MARKER: &str = "... [truncated]";
+
+                for (i, msg) in final_messages.iter_mut().enumerate() {
+                    if i < last_idx
+                        && msg.sender == SenderType::Tool
+                        && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
+                    {
+                        // Deserialize or handle errors gracefully
+                        let mut tool_output = match serde_json::from_str::<ToolResult>(
+                            msg.text.as_str(),
+                        ) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                error!(
+                                    "Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}",
+                                    msg.text, e
+                                );
+                                ToolResult {
+                                    call: ToolCall {
+                                        id: "invalid".to_string(),
+                                        name: "invalid".to_string(),
+                                        arguments: "{}".to_string(),
+                                    },
+                                    output: serde_json::Value::String(msg.text.clone()),
+                                }
                             }
-                        }
-                    };
+                        };
 
-                    // Serialize output field only
-                    let mut content = match serde_json::to_string(&tool_output.output) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            error!(
-                                "Token trimming: Failed to serialize tool output: {:?}. Error: {}",
-                                tool_output.output, e
-                            );
-                            "[Tool output not serializable]".to_string()
-                        }
-                    };
-                    if content.len() > MAX_TOOL_RESPONSE_CHARS {
-                        let mut new_len = MAX_TOOL_RESPONSE_CHARS;
+                        // Serialize output field only
+                        let mut content = match serde_json::to_string(&tool_output.output) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(
+                                    "Token trimming: Failed to serialize tool output: {:?}. Error: {}",
+                                    tool_output.output, e
+                                );
+                                "[Tool output not serializable]".to_string()
+                            }
+                        };
+                        if content.len() > MAX_TOOL_RESPONSE_CHARS {
+                            let mut new_len = MAX_TOOL_RESPONSE_CHARS;
 
-                        // Ensure we don't cut off in the middle of a UTF-8 character.
-                        while !content.is_char_boundary(new_len) {
-                            new_len -= 1;
+                            // Ensure we don't cut off in the middle of a UTF-8 character.
+                            while !content.is_char_boundary(new_len) {
+                                new_len -= 1;
+                            }
+                            content.truncate(new_len);
+                            content.push_str(TRUNCATION_MARKER);
                         }
-                        content.truncate(new_len);
-                        content.push_str(TRUNCATION_MARKER);
+
+                        // Update output field and serialize full ToolResult
+                        tool_output.output = serde_json::Value::String(content);
+                        msg.text = match serde_json::to_string(&tool_output) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                error!(
+                                    "Token trimming: Failed to serialize ToolResult: {:?}. Error: {}",
+                                    tool_output, e
+                                );
+                                "[Tool output not available]".to_string()
+                            }
+                        };
                     }
-
-                    // Update output field and serialize full ToolResult
-                    tool_output.output = serde_json::Value::String(content);
-                    msg.text = match serde_json::to_string(&tool_output) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            error!(
-                                "Token trimming: Failed to serialize ToolResult: {:?}. Error: {}",
-                                tool_output, e
-                            );
-                            "[Tool output not available]".to_string()
-                        }
-                    };
                 }
             }
         }
