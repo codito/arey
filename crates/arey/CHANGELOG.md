@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.8](https://github.com/codito/arey/compare/arey-v0.0.7...arey-v0.0.8) (2025-11-08)
+
+
+### Bug Fixes
+
+* capture assistant message in conversation history ([#79](https://github.com/codito/arey/issues/79)) ([122d6c8](https://github.com/codito/arey/commit/122d6c8336607e0bd9deca1121ffc8c4e138bce8))
+* drop current gguf model on switch. Granite 4 tool call format fixed. ([#68](https://github.com/codito/arey/issues/68)) ([90b8fc0](https://github.com/codito/arey/commit/90b8fc0078a0bfa747459016fead8063c4b72bbd))
+
 ## [0.0.7](https://github.com/codito/arey/compare/arey-v0.0.6...arey-v0.0.7) (2025-10-04)
 
 
