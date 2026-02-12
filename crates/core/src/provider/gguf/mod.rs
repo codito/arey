@@ -8,12 +8,11 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use llama_cpp_2::token::LlamaToken;
-use llama_cpp_2::{LogOptions, send_logs_to_tracing};
+use llama_cpp_2::{LogOptions, TokenToStringError, send_logs_to_tracing};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::Special,
     model::{AddBos, LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
 };
@@ -293,9 +292,16 @@ impl CompletionModel for GgufBaseModel {
                     }
 
                     // Get token bytes and decode
-                    let token_bytes = model
-                        .token_to_bytes(token, Special::Tokenize)
-                        .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
+                    let token_bytes = match model.token_to_piece_bytes(token, 8, true, None) {
+                        Err(TokenToStringError::InsufficientBufferSpace(required)) => {
+                            let required = (-required)
+                                .try_into()
+                                .expect("Error buffer size is positive");
+                            model.token_to_piece_bytes(token, required, true, None)
+                        }
+                        res => res,
+                    }
+                    .map_err(|e| anyhow!("Token conversion failed: {e}"))?;
 
                     let mut last_chunk = String::with_capacity(32);
                     let _ = decoder.decode_to_string(&token_bytes, &mut last_chunk, false);
