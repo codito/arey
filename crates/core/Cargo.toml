@@ -34,7 +34,7 @@ tokio-stream.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 notify.workspace = true
-minijinja = { version = "2.15.1", features = ["builtins", "json"] }
+minijinja = { version = "2.16.0", features = ["builtins", "json"] }
 minijinja-contrib = { version = "2.15.1", features = ["pycompat"] }
 llama-cpp-2 = "=0.1.133"
 
