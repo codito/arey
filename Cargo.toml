@@ -39,7 +39,7 @@ tokio = { version = "1.50", features = ["full"] }
 tokio-stream = "0.1.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["local-time"] }
-tempfile = "3.26.0"
+tempfile = "3.27.0"
 url = "2.5.7"
 wiremock = "0.6.5"
 
