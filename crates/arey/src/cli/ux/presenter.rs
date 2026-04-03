@@ -43,43 +43,82 @@ pub fn format_footer_metrics(
     if let Some(reason) = finish_reason {
         footer_complete.push_str(&format!(" ({reason})"));
     }
-    footer_complete.push('.');
 
     let mut details = Vec::new();
 
-    // Time metrics
-    if metrics.prompt_eval_latency_ms > 0.0 {
-        details.push(format!(
-            "{:.2}s to first token",
-            metrics.prompt_eval_latency_ms / 1000.0
-        ));
-    }
-    if metrics.completion_latency_ms > 0.0 {
-        details.push(format!(
-            "{:.2}s total",
-            (metrics.prompt_eval_latency_ms + metrics.completion_latency_ms) / 1000.0
-        ));
+    // Combined time and speed: "0.30s (0.10s first) | 100 tok/s"
+    let total_time_ms = metrics.prompt_eval_latency_ms + metrics.completion_latency_ms;
+    let first_token_ms = metrics.prompt_eval_latency_ms;
+    let tokens_per_sec = if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
+        Some(metrics.completion_tokens as f32 * 1000.0 / metrics.completion_latency_ms)
+    } else {
+        None
+    };
+
+    if total_time_ms > 0.0 {
+        let mut time_str = format!("{:.2}s", total_time_ms / 1000.0);
+
+        // Add first token time in parentheses
+        if first_token_ms > 0.0 {
+            time_str.push_str(&format!(" ({:.2}s first)", first_token_ms / 1000.0));
+        }
+
+        details.push(time_str);
+
+        // Add tokens/s rate
+        if let Some(tps) = tokens_per_sec {
+            details.push(format!("{:.0} tok/s", tps));
+        }
     }
 
-    // Tokens/s rate
-    if metrics.completion_tokens > 0 && metrics.completion_latency_ms > 0.0 {
-        let tokens_per_sec =
-            metrics.completion_tokens as f32 * 1000.0 / metrics.completion_latency_ms;
-        details.push(format!("{tokens_per_sec:.2} tokens/s"));
-    }
+    // Token counts: "10 in (5 cache) | 20 out | 30/2048 ctx"
+    let prompt = metrics.prompt_tokens;
+    let completion = metrics.completion_tokens;
+    let cached = metrics
+        .cache_metrics
+        .as_ref()
+        .and_then(|c| c.tokens_skipped);
+    let n_ctx = metrics.cache_metrics.as_ref().and_then(|c| c.n_ctx);
 
-    // Token counts
-    if metrics.completion_tokens > 0 {
-        details.push(format!("{} completion tokens", metrics.completion_tokens));
-    }
-    if metrics.prompt_tokens > 0 {
-        details.push(format!("{} prompt tokens", metrics.prompt_tokens));
+    if prompt > 0 || completion > 0 {
+        let mut token_info = String::new();
+
+        // "10 in (5 cache)" or just "10 in"
+        if prompt > 0 {
+            token_info.push_str(&format!("{} tok in", prompt));
+            if let Some(cached) = cached
+                && cached > 0
+            {
+                token_info.push_str(&format!(" ({} cache)", cached));
+            }
+        }
+
+        // " | 20 out"
+        if completion > 0 {
+            if !token_info.is_empty() {
+                token_info.push_str(" | ");
+            }
+            token_info.push_str(&format!("{} tok out", completion));
+        }
+
+        // " | 30/2048 ctx"
+        if let Some(n_ctx) = n_ctx {
+            if !token_info.is_empty() {
+                token_info.push_str(" | ");
+            }
+            let total_tokens = prompt + completion;
+            token_info.push_str(&format!("{}/{} ctx", total_tokens, n_ctx));
+        }
+
+        if !token_info.is_empty() {
+            details.push(token_info);
+        }
     }
 
     let footer = if details.is_empty() {
         footer_complete
     } else {
-        format!("{} {}", footer_complete, details.join(". "))
+        format!("{} | {}", footer_complete, details.join(" | "))
     };
 
     style_chat_text(&footer, ChatMessageType::Footer).to_string()
@@ -88,6 +127,7 @@ pub fn format_footer_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arey_core::completion::CacheMetrics;
 
     #[test]
     fn test_message_styles() {
@@ -105,17 +145,55 @@ mod tests {
             completion_tokens: 20,
             prompt_eval_latency_ms: 100.0,
             completion_latency_ms: 200.0,
+            cache_metrics: Some(CacheMetrics {
+                cache_hit: false,
+                strategy: Some("Hybrid".to_string()),
+                tokens_skipped: None,
+                n_ctx: Some(2048),
+                checkpoint_transition: None,
+            }),
             ..Default::default()
         };
 
         let footer = format_footer_metrics(&metrics, Some("stop"), false);
-        // The result is a styled string, so we can't do a simple assert_eq.
-        assert!(footer.contains("◼ Completed (stop)."));
-        assert!(footer.contains("0.10s to first token"));
-        assert!(footer.contains("0.30s total"));
-        assert!(footer.contains("100.00 tokens/s"));
-        assert!(footer.contains("20 completion tokens"));
-        assert!(footer.contains("10 prompt tokens"));
+        assert!(footer.contains("◼ Completed (stop)"));
+        assert!(footer.contains("0.30s (0.10s first)"));
+        assert!(footer.contains("100 tok/s"));
+        assert!(footer.contains("10 tok in"));
+        assert!(footer.contains("20 tok out"));
+        assert!(footer.contains("30/2048 ctx"));
+
+        // Test with cache
+        let metrics_with_cache = CompletionMetrics {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            prompt_eval_latency_ms: 100.0,
+            completion_latency_ms: 200.0,
+            cache_metrics: Some(CacheMetrics {
+                cache_hit: true,
+                strategy: Some("Hybrid".to_string()),
+                tokens_skipped: Some(5),
+                n_ctx: Some(2048),
+                checkpoint_transition: Some("TurnStart".to_string()),
+            }),
+            ..Default::default()
+        };
+        let footer_with_cache = format_footer_metrics(&metrics_with_cache, Some("stop"), false);
+        assert!(footer_with_cache.contains("5 cache"));
+
+        // Test without cache_metrics (e.g., OpenAI provider)
+        let metrics_no_cache = CompletionMetrics {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            prompt_eval_latency_ms: 100.0,
+            completion_latency_ms: 200.0,
+            ..Default::default()
+        };
+        let footer_no_cache = format_footer_metrics(&metrics_no_cache, Some("stop"), false);
+        assert!(footer_no_cache.contains("10 tok in"));
+        assert!(footer_no_cache.contains("20 tok out"));
+        assert!(!footer_no_cache.contains("ctx"));
+        assert!(!footer_no_cache.contains("cache"));
 
         let cancelled_footer = format_footer_metrics(&metrics, None, true);
         assert_eq!("◼ Cancelled.", cancelled_footer);

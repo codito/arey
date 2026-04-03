@@ -1,6 +1,54 @@
 use serde::{Deserialize, Serialize, de::IntoDeserializer};
 use std::collections::HashMap;
 
+/// Template override configuration.
+///
+/// Supports two formats:
+/// - Simple string: `template: "default"` or `template: "model"`
+/// - Detailed map: `template: { name: "default", args: { enable_thinking: true }}`
+///
+/// The `args` map allows passing arbitrary kwargs to the template without
+/// hardcoding them in the application.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum TemplateOverride {
+    /// Simple form: just the template name
+    /// - "default": Use built-in default template
+    /// - "model": Use model's built-in template (explicit)
+    Simple(String),
+    /// Detailed form with name and optional args
+    Detailed {
+        /// Template name: "default", "model", or custom identifier
+        #[serde(rename = "name")]
+        template_name: String,
+        /// Optional template arguments (kwargs)
+        /// Example: { enable_thinking: true, add_generation_prompt: false }
+        #[serde(default, rename = "args")]
+        template_args: Option<HashMap<String, serde_yaml::Value>>,
+    },
+}
+
+impl TemplateOverride {
+    /// Get the template name.
+    pub fn name(&self) -> &str {
+        match self {
+            TemplateOverride::Simple(s) => s.as_str(),
+            TemplateOverride::Detailed { template_name, .. } => template_name.as_str(),
+        }
+    }
+
+    /// Get the template arguments as a HashMap.
+    /// Returns empty map if args is None.
+    pub fn args(&self) -> HashMap<String, serde_yaml::Value> {
+        match self {
+            TemplateOverride::Detailed { template_args, .. } => {
+                template_args.clone().unwrap_or_default()
+            }
+            TemplateOverride::Simple(_) => HashMap::new(),
+        }
+    }
+}
+
 /// Model configuration for the tool.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ModelConfig {
@@ -30,6 +78,14 @@ impl ModelConfig {
     /// Get the original config key.
     pub fn get_key(&self) -> &str {
         &self.key
+    }
+
+    /// Get the template override configuration.
+    ///
+    /// Returns `Some(TemplateOverride)` if the user specified a `template` key in settings.
+    /// Returns `None` if no template override is specified (use model's default).
+    pub fn template_override(&self) -> Option<TemplateOverride> {
+        self.get_setting::<TemplateOverride>("template")
     }
 }
 
@@ -189,5 +245,53 @@ mod tests {
         // Test type mismatch
         assert_eq!(config.get_setting::<i64>("str_key"), None);
         assert_eq!(config.get_setting::<String>("int_key"), None);
+    }
+
+    #[test]
+    fn test_template_override_simple() {
+        let yaml = r#"
+            name: test_model
+            provider: gguf
+            template: "default"
+        "#;
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        let tmpl = config.template_override().unwrap();
+        assert_eq!(tmpl.name(), "default");
+        assert!(tmpl.args().is_empty());
+    }
+
+    #[test]
+    fn test_template_override_detailed() {
+        let yaml = r#"
+            name: test_model
+            provider: gguf
+            template:
+              name: qwen3
+              args:
+                enable_thinking: true
+                add_generation_prompt: false
+        "#;
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        let tmpl = config.template_override().unwrap();
+        assert_eq!(tmpl.name(), "qwen3");
+        let args = tmpl.args();
+        assert_eq!(
+            args.get("enable_thinking").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            args.get("add_generation_prompt").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_template_override_none() {
+        let yaml = r#"
+            name: test_model
+            provider: gguf
+        "#;
+        let config: ModelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.template_override().is_none());
     }
 }

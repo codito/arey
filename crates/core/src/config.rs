@@ -6,6 +6,8 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json;
+use serde_yaml;
 use thiserror::Error;
 use tracing::instrument;
 
@@ -29,19 +31,51 @@ pub enum AreyConfigError {
 #[serde(default)]
 pub struct ProfileConfig {
     pub temperature: f32,
-    pub repeat_penalty: f32,
     pub top_k: i32,
     pub top_p: f32,
+    pub min_p: Option<f32>,
+    pub repeat_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub max_tokens: Option<i32>,
 }
 
 impl Default for ProfileConfig {
     fn default() -> Self {
         Self {
             temperature: 0.7,
-            repeat_penalty: 1.176,
             top_k: 40,
             top_p: 0.1,
+            min_p: None,
+            repeat_penalty: Some(1.176),
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
         }
+    }
+}
+
+impl ProfileConfig {
+    /// Converts the profile configuration to a HashMap of settings.
+    /// Used to pass the settings to the model completions.
+    pub fn to_settings(&self) -> anyhow::Result<HashMap<String, String>> {
+        let settings: serde_json::Map<String, serde_json::Value> = serde_json::to_value(self)?
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        Ok(settings
+            .into_iter()
+            .filter_map(|(k, v)| {
+                let string_value = match &v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Null => return None,
+                    _ => return None,
+                };
+                Some((k, string_value))
+            })
+            .collect())
     }
 }
 
@@ -55,7 +89,7 @@ pub struct ModeConfig {
     pub profile_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub models: HashMap<String, ModelConfig>,
     pub profiles: HashMap<String, ProfileConfig>,
@@ -329,6 +363,9 @@ impl RawConfig {
             )));
         }
 
+        let chat_profile = resolve_profile(&self.chat.profile)?;
+        let chat_profile_name = get_profile_name(&self.chat.profile);
+
         let task_profile = resolve_profile(&self.task.profile)?;
         let task_profile_name = get_profile_name(&self.task.profile);
 
@@ -339,8 +376,8 @@ impl RawConfig {
             chat: ModeConfig {
                 model: chat_model,
                 agent_name: chat_agent_name,
-                profile: ProfileConfig::default(),
-                profile_name: None,
+                profile: chat_profile,
+                profile_name: chat_profile_name,
             },
             task: ModeConfig {
                 model: task_model,
@@ -456,9 +493,147 @@ theme: dark
     fn test_profile_config_default() {
         let default_profile = ProfileConfig::default();
         assert_eq!(default_profile.temperature, 0.7);
-        assert_eq!(default_profile.repeat_penalty, 1.176);
+        assert_eq!(default_profile.repeat_penalty, Some(1.176));
         assert_eq!(default_profile.top_k, 40);
         assert_eq!(default_profile.top_p, 0.1);
+    }
+
+    #[test]
+    fn test_to_settings_default_profile() {
+        let profile = ProfileConfig::default();
+        let settings = profile.to_settings().unwrap();
+
+        assert_eq!(
+            settings.get("temperature").unwrap().parse::<f32>().unwrap(),
+            0.7
+        );
+        assert_eq!(settings.get("top_k").unwrap().parse::<i32>().unwrap(), 40);
+        assert_eq!(settings.get("top_p").unwrap().parse::<f32>().unwrap(), 0.1);
+        assert_eq!(
+            settings
+                .get("repeat_penalty")
+                .unwrap()
+                .parse::<f32>()
+                .unwrap(),
+            1.176
+        );
+
+        assert!(!settings.contains_key("min_p"));
+        assert!(!settings.contains_key("presence_penalty"));
+        assert!(!settings.contains_key("frequency_penalty"));
+        assert!(!settings.contains_key("max_tokens"));
+    }
+
+    #[test]
+    fn test_to_settings_with_all_fields_set() {
+        let profile = ProfileConfig {
+            temperature: 0.9,
+            top_k: 100,
+            top_p: 0.95,
+            min_p: Some(0.05),
+            repeat_penalty: Some(1.2),
+            presence_penalty: Some(0.5),
+            frequency_penalty: Some(0.3),
+            max_tokens: Some(2048),
+        };
+        let settings = profile.to_settings().unwrap();
+
+        assert_eq!(
+            settings.get("temperature").unwrap().parse::<f32>().unwrap(),
+            0.9
+        );
+        assert_eq!(settings.get("top_k").unwrap().parse::<i32>().unwrap(), 100);
+        assert_eq!(settings.get("top_p").unwrap().parse::<f32>().unwrap(), 0.95);
+        assert_eq!(settings.get("min_p").unwrap().parse::<f32>().unwrap(), 0.05);
+        assert_eq!(
+            settings
+                .get("repeat_penalty")
+                .unwrap()
+                .parse::<f32>()
+                .unwrap(),
+            1.2
+        );
+        assert_eq!(
+            settings
+                .get("presence_penalty")
+                .unwrap()
+                .parse::<f32>()
+                .unwrap(),
+            0.5
+        );
+        assert_eq!(
+            settings
+                .get("frequency_penalty")
+                .unwrap()
+                .parse::<f32>()
+                .unwrap(),
+            0.3
+        );
+        assert_eq!(
+            settings.get("max_tokens").unwrap().parse::<i32>().unwrap(),
+            2048
+        );
+
+        assert_eq!(settings.len(), 8);
+    }
+
+    #[test]
+    fn test_to_settings_mixed_none_values() {
+        let profile = ProfileConfig {
+            temperature: 0.5,
+            top_k: 20,
+            top_p: 0.8,
+            min_p: None,
+            repeat_penalty: Some(1.1),
+            presence_penalty: None,
+            frequency_penalty: Some(0.2),
+            max_tokens: None,
+        };
+        let settings = profile.to_settings().unwrap();
+
+        assert_eq!(
+            settings.get("temperature").unwrap().parse::<f32>().unwrap(),
+            0.5
+        );
+        assert_eq!(settings.get("top_k").unwrap().parse::<i32>().unwrap(), 20);
+        assert_eq!(settings.get("top_p").unwrap().parse::<f32>().unwrap(), 0.8);
+        assert_eq!(
+            settings
+                .get("repeat_penalty")
+                .unwrap()
+                .parse::<f32>()
+                .unwrap(),
+            1.1
+        );
+        assert_eq!(
+            settings
+                .get("frequency_penalty")
+                .unwrap()
+                .parse::<f32>()
+                .unwrap(),
+            0.2
+        );
+
+        assert!(!settings.contains_key("min_p"));
+        assert!(!settings.contains_key("presence_penalty"));
+        assert!(!settings.contains_key("max_tokens"));
+
+        assert_eq!(settings.len(), 5);
+    }
+
+    #[test]
+    fn test_to_settings_values_are_strings() {
+        let profile = ProfileConfig::default();
+        let settings = profile.to_settings().unwrap();
+
+        for (key, value) in &settings {
+            assert!(
+                value.parse::<f32>().is_ok() || value.parse::<i32>().is_ok(),
+                "Key '{}' has non-numeric value: {}",
+                key,
+                value
+            );
+        }
     }
 
     #[test]
@@ -1114,5 +1289,83 @@ prompt: "Minimal prompt"
             assert_eq!(parent.file_name().unwrap(), "arey");
         }
         // If environment variables are not set, we can't test this reliably
+    }
+
+    #[test]
+    fn test_chat_profile_from_config() {
+        const CONFIG_WITH_CHAT_PROFILE: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+    n_ctx: 4096
+    path: /path/to/dummy_model.gguf
+profiles:
+  default:
+    temperature: 0.7
+    repeat_penalty: 1.176
+    top_k: 40
+    top_p: 0.1
+  creative:
+    temperature: 0.9
+    repeat_penalty: 1.1
+    top_k: 50
+    top_p: 0.9
+chat:
+  model: dummy-7b
+  profile: creative
+task:
+  model: dummy-7b
+"#;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test_config.yml");
+        std::fs::write(&config_path, CONFIG_WITH_CHAT_PROFILE).unwrap();
+
+        let config = get_config(Some(config_path)).unwrap();
+
+        // Verify chat profile is correctly loaded from config
+        assert_eq!(config.chat.profile.temperature, 0.9);
+        assert_eq!(config.chat.profile.top_k, 50);
+        assert_eq!(config.chat.profile.top_p, 0.9);
+        assert_eq!(config.chat.profile_name, Some("creative".to_string()));
+
+        // Verify task profile still uses defaults when not specified
+        assert_eq!(config.task.profile.temperature, 0.7);
+        assert_eq!(config.task.profile_name, None);
+    }
+
+    #[test]
+    fn test_chat_profile_object_from_config() {
+        const CONFIG_WITH_CHAT_PROFILE_OBJECT: &str = r#"
+models:
+  dummy-7b:
+    name: dummy-7b
+    type: gguf
+    n_ctx: 4096
+    path: /path/to/dummy_model.gguf
+profiles:
+  default:
+    temperature: 0.7
+chat:
+  model: dummy-7b
+  profile:
+    temperature: 0.5
+    top_k: 20
+    top_p: 0.3
+task:
+  model: dummy-7b
+"#;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test_config.yml");
+        std::fs::write(&config_path, CONFIG_WITH_CHAT_PROFILE_OBJECT).unwrap();
+
+        let config = get_config(Some(config_path)).unwrap();
+
+        // Verify chat profile object is correctly loaded
+        assert_eq!(config.chat.profile.temperature, 0.5);
+        assert_eq!(config.chat.profile.top_k, 20);
+        assert_eq!(config.chat.profile.top_p, 0.3);
     }
 }

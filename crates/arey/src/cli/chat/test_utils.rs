@@ -40,9 +40,10 @@ pub fn create_test_config() -> Result<Config> {
         "test-profile".to_string(),
         ProfileConfig {
             temperature: 0.8,
-            repeat_penalty: 1.1,
+            repeat_penalty: Some(1.1),
             top_k: 40,
             top_p: 0.9,
+            ..Default::default()
         },
     );
 

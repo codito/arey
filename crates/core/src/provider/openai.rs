@@ -312,12 +312,12 @@ impl CompletionModel for OpenAIBaseModel {
 
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
+                                        thought: None,
                                         tool_calls: final_tool_calls,
                                         finish_reason: choice.finish_reason.map(|x| format!("{x:?}")),
                                         raw_chunk: Some(raw_json.clone()),
                                     }));
-                                }
-
+                                    }
                                 // Some openai compatible servers (Gemini) club usage with the
                                 // final response, others send a separate chunk.
                                 if let Some(usage) = chunk.usage {
@@ -327,7 +327,9 @@ impl CompletionModel for OpenAIBaseModel {
                                         prompt_eval_latency_ms: prompt_eval_latency,
                                         completion_tokens: usage.completion_tokens,
                                         completion_latency_ms: completion_latency,
-                                        raw_chunk: Some(raw_json.clone())
+                                        thought: None,
+                                        raw_chunk: Some(raw_json.clone()),
+                                        cache_metrics: None,
                                     }));
                                 }
                             }
@@ -345,6 +347,10 @@ impl CompletionModel for OpenAIBaseModel {
         };
 
         Box::pin(outer_stream)
+    }
+
+    async fn reset(&self) -> Result<()> {
+        Ok(())
     }
 }
 

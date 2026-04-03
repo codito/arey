@@ -63,6 +63,9 @@ pub struct ChatMessage {
     /// The text of the message.
     pub text: String,
 
+    /// The thought/reasoning of the assistant. Only valid for Assistant messages.
+    pub thought: Option<String>,
+
     /// The tool calls associated with the message. Only valid for Assistant messages.
     pub tools: Option<Vec<ToolCall>>,
 
@@ -75,6 +78,7 @@ impl Default for ChatMessage {
         Self {
             sender: SenderType::User,
             text: String::new(),
+            thought: None,
             tools: None,
             metrics: None,
         }
@@ -92,12 +96,24 @@ pub struct CompletionMetrics {
     pub prompt_eval_latency_ms: f32,
     pub completion_tokens: u32,
     pub completion_latency_ms: f32,
+    pub thought: Option<String>,
+    pub cache_metrics: Option<CacheMetrics>,
     pub raw_chunk: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheMetrics {
+    pub cache_hit: bool,
+    pub strategy: Option<String>,
+    pub tokens_skipped: Option<usize>,
+    pub n_ctx: Option<i32>,
+    pub checkpoint_transition: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct CompletionResponse {
     pub text: String,
+    pub thought: Option<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub finish_reason: Option<String>,
     pub raw_chunk: Option<String>,
@@ -113,6 +129,7 @@ pub trait CompletionModel: Send + Sync {
         settings: &HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> BoxStream<'static, Result<Completion>>;
+    async fn reset(&self) -> Result<()>;
 }
 
 #[cfg(test)]

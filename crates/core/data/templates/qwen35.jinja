@@ -1,0 +1,82 @@
+{# Qwen3.5 deterministic template - removes dynamic reasoning block insertion #}
+{# Key fixes for checkpoint caching: #}
+{# 1. Only inject <think> blocks if message.reasoning_content exists AND enable_thinking is true #}
+{# 2. Removed position-based logic that causes different output for same messages #}
+{# 3. Deterministic output regardless of message position in array #}
+
+{%- if tools %}
+    {{- '<|im_start|>system\n' }}
+    {%- if messages[0].role == 'system' %}
+        {{- messages[0].content + '\n\n' }}
+    {%- endif %}
+    {{- "# Tools\n\nYou may call one or more functions to assist with the user query.\n\n<tools>" }}
+    {%- for tool in tools %}
+        {{- "\n" }}
+        {{- tool | tojson }}
+    {%- endfor %}
+    {{- "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nvalue_2\n</parameter>\n</function>\n</tool_call>\n\nNOTE: Functions are suggestions. You may call them or ignore them based on user query.<|im_end|>\n" }}
+{%- else %}
+    {%- if messages[0].role == 'system' %}
+        {{- '<|im_start|>system\n' + messages[0].content + '<|im_end|>\n' }}
+    {%- endif %}
+{%- endif %}
+
+{%- for message in messages %}
+    {%- if message.role == "system" %}
+        {%- if not loop.first %}
+            {{- raise_exception('System message must be at the beginning.') }}
+        {%- endif %}
+    {%- elif message.role == "user" %}
+        {{- '<|im_start|>user\n' + message.content + '<|im_end|>\n' }}
+    {%- elif message.role == "assistant" %}
+        {#- Only output thinking if it is explicitly opted in and reasoning_content is available -#}
+        {#- Note this mirrors the add_generation_prompt logic -#}
+        {{- '<|im_start|>assistant\n' }}
+        {%- if not (enable_thinking is defined and enable_thinking == false) and message.reasoning_content %}
+            {{- '<think>\n' + message.reasoning_content + '\n</think>\n\n' + message.content }}
+        {%- else %}
+            {{- '<think>\n\n</think>\n\n' + message.content }}
+        {%- endif %}
+        {%- if message.tool_calls %}
+            {%- for tool_call in message.tool_calls %}
+                {%- if (loop.first and message.content) or (not loop.first) %}
+                    {{- '\n' }}
+                {%- endif %}
+                {%- if tool_call.function %}
+                    {%- set tool_call = tool_call.function %}
+                {%- endif %}
+                {{- '<tool_call>\n<function=' + tool_call.name + '>\n' }}
+                {%- if tool_call.arguments is defined %}
+                    {%- for args_name, args_value in tool_call.arguments|items %}
+                        {{- '<parameter=' + args_name + '>\n' }}
+                        {%- set args_value = args_value | tojson | safe if args_value is mapping or (args_value is sequence and args_value is not string) else args_value | string %}
+                        {{- args_value }}
+                        {{- '\n</parameter>\n' }}
+                    {%- endfor %}
+                {%- endif %}
+                {{- '</function>\n</tool_call>' }}
+            {%- endfor %}
+        {%- endif %}
+        {{- '<|im_end|>\n' }}
+    {%- elif message.role == "tool" %}
+        {%- if loop.first or (messages[loop.index0 - 1].role != "tool") %}
+            {{- '<|im_start|>user' }}
+        {%- endif %}
+        {{- '\n<tool_response>\n' }}
+        {{- message.content }}
+        {{- '\n</tool_response>' }}
+        {%- if loop.last or (messages[loop.index0 + 1].role != "tool") %}
+            {{- '<|im_end|>\n' }}
+        {%- endif %}
+    {%- endif %}
+{%- endfor %}
+
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' -}}
+    {#- Enable thinking only if explicitly opted in -#}
+    {%- if not (enable_thinking is defined and enable_thinking == false) -%}
+        {{- '<think>\n' -}}
+    {%- else -%}
+        {{- '<think>\n\n</think>\n\n' -}}
+    {%- endif -%}
+{%- endif -%}

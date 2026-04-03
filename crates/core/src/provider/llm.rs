@@ -47,7 +47,6 @@ mod tests {
 
     #[test]
     fn test_get_completion_llm_gguf_provider_error() {
-        // Gguf model requires a 'path' setting, so this should fail.
         let model_config = ModelConfig {
             key: "test-key".to_string(),
             name: "test-gguf".to_string(),
@@ -61,7 +60,7 @@ mod tests {
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("'path' setting is required for gguf model")
+                .contains("GGUF model path not found")
         );
     }
 
@@ -75,5 +74,58 @@ mod tests {
         };
         let model = get_completion_llm(model_config);
         assert!(model.is_ok());
+    }
+
+    #[test]
+    fn test_get_completion_llm_gguf_v2_error() {
+        let mut settings = HashMap::new();
+        settings.insert(
+            "implementation".to_string(),
+            serde_yaml::Value::String("v2".to_string()),
+        );
+        let model_config = ModelConfig {
+            key: "test-key".to_string(),
+            name: "test-gguf-v2".to_string(),
+            provider: ModelProvider::Gguf,
+            settings,
+        };
+        let model = get_completion_llm(model_config);
+        assert!(model.is_err());
+        assert!(
+            model
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("GGUF model path not found")
+        );
+    }
+
+    #[test]
+    fn test_get_completion_llm_gguf_v2() {
+        use std::collections::HashMap;
+        let mut settings = HashMap::new();
+        settings.insert(
+            "implementation".to_string(),
+            serde_yaml::Value::String("v2".to_string()),
+        );
+        settings.insert(
+            "path".to_string(),
+            serde_yaml::Value::String("/nonexistent/model.gguf".to_string()),
+        );
+        settings.insert(
+            "n_ctx".to_string(),
+            serde_yaml::Value::String("512".to_string()),
+        );
+        let model_config = ModelConfig {
+            key: "test-key".to_string(),
+            name: "test-gguf-v2".to_string(),
+            provider: ModelProvider::Gguf,
+            settings,
+        };
+        let model = get_completion_llm(model_config);
+        // Should fail because model file doesn't exist, but shouldn't fail on "GGUF model path not found"
+        assert!(model.is_err());
+        let err = model.err().unwrap().to_string();
+        assert!(!err.contains("GGUF model path not found"), "Got: {}", err);
     }
 }

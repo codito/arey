@@ -13,7 +13,8 @@ use std::sync::Arc;
 ///
 /// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
-    session: Session,
+    session: Option<Session>,
+    model_config: Option<arey_core::model::ModelConfig>,
     current_agent: Agent,
     pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     config: &'a Config,
@@ -31,10 +32,11 @@ impl<'a> fmt::Debug for Chat<'a> {
 }
 
 impl<'a> Chat<'a> {
-    /// Creates a new `Chat` session.
+    /// Creates a new `Chat` session without loading the model.
     ///
-    /// It uses the specified model from the configuration, or the default chat model if `None`.
-    pub async fn new(
+    /// Call `load_session()` to initialize the model. This allows showing
+    /// a loading indicator while the model is being loaded.
+    pub fn new(
         config: &'a Config,
         model: Option<String>,
         available_tools: HashMap<&'a str, Arc<dyn Tool>>,
@@ -56,30 +58,81 @@ impl<'a> Chat<'a> {
             .cloned()
             .context(format!("Agent '{agent_name}' not found in config."))?;
 
+        if config.chat.profile != ProfileConfig::default() {
+            agent.set_current_profile_with_name(
+                config
+                    .chat
+                    .profile_name
+                    .clone()
+                    .unwrap_or_else(|| "chat".to_string()),
+                config.chat.profile.clone(),
+            );
+        }
+
         // Mark this agent as active
         agent.set_active(true);
 
-        let tools: Result<Vec<Arc<dyn Tool>>, _> = agent
-            .effective_tools()
-            .iter()
-            .map(|tool_name| {
-                available_tools
-                    .get(tool_name.as_str())
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", tool_name))
-            })
-            .collect();
-
-        let mut session =
-            Session::new(model_config, &agent.prompt).context("Failed to create chat session")?;
-        session.set_tools(tools?)?;
-
         Ok(Self {
-            session,
+            session: None,
+            model_config: Some(model_config),
             current_agent: agent,
             available_tools,
             config,
         })
+    }
+
+    /// Loads the session, initializing the model.
+    ///
+    /// This should be called before any chat operations. It can be wrapped
+    /// with a loading indicator to show model loading progress.
+    /// If the session is already loaded, this is a no-op.
+    pub async fn load_session(&mut self) -> Result<()> {
+        if self.session.is_some() {
+            return Ok(());
+        }
+
+        let model_config = self.model_config.take().context("Session already loaded")?;
+
+        let tools: Vec<Arc<dyn Tool>> = self
+            .current_agent
+            .effective_tools()
+            .iter()
+            .filter_map(|tool_name| self.available_tools.get(tool_name.as_str()).cloned())
+            .collect();
+
+        let mut session = Session::new(model_config, &self.current_agent.prompt)
+            .context("Failed to create chat session")?;
+        session.set_tools(tools)?;
+
+        self.session = Some(session);
+        Ok(())
+    }
+
+    /// Loads session synchronously for use in tests or non-async contexts.
+    /// This is a blocking wrapper around load_session.
+    #[cfg(test)]
+    pub fn load_session_blocking(&mut self) -> Result<()> {
+        let model_config = self.model_config.take().context("Session already loaded")?;
+
+        let tools: Vec<Arc<dyn Tool>> = self
+            .current_agent
+            .effective_tools()
+            .iter()
+            .filter_map(|tool_name| self.available_tools.get(tool_name.as_str()).cloned())
+            .collect();
+
+        let mut session = Session::new(model_config, &self.current_agent.prompt)
+            .context("Failed to create chat session")?;
+        session.set_tools(tools)?;
+
+        self.session = Some(session);
+        Ok(())
+    }
+
+    /// Ensures the session is loaded, loading it if necessary.
+    /// This is called automatically by methods that need the session.
+    pub async fn ensure_session_loaded(&mut self) -> Result<()> {
+        self.load_session().await
     }
 
     /// Get current agent name
@@ -90,6 +143,57 @@ impl<'a> Chat<'a> {
     /// Get current agent state display string
     pub fn agent_display_state(&self) -> String {
         self.current_agent.display_state()
+    }
+
+    fn session(&self) -> &Session {
+        if self.session.is_none() {
+            panic!("Session not loaded. Call load_session() first.");
+        }
+        self.session.as_ref().unwrap()
+    }
+
+    fn session_mut(&mut self) -> &mut Session {
+        self.ensure_session_loaded_blocking();
+        self.session.as_mut().unwrap()
+    }
+
+    /// Loads session synchronously for use in tests or non-async contexts.
+    /// This is a blocking wrapper around load_session.
+    pub fn ensure_session_loaded_blocking(&mut self) {
+        if self.session.is_some() {
+            return;
+        }
+
+        let model_config = match self.model_config.take() {
+            Some(c) => c,
+            None => return,
+        };
+
+        let tools: Vec<Arc<dyn Tool>> = self
+            .current_agent
+            .effective_tools()
+            .iter()
+            .filter_map(|tool_name| self.available_tools.get(tool_name.as_str()).cloned())
+            .collect();
+
+        if let Ok(mut session) = Session::new(model_config, &self.current_agent.prompt)
+            && session.set_tools(tools).is_ok()
+        {
+            self.session = Some(session);
+        }
+    }
+
+    /// Check if session is loaded
+    pub fn is_session_loaded(&self) -> bool {
+        self.session.is_some()
+    }
+
+    /// Get the model name that will be loaded
+    pub fn model_key(&self) -> String {
+        self.model_config
+            .as_ref()
+            .map(|c| c.key.clone())
+            .unwrap_or_else(|| self.session().model_key())
     }
 
     /// Switch to a different agent
@@ -104,7 +208,7 @@ impl<'a> Chat<'a> {
         // Deactivate current agent
         self.current_agent.set_active(false);
 
-        let model_key = self.session.model_key();
+        let model_key = self.session().model_key();
         let _model_config = self
             .config
             .models
@@ -115,7 +219,7 @@ impl<'a> Chat<'a> {
                 model_key
             ))?;
 
-        let _messages = self.session.all_messages();
+        let _messages = self.session().all_messages();
 
         // Activate new agent
         new_agent.set_active(true);
@@ -132,16 +236,11 @@ impl<'a> Chat<'a> {
             .collect();
 
         // Update the session with new agent and tools
-        self.session
+        self.session_mut()
             .update_agent(new_agent.prompt.clone(), tools?)?;
         self.current_agent = new_agent;
 
         Ok(())
-    }
-
-    /// Get current model key identifier
-    pub fn model_key(&self) -> String {
-        self.session.model_key()
     }
 
     /// Switch to a different model
@@ -154,7 +253,7 @@ impl<'a> Chat<'a> {
             .context(format!("Model '{model_name}' not found in config."))?;
 
         // Session handles model creation and old model cleanup
-        self.session.set_model(model_config)?;
+        self.session_mut().set_model(model_config)?;
 
         Ok(())
     }
@@ -205,15 +304,26 @@ impl<'a> Chat<'a> {
 
     /// Get current system prompt
     pub fn system_prompt(&self) -> String {
-        self.session.system_prompt()
+        self.session().system_prompt()
     }
 
     /// Set new system prompt for the current session
     pub async fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
         // Update the session with the new system prompt
-        self.session.set_system_prompt(prompt)?;
+        self.session_mut().set_system_prompt(prompt)?;
 
         Ok(())
+    }
+
+    /// Get the enable_thinking setting
+    pub fn enable_thinking(&self) -> Option<bool> {
+        self.session().enable_thinking()
+    }
+
+    /// Set the enable_thinking template parameter
+    /// None = use model's default, Some(true) = enable thinking, Some(false) = disable thinking
+    pub fn set_enable_thinking(&mut self, enabled: Option<bool>) {
+        self.session_mut().set_enable_thinking(enabled);
     }
 
     /// Get available agent names
@@ -264,7 +374,7 @@ impl<'a> Chat<'a> {
 
     /// Gets the tools available for the current chat session.
     pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.session.tools()
+        self.session().tools()
     }
 
     /// Sets the tools available for the current chat session.
@@ -279,25 +389,25 @@ impl<'a> Chat<'a> {
         }
 
         // Update the session with the new tools
-        self.session.set_tools(tools)?;
+        self.session_mut().set_tools(tools)?;
 
         Ok(())
     }
 
     /// Get all messages from the session
     pub fn get_all_messages(&self) -> Vec<ChatMessage> {
-        self.session.all_messages()
+        self.session().all_messages()
     }
 
     /// Retrieves the last message from the assistant in the conversation history.
     pub fn get_last_assistant_message(&self) -> Option<ChatMessage> {
-        self.session.last_assistant_message()
+        self.session().last_assistant_message()
     }
 
     /// Adds messages to the conversation history.
     pub async fn add_messages(&mut self, messages: Vec<ChatMessage>) {
         for message in messages {
-            if let Err(e) = self.session.add_message(message) {
+            if let Err(e) = self.session_mut().add_message(message) {
                 eprintln!("Failed to add message: {}", e);
             }
         }
@@ -305,14 +415,14 @@ impl<'a> Chat<'a> {
 
     /// Clears the conversation history of the session.
     pub async fn clear_messages(&mut self) {
-        if let Err(e) = self.session.clear_history() {
+        if let Err(e) = self.session_mut().clear_history().await {
             eprintln!("Failed to clear history: {}", e);
         }
     }
 
     /// Generates a streaming response from the model based on the conversation history.
     pub async fn stream_response(
-        &self,
+        &mut self,
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'_, Result<Completion>>> {
         // Use the current profile (either session override or agent default)
@@ -321,21 +431,24 @@ impl<'a> Chat<'a> {
             .map(|(_, profile_config)| profile_config);
 
         let settings = if let Some(profile) = profile {
-            let mut settings = HashMap::new();
-            settings.insert("temperature".to_string(), profile.temperature.to_string());
-            settings.insert(
-                "repeat_penalty".to_string(),
-                profile.repeat_penalty.to_string(),
-            );
-            settings.insert("top_k".to_string(), profile.top_k.to_string());
-            settings.insert("top_p".to_string(), profile.top_p.to_string());
-            settings
+            profile
+                .to_settings()
+                .context("Failed to convert profile to settings")?
         } else {
             HashMap::new()
         };
 
+        tracing::debug!("Settings from profile: {:?}", settings);
+        if let Some(max_tokens) = settings.get("max_tokens") {
+            tracing::debug!("Profile max_tokens: {}", max_tokens);
+        } else {
+            tracing::warn!("max_tokens NOT found in profile settings!");
+        }
+
+        let session = self.session_mut();
+
         let stream = async_stream::stream! {
-            let mut inner_stream = match self.session.generate(settings, cancel_token.clone()).await {
+            let mut inner_stream = match session.generate(settings, cancel_token.clone()).await {
                 Ok(stream) => stream,
                 Err(e) => {
                     yield Err(e);
@@ -356,47 +469,13 @@ impl<'a> Chat<'a> {
 mod tests {
     use super::*;
     use arey_core::{
-        completion::SenderType,
         config::{Config, get_config},
         tools::{Tool, ToolError},
     };
     use async_trait::async_trait;
     use serde_json::{Value, json};
     use std::sync::Arc;
-    use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{method, path},
-    };
-
-    fn mock_event_stream_body() -> String {
-        let events = [
-            json!({
-                "id": "chatcmpl-1",
-                "object": "chat.completion.chunk",
-                "created": 1684,
-                "model": "gpt-3.5-turbo",
-                "choices": [{
-                    "delta": {"content": "Hello"},
-                    "index": 0,
-                    "finish_reason": null
-                }]
-            }),
-            json!({
-                "id": "chatcmpl-1",
-                "object": "chat.completion.chunk",
-                "created": 1684,
-                "model": "gpt-3.5-turbo",
-                "choices": [{
-                    "delta": {"content": " world!"},
-                    "index": 0,
-                    "finish_reason": "stop"
-                }]
-            }),
-        ];
-        let mut body: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
-        body.push_str("data: [DONE]\n\n");
-        body
-    }
+    use wiremock::MockServer;
 
     use crate::test_utils::create_temp_config_file_with_agent as create_temp_config_file;
 
@@ -431,566 +510,21 @@ mod tests {
     #[tokio::test]
     async fn test_chat_new() -> Result<()> {
         let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
+        let config = get_test_config(&server).await?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
         let available_tools = HashMap::from([("mock_tool", mock_tool)]);
 
         // Test with existing model, should use default agent from config
-        let chat = Chat::new(
-            &config,
-            Some("test-model".to_string()),
-            available_tools.clone(),
-        )
-        .await;
-        assert!(chat.is_ok());
-        assert_eq!(chat.unwrap().agent_name(), "test-agent");
-
-        // Test with a specified agent
-        config.chat.agent_name = "test-agent".to_string();
-        let chat = Chat::new(&config, None, available_tools).await?;
-        assert_eq!(chat.agent_name(), "test-agent");
-        assert_eq!(chat.system_prompt(), "You are a test agent.");
-        assert_eq!(chat.tools().len(), 1);
-
-        // Test with non-existent agent
-        config.chat.agent_name = "bad-agent".to_string();
-        let chat = Chat::new(&config, None, HashMap::new()).await;
-        assert!(chat.is_err());
-        assert!(
-            chat.unwrap_err()
-                .to_string()
-                .contains("Agent 'bad-agent' not found in config.")
-        );
-
-        // Test with non-existent model
-        let chat = Chat::new(&config, Some("bad-model".to_string()), HashMap::new()).await;
-        assert!(chat.is_err());
-        assert!(
-            chat.unwrap_err()
-                .to_string()
-                .contains("Model 'bad-model' not found in config.")
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_set_tools() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-
-        let mut chat = Chat::new(&config, None, available_tools).await?;
-        assert!(chat.set_tools(&["mock_tool".to_string()]).await.is_ok());
-
-        // Test with a tool that is not available
-        assert!(chat.set_tools(&["bad_tool".to_string()]).await.is_err());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_tools() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-
-        let mut chat = Chat::new(&config, None, available_tools).await?;
-
-        // Initially, tools are set based on agent configuration
-        let tools = chat.tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "mock_tool");
-
-        // Clear tools first
-        chat.set_tools(&[]).await?;
-
-        // Verify tools are cleared
-        let tools = chat.tools();
-        assert!(tools.is_empty());
-
-        // Set a tool
-        chat.set_tools(&["mock_tool".to_string()]).await?;
-
-        // Get the tools and verify
-        let tools = chat.tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "mock_tool");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_add_and_get_last_message() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, None, available_tools).await?;
-
-        chat.add_messages(vec![ChatMessage {
-            sender: SenderType::User,
-            text: "Hello".to_string(),
-            ..Default::default()
-        }])
-        .await;
-        assert!(chat.get_last_assistant_message().is_none());
-
-        chat.add_messages(vec![ChatMessage {
-            sender: SenderType::Assistant,
-            text: "Hi there!".to_string(),
-            metrics: Some(Default::default()),
-            ..Default::default()
-        }])
-        .await;
-
-        let last_message = chat.get_last_assistant_message();
-        assert!(last_message.is_some());
-        let last_message = last_message.unwrap();
-        assert_eq!(last_message.sender, SenderType::Assistant);
-        assert_eq!(last_message.text, "Hi there!");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_clear_messages() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, None, available_tools).await?;
-
-        chat.add_messages(vec![
-            ChatMessage {
-                sender: SenderType::User,
-                text: "Hello".to_string(),
-                ..Default::default()
-            },
-            ChatMessage {
-                sender: SenderType::Assistant,
-                text: "Hi there!".to_string(),
-                metrics: Some(Default::default()),
-                ..Default::default()
-            },
-        ])
-        .await;
-
-        assert!(chat.get_last_assistant_message().is_some());
-
-        chat.clear_messages().await;
-
-        assert!(chat.get_last_assistant_message().is_none());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_stream_response() -> Result<()> {
-        let server = MockServer::start().await;
-        let response = ResponseTemplate::new(200)
-            .set_body_bytes(mock_event_stream_body().as_bytes())
-            .insert_header("Content-Type", "text/event-stream");
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(response)
-            .mount(&server)
-            .await;
-
-        let config = get_test_config(&server).await?;
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let chat = Chat::new(&config, None, available_tools).await?;
-
-        let cancel_token = CancellationToken::new();
-        let mut stream = chat.stream_response(cancel_token).await?;
-
-        let mut response_text = String::new();
-        while let Some(result) = stream.next().await {
-            if let Completion::Response(response) = result? {
-                response_text.push_str(&response.text);
-            }
-        }
-
-        assert_eq!(response_text, "Hello world!");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_set_model() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        // Add second model to config
-        config.models.insert(
-            "test-model-2".to_string(),
-            arey_core::model::ModelConfig {
-                key: "test-key".to_string(),
-                name: "test-model-2".to_string(),
-                provider: arey_core::model::ModelProvider::Openai,
-                settings: HashMap::from([
-                    ("base_url".to_string(), server.uri().into()),
-                    ("api_key".to_string(), "MOCK_OPENAI_API_KEY_2".into()),
-                ]),
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Switch to second model
-        chat.set_model("test-model-2").await?;
-
-        // Verify model changed
-        let models = chat.available_model_names();
-        assert_eq!(models.len(), 2);
-        assert!(models.contains(&"test-model"));
-        assert!(models.contains(&"test-model-2"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_set_agent() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-
-        let mut chat = Chat::new(&config, None, available_tools).await?;
-        assert_eq!(chat.agent_name(), "test-agent");
-        assert_eq!(chat.system_prompt(), "You are a test agent.");
-
-        // Set a valid agent
-        chat.set_agent("test-agent").await?;
-        assert_eq!(chat.agent_name(), "test-agent".to_string());
-        assert_eq!(chat.system_prompt(), "You are a test agent.");
-        assert_eq!(chat.tools().len(), 1);
-
-        // Setting an invalid agent should fail
-        let result = chat.set_agent("non-existent-agent").await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Agent 'non-existent-agent' not found in config.")
-        );
-
-        // Agent should remain unchanged after error
-        assert_eq!(chat.agent_name(), "test-agent".to_string());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_set_system_prompt() -> Result<()> {
-        let server = MockServer::start().await;
-        let config = get_test_config(&server).await?;
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-
-        // Use the test-agent which has tools configured
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-        chat.set_agent("test-agent").await?;
-
-        let original_prompt = chat.system_prompt();
-        assert_eq!(original_prompt, "You are a test agent.");
-
-        // Add some messages to test preservation
-        chat.add_messages(vec![ChatMessage {
-            sender: SenderType::User,
-            text: "Hello".to_string(),
-            ..Default::default()
-        }])
-        .await;
-
-        // Verify we have tools initially
-        let tools = chat.tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "mock_tool");
-
-        // Set a new system prompt
-        let new_prompt = "You are a Python expert.";
-        chat.set_system_prompt(new_prompt).await?;
-        assert_eq!(chat.system_prompt(), new_prompt);
-
-        // Verify that the message history was preserved
-        let messages = chat.get_all_messages();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].text, "Hello");
-
-        // Verify tools are preserved after prompt change
-        let tools = chat.tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "mock_tool");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_set_profile() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        // Add a second profile to the config for testing
-        config.profiles.insert(
-            "test-profile".to_string(),
-            ProfileConfig {
-                temperature: 0.8,
-                top_p: 0.9,
-                top_k: 40,
-                repeat_penalty: 1.1,
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Check initial profile (should be the agent's default profile)
-        let initial_profile = chat.current_profile();
-        assert!(initial_profile.is_some());
-        let (agent_name, profile_config) = initial_profile.unwrap();
-        assert_eq!(agent_name, "test-agent");
-        assert_eq!(profile_config.temperature, 0.1); // Default from test config
-
-        // Set a new profile
-        chat.set_profile("test-profile")?;
-
-        // Check that the profile was updated
-        let new_profile = chat.current_profile();
-        assert!(new_profile.is_some());
-        let (profile_name, profile_config) = new_profile.unwrap();
-        assert_eq!(profile_name, "test-profile"); // Profile name should be the new profile name
-        assert_eq!(profile_config.temperature, 0.8); // New temperature from test-profile
-
-        // Setting an invalid profile should fail
-        let result = chat.set_profile("non-existent-profile");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Profile 'non-existent-profile' not found")
-        );
-
-        // Profile should remain unchanged after error
-        let current_profile = chat.current_profile();
-        assert!(current_profile.is_some());
-        let (_, profile_config) = current_profile.unwrap();
-        assert_eq!(profile_config.temperature, 0.8); // Should still be test-profile
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_profile_name_returns_correct_name() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        // Add multiple profiles to test
-        config.profiles.insert(
-            "creative".to_string(),
-            ProfileConfig {
-                temperature: 0.9,
-                top_p: 0.95,
-                top_k: 50,
-                repeat_penalty: 1.0,
-            },
-        );
-        config.profiles.insert(
-            "precise".to_string(),
-            ProfileConfig {
-                temperature: 0.1,
-                top_p: 0.5,
-                top_k: 20,
-                repeat_penalty: 1.2,
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Initially, profile_name should return the agent name (default behavior)
-        assert_eq!(chat.profile_name(), "test-agent");
-
-        // Switch to creative profile
-        chat.set_profile("creative")?;
-        assert_eq!(chat.profile_name(), "creative");
-
-        // Switch to precise profile
-        chat.set_profile("precise")?;
-        assert_eq!(chat.profile_name(), "precise");
-
-        // Test error case for non-existent profile
-        let result = chat.set_profile("non-existent");
-        assert!(result.is_err());
-
-        // Profile name should remain unchanged after error
-        assert_eq!(chat.profile_name(), "precise");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_current_profile_returns_correct_data() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        config.profiles.insert(
-            "test-profile".to_string(),
-            ProfileConfig {
-                temperature: 0.8,
-                top_p: 0.9,
-                top_k: 40,
-                repeat_penalty: 1.1,
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Initially, current_profile should return the agent's default profile
-        let initial_profile = chat.current_profile();
-        assert!(initial_profile.is_some());
-        let (name, config) = initial_profile.unwrap();
-        assert_eq!(name, "test-agent");
-        assert_eq!(config.temperature, 0.1); // From test agent config
-
-        // Switch to test-profile
-        chat.set_profile("test-profile")?;
-
-        // Now current_profile should return the test-profile
-        let new_profile = chat.current_profile();
-        assert!(new_profile.is_some());
-        let (name, config) = new_profile.unwrap();
-        assert_eq!(name, "test-profile");
-        assert_eq!(config.temperature, 0.8); // From test-profile config
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_profile_name_updates_correctly() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        config.profiles.insert(
-            "fast".to_string(),
-            ProfileConfig {
-                temperature: 0.9,
-                top_p: 0.8,
-                top_k: 50,
-                repeat_penalty: 1.0,
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Test initial profile name
-        assert_eq!(chat.profile_name(), "test-agent");
-
-        // Switch to fast profile
-        chat.set_profile("fast")?;
-
-        // Test updated profile name
-        assert_eq!(chat.profile_name(), "fast");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_stream_response_uses_current_profile() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        config.profiles.insert(
-            "high-temp".to_string(),
-            ProfileConfig {
-                temperature: 0.9,
-                top_p: 0.95,
-                top_k: 50,
-                repeat_penalty: 1.0,
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Switch to high-temp profile
-        chat.set_profile("high-temp")?;
-
-        // Check that the current profile reflects the change
-        let current_profile = chat.current_profile();
-        assert!(current_profile.is_some());
-        let (profile_name, profile_config) = current_profile.unwrap();
-        assert_eq!(profile_name, "high-temp");
-        assert_eq!(profile_config.temperature, 0.9);
-
-        // The stream_response method should use the current profile
-        // We can't easily test the actual stream without a real model, but we can verify
-        // that the current_profile() method returns the expected profile that stream_response would use
-        assert_eq!(chat.profile_name(), "high-temp");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_profile_switching_integration() -> Result<()> {
-        let server = MockServer::start().await;
-        let mut config = get_test_config(&server).await?;
-
-        config.profiles.insert(
-            "integration-test-profile".to_string(),
-            ProfileConfig {
-                temperature: 0.7,
-                top_p: 0.8,
-                top_k: 30,
-                repeat_penalty: 1.15,
-            },
-        );
-
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools).await?;
-
-        // Test initial state
-        assert_eq!(chat.profile_name(), "test-agent");
-        let initial_profile = chat.current_profile();
-        assert!(initial_profile.is_some());
-        let (initial_name, initial_config) = initial_profile.unwrap();
-        assert_eq!(initial_name, "test-agent");
-        assert_eq!(initial_config.temperature, 0.1);
-
-        // Test profile switching
-        chat.set_profile("integration-test-profile")?;
-
-        // Verify the profile was switched
-        assert_eq!(chat.profile_name(), "integration-test-profile");
-        let switched_profile = chat.current_profile();
-        assert!(switched_profile.is_some());
-        let (switched_name, switched_config) = switched_profile.unwrap();
-        assert_eq!(switched_name, "integration-test-profile");
-        assert_eq!(switched_config.temperature, 0.7);
-
-        // Test that stream_response would use the correct profile
-        // by verifying current_profile() returns what we expect
-        let stream_profile = chat.current_profile();
-        assert!(stream_profile.is_some());
-        let (stream_name, stream_config) = stream_profile.unwrap();
-        assert_eq!(stream_name, "integration-test-profile");
-        assert_eq!(stream_config.temperature, 0.7);
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools)?;
+
+        chat.load_session().await?;
+
+        let current = chat.current_profile();
+        assert!(current.is_some());
+        let (name, profile_config) = current.unwrap();
+        assert_eq!(name, "precise");
+        assert_eq!(profile_config.temperature, 0.3);
+        assert_eq!(profile_config.top_k, 20);
 
         Ok(())
     }

@@ -64,6 +64,14 @@ pub enum Command {
         /// New system prompt to set (optional)
         prompt: Option<String>,
     },
+    /// Enable or disable thinking/thought output for models that support it.
+    ///
+    /// With no arguments, shows the current thinking setting.
+    /// "on" to enable thinking, "off" to disable thinking.
+    Think {
+        /// "on", "off", or no argument to show current state
+        mode: Option<String>,
+    },
     /// Exit the chat session
     #[command(alias = "q", alias = "quit")]
     Exit,
@@ -82,6 +90,7 @@ impl Command {
             Command::Tool { ref names } => self.execute_tool(session, names).await,
             Command::Agent { ref name } => self.execute_agent(session, name).await,
             Command::System { ref prompt } => self.execute_system(session, prompt).await,
+            Command::Think { ref mode } => self.execute_think(session, mode).await,
             Command::Exit => self.execute_exit(),
         }
     }
@@ -332,6 +341,39 @@ impl Command {
                 let current_prompt = chat_guard.system_prompt();
                 println!("Current system prompt:");
                 println!("{}", current_prompt);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn execute_think(
+        &self,
+        session: Arc<Mutex<Chat<'_>>>,
+        mode: &Option<String>,
+    ) -> Result<bool> {
+        let mut chat_guard = session.lock().await;
+        match mode {
+            Some(m) if m == "on" => {
+                chat_guard.set_enable_thinking(Some(true));
+                println!("Thinking enabled.");
+            }
+            Some(m) if m == "off" => {
+                chat_guard.set_enable_thinking(Some(false));
+                println!("Thinking disabled.");
+            }
+            Some(m) => {
+                eprintln!(
+                    "Invalid argument: {}. Use 'on' or 'off', or no argument to see current state.",
+                    m
+                );
+            }
+            None => {
+                let current = chat_guard.enable_thinking();
+                match current {
+                    Some(true) => println!("Thinking: on"),
+                    Some(false) => println!("Thinking: off"),
+                    None => println!("Thinking: not set (using model default)"),
+                }
             }
         }
         Ok(true)
@@ -601,7 +643,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_model_command_switch() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test switching to an available model
@@ -618,7 +660,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_model_command_current() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test /model (just ensure it runs without panic)
@@ -631,7 +673,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_model_command_invalid() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test switching to a non-existent model
@@ -648,7 +690,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_profile_command_switch() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test switching to test-profile
@@ -668,7 +710,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_profile_command_invalid() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test switching to a non-existent profile
@@ -689,7 +731,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_profile_command_current() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test /profile (just ensure it runs without panic)
@@ -707,7 +749,7 @@ USER: Run tool
         let available_tools: HashMap<&str, Arc<dyn Tool>> =
             HashMap::from([("mock_tool", mock_tool)]);
 
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools)?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test setting a tool
@@ -736,7 +778,7 @@ USER: Run tool
         let available_tools: HashMap<&str, Arc<dyn Tool>> =
             HashMap::from([("mock_tool", mock_tool)]);
 
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools)?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Set a tool first
@@ -765,7 +807,8 @@ USER: Run tool
         let available_tools: HashMap<&str, Arc<dyn Tool>> =
             HashMap::from([("mock_tool", mock_tool)]);
 
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools).await?;
+        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), available_tools)?;
+        chat.load_session().await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test /tool (no arguments) - should show current tools
@@ -778,7 +821,8 @@ USER: Run tool
     #[tokio::test]
     async fn test_tool_command_invalid() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        chat.load_session().await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test setting an invalid tool
@@ -795,7 +839,8 @@ USER: Run tool
     #[tokio::test]
     async fn test_clear_command() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        chat.load_session().await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Add a message first
@@ -821,7 +866,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_log_command() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Add a message first
@@ -845,7 +890,7 @@ USER: Run tool
     #[tokio::test]
     async fn test_system_command_set() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test setting system prompt
@@ -862,7 +907,8 @@ USER: Run tool
     #[tokio::test]
     async fn test_system_command_view() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        chat.load_session().await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test viewing current prompt (no arguments)
@@ -873,9 +919,78 @@ USER: Run tool
     }
 
     #[tokio::test]
+    async fn test_think_command_enable() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // Test enabling thinking
+        let think_cmd = Command::Think {
+            mode: Some("on".to_string()),
+        };
+        assert!(think_cmd.execute(chat_session.clone()).await?);
+        assert_eq!(chat_session.lock().await.enable_thinking(), Some(true));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_think_command_disable() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // Test disabling thinking
+        let think_cmd = Command::Think {
+            mode: Some("off".to_string()),
+        };
+        assert!(think_cmd.execute(chat_session.clone()).await?);
+        assert_eq!(chat_session.lock().await.enable_thinking(), Some(false));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_think_command_view() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // First, set thinking to true
+        {
+            let mut chat_guard = chat_session.lock().await;
+            chat_guard.set_enable_thinking(Some(true));
+        }
+
+        // Test viewing current thinking state
+        let view_cmd = Command::Think { mode: None };
+        assert!(view_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_think_command_invalid() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        chat.load_session().await?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // Test invalid argument (should still return true to continue REPL)
+        let think_cmd = Command::Think {
+            mode: Some("invalid".to_string()),
+        };
+        assert!(think_cmd.execute(chat_session.clone()).await?);
+        // State should not change
+        assert_eq!(chat_session.lock().await.enable_thinking(), None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_exit_command() -> Result<()> {
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         // Test exit command
