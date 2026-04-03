@@ -42,7 +42,7 @@ llama-cpp-2 = "=0.1.141"
 tempfile = { workspace = true, features = [] }
 wiremock = { workspace = true, features = [] }
 tokio = { version = "1.50", features = ["macros", "rt-multi-thread"] }
-reqwest = { workspace = true, features = ["json"] }
+reqwest.workspace = true
 
 
 [features]
