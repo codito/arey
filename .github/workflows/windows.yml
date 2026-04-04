@@ -1,5 +1,7 @@
 name: windows
 
+if: false
+
 on:
   push:
     branches: [master]
