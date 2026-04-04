@@ -103,8 +103,10 @@ fn get_model_config_with_template(
 }
 
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("trace"));
-    let _ = fmt().with_env_filter(filter).with_target(true).try_init();
+    if env::var("RUST_LOG").is_ok() {
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("trace"));
+        let _ = fmt().with_env_filter(filter).with_target(true).try_init();
+    }
 }
 
 #[tokio::test]
