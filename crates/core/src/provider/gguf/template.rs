@@ -1046,7 +1046,7 @@ mod tests {
         let output = result.unwrap();
 
         assert!(
-            output.contains("\n\n\n"),
+            output.contains("<think>\n\n</think>"),
             "Output should contain thinking block when enable_thinking undefined"
         );
         assert!(
