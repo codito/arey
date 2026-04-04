@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.8](https://github.com/codito/arey/compare/arey-v0.0.7...arey-v0.0.8) (2026-04-04)
+
+
+### Features
+
+* qwen35 support, chat improvements, and template fixes ([#160](https://github.com/codito/arey/issues/160)) ([054145d](https://github.com/codito/arey/commit/054145d6fa470c3f261d573ae4b54e5e76352f03))
+
 ## [0.0.7](https://github.com/codito/arey/compare/arey-v0.0.6...arey-v0.0.7) (2025-10-04)
 
 
