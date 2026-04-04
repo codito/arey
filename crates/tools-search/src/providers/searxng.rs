@@ -20,9 +20,38 @@ struct SearxngResponse {
     results: Vec<SearxngApiResult>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct SearxngConfig {
     base_url: String,
+    #[serde(default)]
+    default_language: Option<String>,
+    #[serde(default)]
+    default_categories: Option<String>,
+    #[serde(default)]
+    default_results: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchOptions {
+    pub language: Option<String>,
+    pub time_range: Option<String>,
+    pub categories: Option<String>,
+    pub safesearch: Option<u8>,
+    pub engines: Option<String>,
+    pub pageno: Option<u32>,
+}
+
+impl SearchOptions {
+    pub fn merge(&self, defaults: &SearchOptions) -> Self {
+        Self {
+            language: self.language.clone().or(defaults.language.clone()),
+            time_range: self.time_range.clone().or(defaults.time_range.clone()),
+            categories: self.categories.clone().or(defaults.categories.clone()),
+            safesearch: self.safesearch.or(defaults.safesearch),
+            engines: self.engines.clone().or(defaults.engines.clone()),
+            pageno: self.pageno.or(defaults.pageno),
+        }
+    }
 }
 
 /// A search provider that uses a SearxNG instance.
@@ -30,6 +59,8 @@ struct SearxngConfig {
 pub struct SearxngProvider {
     base_url: Url,
     client: Client,
+    default_options: SearchOptions,
+    default_results: usize,
 }
 
 impl SearxngProvider {
@@ -38,24 +69,64 @@ impl SearxngProvider {
         debug!("Creating SearxngProvider from config: {:?}", config_value);
         let config: SearxngConfig = serde_yaml::from_value(config_value.clone())
             .context("Failed to parse searxng provider config")?;
+
+        let default_options = SearchOptions {
+            language: config.default_language,
+            categories: config.default_categories,
+            ..Default::default()
+        };
+
         Ok(Self {
             base_url: Url::parse(&config.base_url)
                 .with_context(|| format!("Invalid base_url for SearxNG: {}", config.base_url))?,
             client: Client::new(),
+            default_options,
+            default_results: config.default_results.unwrap_or(10),
         })
+    }
+
+    pub fn with_options(&self, options: SearchOptions) -> SearchOptions {
+        options.merge(&self.default_options)
     }
 }
 
 #[async_trait]
 impl SearchProvider for SearxngProvider {
-    async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+    async fn search(&self, query: &str, options: &SearchOptions) -> Result<Vec<SearchResult>> {
         let mut url = self.base_url.clone();
         url.set_path("search");
-        url.query_pairs_mut()
-            .append_pair("q", query)
-            .append_pair("format", "json");
 
-        debug!(url = %url, "Sending request to SearxNG");
+        let merged = options.merge(&self.default_options);
+
+        let mut query_params: Vec<(&str, String)> =
+            vec![("q", query.to_string()), ("format", "json".to_string())];
+
+        if let Some(ref lang) = merged.language {
+            query_params.push(("language", lang.clone()));
+        }
+        if let Some(ref time) = merged.time_range {
+            query_params.push(("time_range", time.clone()));
+        }
+        if let Some(ref cats) = merged.categories {
+            query_params.push(("categories", cats.clone()));
+        }
+        if let Some(safe) = merged.safesearch {
+            query_params.push(("safesearch", safe.to_string()));
+        }
+        if let Some(ref eng) = merged.engines {
+            query_params.push(("engines", eng.clone()));
+        }
+        if let Some(page) = merged.pageno {
+            query_params.push(("pageno", page.to_string()));
+        }
+
+        for (key, value) in query_params {
+            url.query_pairs_mut().append_pair(key, &value);
+        }
+
+        let url_for_debug = url.clone();
+        debug!(url = %url_for_debug, "Sending request to SearxNG");
+
         let response = self
             .client
             .get(url)
@@ -86,6 +157,7 @@ impl SearchProvider for SearxngProvider {
         let results: Vec<SearchResult> = searxng_response
             .results
             .into_iter()
+            .take(self.default_results)
             .map(|r| SearchResult {
                 title: r.title,
                 url: r.url,
@@ -155,7 +227,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_searxng_provider_search_success() {
-        // Arrange
         let server = MockServer::start().await;
         let mock_response = ResponseTemplate::new(200).set_body_json(mock_searxng_response());
         Mock::given(method("GET"))
@@ -170,10 +241,11 @@ mod tests {
         let config_value: serde_yaml::Value = serde_yaml::from_str(&config_yaml).unwrap();
         let provider = SearxngProvider::from_config(&config_value).unwrap();
 
-        // Act
-        let results = provider.search("test query").await.unwrap();
+        let results = provider
+            .search("test query", &SearchOptions::default())
+            .await
+            .unwrap();
 
-        // Assert
         assert_eq!(results.len(), 2);
         assert_eq!(
             results[0],
@@ -187,7 +259,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_searxng_provider_api_error() {
-        // Arrange
         let server = MockServer::start().await;
         let mock_response = ResponseTemplate::new(500).set_body_string("Internal Server Error");
         Mock::given(method("GET"))
@@ -200,10 +271,10 @@ mod tests {
         let config_value: serde_yaml::Value = serde_yaml::from_str(&config_yaml).unwrap();
         let provider = SearxngProvider::from_config(&config_value).unwrap();
 
-        // Act
-        let result = provider.search("any query").await;
+        let result = provider
+            .search("any query", &SearchOptions::default())
+            .await;
 
-        // Assert
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(

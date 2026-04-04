@@ -86,3 +86,6 @@ tools:
   search:
     provider: searxng
     base_url: "https://searx.be"
+    default_language: "en"
+    default_categories: "general"
+    default_results: 10
