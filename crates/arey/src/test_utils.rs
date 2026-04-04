@@ -96,10 +96,16 @@ models:
 chat:
   model: test-model
   agent: "test-agent"
+  profile: precise
 task:
   model: test-model
   agent: "test-agent"
 profiles:
+  precise:
+    temperature: 0.3
+    top_p: 0.1
+    top_k: 20
+    repeat_penalty: 1.2
   test-profile:
     temperature: 0.5
     top_p: 0.9

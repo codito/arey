@@ -5,7 +5,7 @@ use crate::cli::ux::{
     ChatMessageType, GenerationSpinner, TerminalRenderer, format_footer_metrics, style_chat_text,
 };
 use crate::svc::chat::Chat;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType,
 };
@@ -24,6 +24,18 @@ use tracing::{debug, error};
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
     println!("Welcome to arey chat! Ask anything. Use '/help' for usage, '/q' to exit.");
+
+    // Load the session with a loading indicator
+    {
+        let chat_guard = chat.clone();
+        let mut chat = chat_guard.lock().await;
+        let model_name = chat.model_key();
+        let spinner = GenerationSpinner::new(format!("Loading model '{}'...", model_name));
+        chat.load_session()
+            .await
+            .context("Failed to load session")?;
+        spinner.clear();
+    }
 
     let config = rustyline::Config::builder()
         .completion_type(CompletionType::List)
@@ -224,6 +236,7 @@ async fn process_message(
     // Store tool call responses if LLM requires a set of tools to be invoked for responding to a
     // user message.
     let mut assistant_message_text = String::new();
+    let mut assistant_message_thought = String::new();
     let mut assistant_message_tools: Vec<ToolCall> = vec![];
     let mut assistant_tool_responses: Vec<ChatMessage> = vec![];
 
@@ -269,6 +282,11 @@ async fn process_message(
 
                             match response {
                                 Ok(Completion::Response(chunk)) => {
+                                    if let Some(thought) = &chunk.thought {
+                                        assistant_message_thought.push_str(thought);
+                                        renderer.render_markdown(thought)?;
+                                    }
+
                                     if !&chunk.text.is_empty() {
                                         assistant_message_text.push_str(&chunk.text);
                                         renderer.render_markdown(&chunk.text)?;
@@ -319,6 +337,11 @@ async fn process_message(
             .add_messages(vec![ChatMessage {
                 sender: SenderType::Assistant,
                 text: assistant_message_text,
+                thought: if assistant_message_thought.is_empty() {
+                    None
+                } else {
+                    Some(assistant_message_thought)
+                },
                 tools: Some(assistant_message_tools),
                 metrics: Some(metrics.clone()),
             }])
@@ -652,7 +675,7 @@ mod tests {
     async fn test_process_message_simple_response() -> Result<()> {
         // 1. Setup Chat and Renderer
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
         let theme = get_theme("ansi");
@@ -683,8 +706,7 @@ mod tests {
             &config,
             Some("tool-call-model".to_string()),
             available_tools,
-        )
-        .await?;
+        )?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         let mut buffer = Vec::new();
@@ -707,7 +729,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_message_stream_error() -> Result<()> {
         let config = create_test_config_with_error_model()?;
-        let chat = Chat::new(&config, Some("error-model".to_string()), HashMap::new()).await?;
+        let chat = Chat::new(&config, Some("error-model".to_string()), HashMap::new())?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
         let theme = get_theme("ansi");

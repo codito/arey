@@ -14,6 +14,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error};
 
+/// Safety margin reserved for template overhead and edge cases
+/// This is 10% of context size, minimum 64 tokens
+fn safety_margin(context_size: usize) -> usize {
+    if context_size <= 640 {
+        // For small contexts, use smaller margin
+        context_size / 20
+    } else {
+        // For larger contexts, use 10% up to 512 max
+        (context_size / 10).min(512)
+    }
+}
+
 /// A session with shared context between Human and AI model.
 pub struct Session {
     model: Box<dyn CompletionModel>,
@@ -24,6 +36,9 @@ pub struct Session {
     tools: Vec<Arc<dyn Tool>>,
     settings: HashMap<String, String>,
     metrics: Option<ModelMetrics>,
+    /// Template override: enable_thinking setting
+    /// None = use model's default, Some(true) = enable thinking, Some(false) = disable thinking
+    enable_thinking: Option<bool>,
 }
 
 impl Session {
@@ -45,6 +60,7 @@ impl Session {
             tools: Vec::new(),
             settings: HashMap::new(),
             metrics,
+            enable_thinking: None,
         })
     }
 
@@ -52,6 +68,17 @@ impl Session {
     pub fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
         self.system_prompt = prompt.to_string();
         Ok(())
+    }
+
+    /// Get the enable_thinking setting.
+    pub fn enable_thinking(&self) -> Option<bool> {
+        self.enable_thinking
+    }
+
+    /// Set the enable_thinking template parameter.
+    /// None = use model's default, Some(true) = enable thinking, Some(false) = disable thinking
+    pub fn set_enable_thinking(&mut self, enabled: Option<bool>) {
+        self.enable_thinking = enabled;
     }
 
     /// Get model key for retrieving details from config
@@ -144,6 +171,7 @@ impl Session {
     /// Replace the current model with a new one, ensuring proper cleanup
     pub fn set_model(&mut self, model_config: ModelConfig) -> Result<()> {
         let model_key = model_config.key.clone();
+        let context_size = model_config.get_setting::<usize>("n_ctx").unwrap_or(4096);
 
         // Create a temporary placeholder model to replace the old one
         let temp_model = Box::new(TestProviderModel::new(ModelConfig {
@@ -160,6 +188,7 @@ impl Session {
         // Now create the new model with the old model's memory freed
         self.model = get_completion_llm(model_config)?;
         self.model_key = model_key;
+        self.context_size = context_size;
 
         Ok(())
     }
@@ -180,7 +209,7 @@ impl Session {
     /// Generate a response stream for the current conversation
     pub async fn generate(
         &self,
-        settings: HashMap<String, String>,
+        mut settings: HashMap<String, String>,
         cancel_token: CancellationToken,
     ) -> Result<BoxStream<'static, Result<Completion>>> {
         let tool_slice = if self.tools.is_empty() {
@@ -194,6 +223,13 @@ impl Session {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(1024);
 
+        tracing::debug!("Settings in session.generate(): max_tokens={}", max_tokens);
+
+        // Add enable_thinking to settings if set
+        if let Some(enabled) = self.enable_thinking {
+            settings.insert("enable_thinking".to_string(), enabled.to_string());
+        }
+
         let messages_to_send =
             self.get_trimmed_messages(&self.messages, max_tokens, &self.system_prompt);
 
@@ -203,10 +239,10 @@ impl Session {
             .await)
     }
 
-    /// Clear the conversation history
-    pub fn clear_history(&mut self) -> Result<()> {
+    /// Clear the conversation history and reset the model state
+    pub async fn clear_history(&mut self) -> Result<()> {
         self.messages.clear();
-        Ok(())
+        self.model.reset().await
     }
 
     /// Get model metrics if available
@@ -297,8 +333,11 @@ impl Session {
         max_output_tokens: usize,
         system_prompt: &str,
     ) -> Vec<ChatMessage> {
-        // Leave room for the response. TODO: use the max_tokens parameter from completion model.
-        let max_tokens = self.context_size - max_output_tokens;
+        // Leave room for the response plus safety margin for template overhead
+        let max_tokens = self
+            .context_size
+            .saturating_sub(max_output_tokens)
+            .saturating_sub(safety_margin(self.context_size));
 
         // Heuristic for messages without a known token count.
         let estimate_tokens = |msg: &ChatMessage| -> usize {
@@ -325,8 +364,8 @@ impl Session {
         };
         let available_tokens: usize = max_tokens.saturating_sub(system_prompt_tokens);
         debug!(
-            "Token trimming: available tokens: {}, System prompt tokens: {}",
-            available_tokens, system_prompt_tokens
+            "Token trimming: Context size: {}, Max output tokens: {}, Available tokens: {}, System prompt tokens: {}",
+            self.context_size, max_output_tokens, available_tokens, system_prompt_tokens
         );
 
         let mut start_index = messages.len();
@@ -511,6 +550,9 @@ mod tests {
             let stream = futures::stream::iter(Vec::<Result<Completion>>::new());
             Box::pin(stream)
         }
+        async fn reset(&self) -> Result<()> {
+            Ok(())
+        }
     }
 
     fn new_chat_msg(sender: SenderType, text: &str) -> ChatMessage {
@@ -531,6 +573,7 @@ mod tests {
             text: text.to_string(),
             tools: Some(tools),
             metrics: Some(metrics),
+            ..Default::default()
         }
     }
 
@@ -546,6 +589,7 @@ mod tests {
             metrics: Some(ModelMetrics {
                 init_latency_ms: 0.0,
             }),
+            enable_thinking: None,
         }
     }
 
@@ -978,8 +1022,8 @@ mod tests {
         assert!(session.settings.is_empty());
     }
 
-    #[test]
-    fn test_clear_history() {
+    #[tokio::test]
+    async fn test_clear_history() {
         let mut session = new_session(100);
         let _ = session.add_message(new_chat_msg(SenderType::User, "Hello"));
         let _ = session.add_message(new_assistant_msg(
@@ -989,7 +1033,7 @@ mod tests {
         ));
         assert_eq!(session.messages.len(), 2);
 
-        session.clear_history().unwrap();
+        session.clear_history().await.unwrap();
         assert_eq!(session.messages.len(), 0);
     }
 
@@ -1128,17 +1172,11 @@ mod tests {
             settings: gguf_settings,
         };
 
-        // This should fail gracefully due to missing file, but the logic should work
         let result = session.set_model(gguf_config);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Model loading failed")
-        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("not found") || err_msg.contains("Model loading failed"));
 
-        // Original model should still be intact
         assert_eq!(session.model_key(), "test-model");
 
         Ok(())

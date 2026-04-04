@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use futures::stream::BoxStream;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use arey_core::agent::Agent;
@@ -104,16 +103,11 @@ impl<'a> Task<'a> {
             })
             .context("Failed to add instruction message")?;
 
-        let mut settings = HashMap::new();
         let profile = self.current_agent.effective_profile();
-        settings.insert("temperature".to_string(), profile.temperature.to_string());
-        settings.insert(
-            "repeat_penalty".to_string(),
-            profile.repeat_penalty.to_string(),
-        );
-        settings.insert("top_k".to_string(), profile.top_k.to_string());
-        settings.insert("top_p".to_string(), profile.top_p.to_string());
-
+        let settings = profile
+            .to_settings()
+            .context("Failed to convert profile to settings")
+            .unwrap_or_default();
         let cancel_token = CancellationToken::new();
 
         let stream = session

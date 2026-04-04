@@ -58,6 +58,7 @@ impl CompletionModel for TestProviderModel {
         {
             let response = Completion::Response(CompletionResponse {
                 text: "Tool output is mock tool output".to_string(),
+                thought: None,
                 tool_calls: None,
                 finish_reason: Some("stop".to_string()),
                 raw_chunk: None,
@@ -80,6 +81,7 @@ impl CompletionModel for TestProviderModel {
                 };
                 let response = Completion::Response(CompletionResponse {
                     text: "".to_string(),
+                    thought: None,
                     tool_calls: Some(vec![tool_call]),
                     finish_reason: Some("tool_calls".to_string()),
                     raw_chunk: None,
@@ -92,12 +94,14 @@ impl CompletionModel for TestProviderModel {
                 // default is simple text response
                 let response1 = Completion::Response(CompletionResponse {
                     text: "Hello".to_string(),
+                    thought: None,
                     tool_calls: None,
                     finish_reason: None,
                     raw_chunk: None,
                 });
                 let response2 = Completion::Response(CompletionResponse {
                     text: " world".to_string(),
+                    thought: None,
                     tool_calls: None,
                     finish_reason: Some("stop".to_string()),
                     raw_chunk: None,
@@ -107,5 +111,9 @@ impl CompletionModel for TestProviderModel {
                 Box::pin(stream)
             }
         }
+    }
+
+    async fn reset(&self) -> Result<()> {
+        Ok(())
     }
 }

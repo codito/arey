@@ -40,16 +40,38 @@ pub fn setup_logging() -> anyhow::Result<()> {
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path)?;
+        .open(&log_path)?;
 
     // Ensure the logs are flushed after every line
-    let writer = Mutex::new(LineWriter::new(log_file));
+    let writer = LineWriter::new(log_file);
 
     tracing_subscriber::fmt()
         .with_env_filter("arey=debug,rustyline=info,llama-cpp-2=debug")
-        .with_writer(writer)
-        .with_ansi(false) // Disable ANSI escape codes for file logging
-        .with_timer(OffsetTime::local_rfc_3339()?) // Use local time
+        .with_writer(Mutex::new(writer))
+        .with_ansi(false) // Disable ANSI codes for file logging
+        .with_timer(OffsetTime::local_rfc_3339()?) // Use local time with RFC 3339 format
         .init();
+
+    // Set up panic hook to log panics
+    // Note: We can't easily share the writer after init(), so just log to stderr
+    // which will also be captured by the tracing setup
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        // Write to stderr and log with tracing
+        eprintln!("PANIC at {}: {}", location, message);
+        tracing::error!("PANIC at {}: {}", location, message);
+    }));
+
     Ok(())
 }

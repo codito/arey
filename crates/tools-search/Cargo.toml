@@ -12,7 +12,7 @@ arey-core = { path = "../core" }
 
 anyhow.workspace = true
 async-trait.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
