@@ -79,33 +79,10 @@ impl Tool for SearchTool {
                     "default": "markdown",
                     "description": "Output format. Use 'markdown' for human-readable results, 'json' for structured data."
                 },
-                "language": {
-                    "type": "string",
-                    "description": "Language code (e.g., en, de, fr). Uses instance default if not specified."
-                },
-                "time_range": {
-                    "type": "string",
-                    "enum": ["day", "month", "year"],
-                    "description": "Limit results to recency. Only works with engines that support it."
-                },
                 "categories": {
                     "type": "string",
                     "description": "Comma-separated categories: general, images, videos, news, map, music, it, science, files, social_media"
                 },
-                "safesearch": {
-                    "type": "integer",
-                    "enum": [0, 1, 2],
-                    "description": "SafeSearch level: 0=none, 1=moderate, 2=strict"
-                },
-                "engines": {
-                    "type": "string",
-                    "description": "Comma-separated engine names (e.g., google, bing, duckduckgo)"
-                },
-                "pageno": {
-                    "type": "integer",
-                    "default": 1,
-                    "description": "Page number for pagination"
-                }
             },
             "required": ["query"]
         })
@@ -135,13 +112,13 @@ impl Tool for SearchTool {
             .with_context(|| format!("Search failed for query: {query}"))
             .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
-        debug!(?results, "Search results received");
-
         let output = if format == "markdown" {
             Value::String(format_results_markdown(query, &results))
         } else {
             serde_json::to_value(results).map_err(|e| ToolError::ExecutionError(e.to_string()))?
         };
+
+        debug!(?output, "Search results output");
 
         Ok(output)
     }

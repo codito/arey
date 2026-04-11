@@ -1,7 +1,6 @@
-#![cfg(test)]
-
 //! Test utilities for chat modules
 
+#![cfg(test)]
 #![allow(dead_code)]
 
 use anyhow::Result;

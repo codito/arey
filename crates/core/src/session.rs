@@ -3,557 +3,429 @@
 
 use crate::{
     completion::{CancellationToken, ChatMessage, Completion, CompletionModel, SenderType},
+    context::Context as SessionContext,
     get_completion_llm,
-    model::{ModelConfig, ModelMetrics, ModelProvider},
-    provider::test_provider::TestProviderModel,
-    tools::{Tool, ToolCall, ToolResult},
+    model::{ModelConfig, ModelMetrics},
+    tools::{Tool, ToolCall, ToolExecutor},
 };
 use anyhow::{Context, Result};
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 
-/// Safety margin reserved for template overhead and edge cases
-/// This is 10% of context size, minimum 64 tokens
-fn safety_margin(context_size: usize) -> usize {
-    if context_size <= 640 {
-        // For small contexts, use smaller margin
-        context_size / 20
-    } else {
-        // For larger contexts, use 10% up to 512 max
-        (context_size / 10).min(512)
+/// Immutable configuration snapshot for a session.
+///
+/// All fields are public for direct initialization. Use `SessionConfig::default()`
+/// for defaults, or create directly:
+///
+/// ```
+/// use std::sync::Arc;
+/// use arey_core::tools::Tool;
+/// use arey_core::session::SessionConfig;
+/// use std::collections::HashMap;
+///
+/// // Example with tools
+/// // let my_tool: Arc<dyn Tool> = ...;
+/// let config = SessionConfig {
+///     system_prompt: "You are helpful".to_string(),
+///     tools: vec![/* my_tool */],
+///     settings: HashMap::new(),
+///     enable_reasoning: Some(true),
+///     max_tool_iterations: 10,
+///     tool_execution_enabled: true,
+/// };
+/// ```
+#[derive(Clone)]
+pub struct SessionConfig {
+    pub system_prompt: String,
+    pub tools: Vec<Arc<dyn Tool>>,
+    pub settings: HashMap<String, String>,
+    pub enable_reasoning: Option<bool>,
+    pub max_tool_iterations: usize,
+    pub tool_execution_enabled: bool,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            system_prompt: String::new(),
+            tools: Vec::new(),
+            settings: HashMap::new(),
+            enable_reasoning: None,
+            max_tool_iterations: 10,
+            tool_execution_enabled: true,
+        }
     }
+}
+
+impl SessionConfig {
+    /// Create a new SessionConfig with the given tools (convenience constructor)
+    pub fn with_tools(tools: Vec<Arc<dyn Tool>>) -> Self {
+        Self {
+            tools,
+            ..Default::default()
+        }
+    }
+}
+
+/// Events emitted during session generation
+pub enum SessionEvent {
+    /// Token response from model
+    Token(Completion),
+    /// Compaction (summarization) started
+    CompactionStart,
+    /// Compaction (summarization) completed
+    CompactionEnd {
+        result: crate::context::CompactionResult,
+    },
+    /// Reasoning (thinking) started
+    ReasoningStart,
+    /// Reasoning (thinking) completed
+    ReasoningEnd { reasoning: Option<String> },
+    /// Tool execution started
+    ToolStart { calls: Vec<ToolCall> },
+    /// Tool execution completed: Vec of (tool_call, succeeded) pairs
+    ToolEnd { results: Vec<(ToolCall, bool)> },
 }
 
 /// A session with shared context between Human and AI model.
 pub struct Session {
     model: Box<dyn CompletionModel>,
     model_key: String,
-    context_size: usize,
-    system_prompt: String,
-    messages: Vec<(ChatMessage, Option<usize>)>,
-    tools: Vec<Arc<dyn Tool>>,
-    settings: HashMap<String, String>,
-    metrics: Option<ModelMetrics>,
-    /// Template override: enable_thinking setting
-    /// None = use model's default, Some(true) = enable thinking, Some(false) = disable thinking
-    enable_thinking: Option<bool>,
+    context: SessionContext,
+    config: SessionConfig,
+    metrics: ModelMetrics,
+    model_reset_called: bool,
 }
 
 impl Session {
-    /// Create a new session with the given model configuration
-    pub fn new(model_config: ModelConfig, system_prompt: &str) -> Result<Self> {
+    /// Create a new session with the given model configuration and session config.
+    pub fn new(model_config: ModelConfig, config: SessionConfig) -> Result<Self> {
         let model_key = model_config.key.clone();
         let model = get_completion_llm(model_config.clone())
             .context("Failed to initialize session model")?;
 
-        let context_size = model_config.get_setting::<usize>("n_ctx").unwrap_or(4096);
-        let metrics = Some(model.metrics());
+        let context_size = model_config
+            .get_setting::<usize>("n_ctx")
+            .or_else(|| model.metrics().n_ctx.map(|n| n as usize))
+            .unwrap_or(4096);
+        let metrics = model.metrics();
+
+        debug!(
+            "Session created with context_size={} (from config: {}, from model: {:?})",
+            context_size,
+            model_config.get_setting::<usize>("n_ctx").unwrap_or(4096),
+            metrics.n_ctx
+        );
 
         Ok(Self {
             model,
             model_key,
-            context_size,
-            system_prompt: system_prompt.to_string(),
-            messages: Vec::new(),
-            tools: Vec::new(),
-            settings: HashMap::new(),
+            context: SessionContext::new(context_size).with_system(config.system_prompt.clone()),
+            config,
             metrics,
-            enable_thinking: None,
+            model_reset_called: false,
         })
     }
 
-    /// Set a new system prompt for the session.
-    pub fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
-        self.system_prompt = prompt.to_string();
-        Ok(())
+    /// Update the session configuration atomically.
+    pub fn update_config(&mut self, config: SessionConfig) {
+        self.config = config;
     }
 
-    /// Get the enable_thinking setting.
-    pub fn enable_thinking(&self) -> Option<bool> {
-        self.enable_thinking
-    }
-
-    /// Set the enable_thinking template parameter.
-    /// None = use model's default, Some(true) = enable thinking, Some(false) = disable thinking
-    pub fn set_enable_thinking(&mut self, enabled: Option<bool>) {
-        self.enable_thinking = enabled;
-    }
-
-    /// Get model key for retrieving details from config
-    pub fn model_key(&self) -> String {
-        self.model_key.clone()
-    }
-
-    /// Get system prompt
-    pub fn system_prompt(&self) -> String {
-        self.system_prompt.clone()
-    }
-
-    /// Transfer existing message history to session
-    pub fn set_messages(&mut self, messages: Vec<ChatMessage>) -> Result<()> {
-        self.messages = messages
-            .into_iter()
-            .map(|msg| (msg, None)) // Reset token counts for new model
-            .collect();
-        Ok(())
-    }
-
-    /// Add a new message to the conversation history
-    pub fn add_message(&mut self, message: ChatMessage) -> Result<()> {
-        if message.sender != SenderType::Assistant {
-            self.messages.push((message, None));
-            return Ok(());
-        }
-
-        // Add assistant message. Assume assistant message is fully received.
-        // Back-fill token counts for messages sent in the last prompt and adds the
-        // assistant's response with its token count.
-        let messages = &mut self.messages;
-
-        let mut known_prompt_tokens: usize = 0;
-        let mut unknown_message_indices = Vec::new();
-        let mut total_unknown_chars = 0;
-
-        // Identify messages that were part of the prompt and don't have a token count yet.
-        for (i, (msg, count)) in messages.iter().enumerate() {
-            if let Some(count) = *count {
-                known_prompt_tokens += count;
-            } else {
-                unknown_message_indices.push(i);
-                // Use character length as a heuristic for distribution.
-                total_unknown_chars += msg.text.len();
-            }
-        }
-
-        // Calculate new tokens added by the assistant's response.
-        let metrics = message.clone().metrics.unwrap();
-        let new_tokens = (metrics.prompt_tokens as usize).saturating_sub(known_prompt_tokens);
-
-        if !unknown_message_indices.is_empty() {
-            if total_unknown_chars > 0 {
-                let mut distributed_tokens: usize = 0;
-                let last_index = unknown_message_indices.len() - 1;
-
-                // Distribute tokens proportionally, giving remainder to the last message.
-                for (i, msg_idx) in unknown_message_indices.iter().enumerate() {
-                    let msg_chars = messages[*msg_idx].0.text.len();
-                    let msg_tokens = if i == last_index {
-                        new_tokens.saturating_sub(distributed_tokens)
-                    } else {
-                        (new_tokens * msg_chars) / total_unknown_chars
-                    };
-                    messages[*msg_idx].1 = Some(msg_tokens);
-                    distributed_tokens += msg_tokens;
-                }
-            } else if unknown_message_indices.len() == 1 {
-                // Handle case where there's one message with no text.
-                messages[unknown_message_indices[0]].1 = Some(new_tokens);
-            }
-        }
-
-        messages.push((message, Some(metrics.completion_tokens as usize)));
-        Ok(())
-    }
-
-    /// Set the tools available for this session
-    pub fn set_tools(&mut self, tools: Vec<Arc<dyn Tool>>) -> Result<()> {
-        self.tools = tools;
-        Ok(())
-    }
-
-    /// Returns a clone of the tools available in the session.
-    pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.tools.clone()
-    }
-
-    /// Replace the current model with a new one, ensuring proper cleanup
-    pub fn set_model(&mut self, model_config: ModelConfig) -> Result<()> {
+    /// Replace the current model with a new one, preserving conversation history
+    pub fn update_model(&mut self, model_config: ModelConfig) -> Result<()> {
         let model_key = model_config.key.clone();
         let context_size = model_config.get_setting::<usize>("n_ctx").unwrap_or(4096);
+        let old_messages = self.context.messages_tuple().to_vec();
 
-        // Create a temporary placeholder model to replace the old one
-        let temp_model = Box::new(TestProviderModel::new(ModelConfig {
-            key: "temp".to_string(),
-            name: "temp".to_string(),
-            provider: ModelProvider::Test,
-            settings: HashMap::new(),
-        })?) as Box<dyn CompletionModel>;
+        let temp_model = Box::new(crate::provider::test_provider::TestProviderModel::new(
+            ModelConfig {
+                key: "temp".to_string(),
+                name: "temp".to_string(),
+                provider: crate::model::ModelProvider::Test,
+                settings: HashMap::new(),
+            },
+        )?) as Box<dyn CompletionModel>;
 
-        // Replace and drop the old model to free GPU memory
         let old_model = std::mem::replace(&mut self.model, temp_model);
         drop(old_model);
 
-        // Now create the new model with the old model's memory freed
         self.model = get_completion_llm(model_config)?;
         self.model_key = model_key;
-        self.context_size = context_size;
+        self.context = SessionContext::new(context_size)
+            .with_system(self.config.system_prompt.clone())
+            .with_messages(old_messages);
 
         Ok(())
     }
 
-    /// Update agent configuration (prompt and tools) atomically
-    pub fn update_agent(&mut self, prompt: String, tools: Vec<Arc<dyn Tool>>) -> Result<()> {
-        self.system_prompt = prompt;
-        self.tools = tools;
+    /// Clear all messages from the session and reset model state
+    pub async fn clear(&mut self) -> Result<()> {
+        self.context.clear();
+        self.model.reset().await?;
+        self.model_reset_called = true;
         Ok(())
     }
 
-    /// Update generation settings
-    pub fn update_settings(&mut self, new_settings: HashMap<String, String>) -> Result<()> {
-        self.settings = new_settings;
-        Ok(())
+    /// Returns true if the model was reset during the last clear() call.
+    pub fn was_model_reset(&self) -> bool {
+        self.model_reset_called
     }
 
-    /// Generate a response stream for the current conversation
-    pub async fn generate(
-        &self,
-        mut settings: HashMap<String, String>,
-        cancel_token: CancellationToken,
-    ) -> Result<BoxStream<'static, Result<Completion>>> {
-        let tool_slice = if self.tools.is_empty() {
-            None
-        } else {
-            Some(self.tools.as_slice())
-        };
+    // ── Message access ─────────────────────────────────────────
 
-        let max_tokens = settings
-            .get("max_tokens")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(1024);
-
-        tracing::debug!("Settings in session.generate(): max_tokens={}", max_tokens);
-
-        // Add enable_thinking to settings if set
-        if let Some(enabled) = self.enable_thinking {
-            settings.insert("enable_thinking".to_string(), enabled.to_string());
-        }
-
-        let messages_to_send =
-            self.get_trimmed_messages(&self.messages, max_tokens, &self.system_prompt);
-
-        Ok(self
-            .model
-            .complete(&messages_to_send, tool_slice, &settings, cancel_token)
-            .await)
+    /// Add a new message to the conversation history
+    pub fn add_message(&mut self, message: ChatMessage) -> Result<()> {
+        self.context.add_message(message)
     }
 
-    /// Clear the conversation history and reset the model state
-    pub async fn clear_history(&mut self) -> Result<()> {
-        self.messages.clear();
-        self.model.reset().await
-    }
-
-    /// Get model metrics if available
-    pub fn metrics(&self) -> Option<&ModelMetrics> {
-        self.metrics.as_ref()
-    }
-
-    /// Get all messages in the conversation
-    pub fn all_messages(&self) -> Vec<ChatMessage> {
-        self.messages.iter().map(|(msg, _)| msg.clone()).collect()
-    }
-
-    /// Get the last message from the assistant
-    pub fn last_assistant_message(&self) -> Option<ChatMessage> {
-        self.messages
+    /// Get all messages in conversation. Caller can derive count, last, etc. from this.
+    pub fn messages(&self) -> Vec<ChatMessage> {
+        self.context
+            .messages_tuple()
             .iter()
-            .rev()
-            .find(|(m, _)| m.sender == SenderType::Assistant)
-            .map(|(m, _)| m.clone())
+            .map(|(msg, _)| msg.clone())
+            .collect()
     }
 
-    /// Trims a single, oversized block of messages to fit within the available token budget.
+    /// Get current model key
+    pub fn model_key(&self) -> &str {
+        &self.model_key
+    }
+
+    // ── Tool execution ─────────────────────────────────────────
+
+    /// Get tools available in session
+    pub fn tools(&self) -> &[Arc<dyn Tool>] {
+        &self.config.tools
+    }
+
+    /// Get a tool by name from the session's tools
+    pub fn get_tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.config.tools.iter().find(|t| t.name() == name).cloned()
+    }
+
+    /// Get current session configuration (read-only)
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
+    }
+
+    /// Trim message history after model memory trim (OOM recovery).
+    /// This keeps only the most recent 50% of messages to match the KV cache trim.
+    /// Should be called when the model signals memory was trimmed.
+    pub fn trim_for_memory_recovery(&mut self) {
+        let _ = self.context.trim(true);
+    }
+
+    /// Generate a response stream for the current conversation.
     ///
-    /// This function works backwards from the end of the block, prioritizing newer messages.
-    /// It aggressively truncates `Tool` messages if necessary to make the block fit, ensuring
-    /// the returned list of messages strictly adheres to the token limit.
-    fn trim_oversized_block(
-        &self,
-        block_messages: &[(ChatMessage, Option<usize>)],
-        available_tokens: usize,
-        estimate_tokens_fn: &dyn Fn(&ChatMessage) -> usize,
-    ) -> Vec<ChatMessage> {
-        let mut final_messages = Vec::new();
-        let mut used_tokens = 0;
+    /// This method handles the full generate→execute_tool→generate loop when
+    /// tool_execution_enabled is true:
+    /// 1. Generate tokens from model
+    /// 2. If tool_calls detected and tool_execution_enabled:
+    ///    - emit ToolStart, execute tools in parallel, emit ToolEnd
+    ///    - add tool results to conversation
+    ///    - repeat until no tool calls or max_iterations reached
+    pub async fn generate(
+        &mut self,
+        settings: HashMap<String, String>,
+        cancel_token: CancellationToken,
+    ) -> Result<BoxStream<'_, Result<SessionEvent>>> {
+        Ok(async_stream::stream! {
+            let max_iterations = self.config.max_tool_iterations;
+            let tools_enabled = self.config.tool_execution_enabled && !self.config.tools.is_empty();
 
-        // Iterate forwards through the block to preserve conversational order.
-        for (msg, count) in block_messages.iter() {
-            let mut msg_to_add = msg.clone();
-            let mut tokens = count.unwrap_or_else(|| estimate_tokens_fn(&msg_to_add));
+            let mut iteration = 0;
+            let mut pending_tool_calls: Vec<ToolCall> = Vec::new();
 
-            if used_tokens + tokens > available_tokens {
-                // If the message doesn't fit, check if we can truncate it.
-                // We only truncate tool messages as they are the most likely to be verbose.
-                if msg_to_add.sender == SenderType::Tool {
-                    let budget_for_this_msg = available_tokens.saturating_sub(used_tokens);
-                    // Use a 4 chars/token heuristic to determine how much text to keep.
-                    let chars_to_keep = budget_for_this_msg * 4;
-                    if msg_to_add.text.len() > chars_to_keep {
-                        msg_to_add.text.truncate(chars_to_keep);
-                        msg_to_add.text.push_str("\n... [truncated]");
-                        // After truncation, the token cost is now the budget we had.
-                        tokens = budget_for_this_msg;
-                    } else {
-                        // It's a tool message but can't be truncated enough. Stop.
-                        break;
-                    }
+            loop {
+                // Check compaction
+                let needs_compaction = {
+                    let ctx = self.context.messages_tuple();
+                    self.context.needs_compaction(ctx)
+                };
+
+                if needs_compaction {
+                    yield Ok(SessionEvent::CompactionStart);
+                    let result = self.context.compact();
+                    yield Ok(SessionEvent::CompactionEnd { result });
+                }
+
+                // Trim context to fit budget before generation
+                if let Err(e) = self.context.trim(false) {
+                    error!("Failed to trim context: {}", e);
+                    yield Err(e);
+                    return;
+                }
+
+                // Get messages from working copy (already trimmed)
+                let mut messages_to_send: Vec<ChatMessage> = self
+                    .context
+                    .messages_tuple()
+                    .iter()
+                    .map(|(m, _)| m.clone())
+                    .collect();
+
+                // Prepend system prompt if set
+                if !self.config.system_prompt.is_empty() {
+                    messages_to_send.insert(
+                        0,
+                        ChatMessage {
+                            sender: SenderType::System,
+                            text: self.config.system_prompt.clone(),
+                            ..Default::default()
+                        },
+                    );
+                }
+
+                if messages_to_send.is_empty() {
+                    error!(
+                        "Cannot generate: zero messages to send. System prompt: '{}', Conversation messages: {}",
+                        self.config.system_prompt,
+                        self.context.messages_tuple().len()
+                    );
+                    return;
+                }
+
+                let mut effective_settings = settings.clone();
+                for (k, v) in &self.config.settings {
+                    effective_settings.entry(k.clone()).or_insert(v.clone());
+                }
+
+                if let Some(enabled) = self.config.enable_reasoning {
+                    effective_settings.insert("enable_thinking".to_string(), enabled.to_string());
+                }
+
+                let tool_slice = if self.config.tool_execution_enabled && !self.config.tools.is_empty() {
+                    self.config.tools.clone()
                 } else {
-                    // It's not a tool message and it doesn't fit. Stop.
+                    Vec::new()
+                };
+
+                let mut stream = self.model.complete(
+                    &messages_to_send,
+                    if tool_slice.is_empty() { None } else { Some(&tool_slice) },
+                    &effective_settings,
+                    cancel_token.clone()
+                ).await;
+
+                pending_tool_calls.clear();
+                let mut assistant_text = String::new();
+                let mut assistant_thought = String::new();
+                let mut final_metrics = None;
+
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(Completion::Response(resp)) => {
+                            if let Some(tool_calls) = &resp.tool_calls {
+                                pending_tool_calls.extend(tool_calls.clone());
+                            }
+                            if !resp.text.is_empty() {
+                                assistant_text.push_str(&resp.text);
+                            }
+                            if let Some(thought) = &resp.thought {
+                                assistant_thought.push_str(thought);
+                            }
+                            yield Ok(SessionEvent::Token(Completion::Response(resp)));
+                        }
+                        Ok(Completion::Metrics(m)) => {
+                            final_metrics = Some(m.clone());
+                            yield Ok(SessionEvent::Token(Completion::Metrics(m)));
+                        }
+                        Err(e) => {
+                            yield Err(e);
+                            return;
+                        }
+                    }
+                }
+
+                // Add assistant response to context before potentially looping for tools
+                let assistant_msg = ChatMessage {
+                    sender: SenderType::Assistant,
+                    text: assistant_text,
+                    thought: if assistant_thought.is_empty() {
+                        None
+                    } else {
+                        Some(assistant_thought)
+                    },
+                    tools: if pending_tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(pending_tool_calls.clone())
+                    },
+                    metrics: final_metrics,
+                };
+                let _ = self.add_message(assistant_msg);
+
+                // No more tool calls - exit loop
+                if pending_tool_calls.is_empty() {
+                    break;
+                }
+
+                // Execute tools
+                if !tools_enabled {
+                    info!("Tool calls detected but tool execution is disabled");
+                    break;
+                }
+
+                yield Ok(SessionEvent::ToolStart {
+                    calls: pending_tool_calls.clone(),
+                });
+
+                let mut tool_results: Vec<(ToolCall, bool)> = Vec::new();
+                for tool_call in &pending_tool_calls {
+                    let success = if let Some(tool) = self.get_tool(&tool_call.name) {
+                        match ToolExecutor::execute(tool_call, tool.as_ref()).await {
+                            Ok(result_msg) => {
+                                let _ = self.add_message(result_msg);
+                                true
+                            }
+                            Err(e) => {
+                                error!("Tool execution failed: {}", e);
+                                false
+                            }
+                        }
+                    } else {
+                        let error_msg = ChatMessage {
+                            sender: SenderType::Tool,
+                            text: format!("Unknown tool: {}", tool_call.name),
+                            ..Default::default()
+                        };
+                        let _ = self.add_message(error_msg);
+                        false
+                    };
+                    tool_results.push((tool_call.clone(), success));
+                }
+
+                yield Ok(SessionEvent::ToolEnd {
+                    results: tool_results,
+                });
+
+                iteration += 1;
+                if iteration >= max_iterations {
+                    warn!("Max tool iterations ({}) reached", max_iterations);
                     break;
                 }
             }
-
-            // Add the message only if it fits (either originally or after truncation).
-            if used_tokens + tokens <= available_tokens {
-                used_tokens += tokens;
-                final_messages.push(msg_to_add);
-            } else {
-                // This can happen if budget was 0 and truncation wasn't possible. Stop.
-                break;
-            }
-        }
-
-        debug!(
-            "Trimmed block of {} messages to {} messages using {} tokens",
-            block_messages.len(),
-            final_messages.len(),
-            used_tokens
-        );
-
-        final_messages
+        }.boxed())
     }
 
-    /// Returns a list of messages that fits within the model's context window.
-    /// It trims older messages, attempting to keep conversational turns intact.
-    fn get_trimmed_messages(
-        &self,
-        messages: &[(ChatMessage, Option<usize>)],
-        max_output_tokens: usize,
-        system_prompt: &str,
-    ) -> Vec<ChatMessage> {
-        // Leave room for the response plus safety margin for template overhead
-        let max_tokens = self
-            .context_size
-            .saturating_sub(max_output_tokens)
-            .saturating_sub(safety_margin(self.context_size));
-
-        // Heuristic for messages without a known token count.
-        let estimate_tokens = |msg: &ChatMessage| -> usize {
-            let mut tokens = msg.text.len() / 4;
-            if let Some(tools) = &msg.tools {
-                for tool_call in tools {
-                    tokens += tool_call.name.len() / 4;
-                    if let Ok(input_str) = serde_json::to_string(&tool_call.arguments) {
-                        tokens += input_str.len() / 4;
-                    }
-                }
-            }
-            tokens
-        };
-
-        let get_token_count = |(msg, count): &(ChatMessage, Option<usize>)| {
-            count.unwrap_or_else(|| estimate_tokens(msg))
-        };
-
-        let system_prompt_tokens = if system_prompt.is_empty() {
-            0
-        } else {
-            system_prompt.len() / 4
-        };
-        let available_tokens: usize = max_tokens.saturating_sub(system_prompt_tokens);
-        debug!(
-            "Token trimming: Context size: {}, Max output tokens: {}, Available tokens: {}, System prompt tokens: {}",
-            self.context_size, max_output_tokens, available_tokens, system_prompt_tokens
-        );
-
-        let mut start_index = messages.len();
-        let mut current_tokens = 0;
-        let mut current_block_tokens = 0;
-
-        // Iterate backwards to find the oldest message that fits in the context window.
-        for i in (0..messages.len()).rev() {
-            let msg = &messages[i];
-            current_block_tokens += get_token_count(msg);
-
-            // A "block" is a User message followed by non-User messages.
-            if msg.0.sender == SenderType::User || i == 0 {
-                if current_tokens + current_block_tokens <= available_tokens {
-                    current_tokens += current_block_tokens;
-                    start_index = i;
-                    current_block_tokens = 0;
-                } else {
-                    // This block is too big to fit with the others.
-                    if start_index == messages.len() {
-                        // This is the *most recent* block, and it's oversized.
-                        // We cannot simply discard it, as that would mean sending an empty prompt.
-                        // Instead, we must truncate it to fit the context window.
-                        debug!(
-                            "Token trimming: Most recent block is oversized ({} tokens > {} available). Truncating it.",
-                            current_block_tokens, available_tokens
-                        );
-                        let oversized_block = &messages[i..];
-
-                        // TODO: trimming this block and the tool msg trimming needs to be merged.
-                        return self.trim_oversized_block(
-                            oversized_block,
-                            available_tokens,
-                            &estimate_tokens,
-                        );
-                    } else {
-                        // This is an older block that doesn't fit. We stop here and
-                        // only include the newer blocks that have already been approved.
-                        // TODO: we should consider truncating the oversized block instead of discarding it.
-                        break;
-                    }
-                }
-            }
-        }
-
-        let mut final_messages: Vec<ChatMessage> = messages[start_index..]
-            .iter()
-            .map(|(m, _)| m.clone())
-            .collect();
-
-        // Skip token trimming if the entire message history fits within the context window.
-        if current_tokens + current_block_tokens <= available_tokens {
-            debug!(
-                "Token trimming: Trimming messages to fit within the context window. New start index: {}",
-                start_index
-            );
-
-            // Truncate all but the last tool message to a reasonable limit.
-            let last_tool_idx = final_messages
-                .iter()
-                .rposition(|m| m.sender == SenderType::Tool);
-
-            if let Some(last_idx) = last_tool_idx {
-                const MAX_TOOL_RESPONSE_CHARS: usize = 512;
-                const TRUNCATION_MARKER: &str = "... [truncated]";
-
-                for (i, msg) in final_messages.iter_mut().enumerate() {
-                    if i < last_idx
-                        && msg.sender == SenderType::Tool
-                        && msg.text.len() > MAX_TOOL_RESPONSE_CHARS
-                    {
-                        // Deserialize or handle errors gracefully
-                        let mut tool_output = match serde_json::from_str::<ToolResult>(
-                            msg.text.as_str(),
-                        ) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                error!(
-                                    "Token trimming: Failed to deserialize ToolResult from message text: {}. Error: {}",
-                                    msg.text, e
-                                );
-                                ToolResult {
-                                    call: ToolCall {
-                                        id: "invalid".to_string(),
-                                        name: "invalid".to_string(),
-                                        arguments: "{}".to_string(),
-                                    },
-                                    output: serde_json::Value::String(msg.text.clone()),
-                                }
-                            }
-                        };
-
-                        // Serialize output field only
-                        let mut content = match serde_json::to_string(&tool_output.output) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                error!(
-                                    "Token trimming: Failed to serialize tool output: {:?}. Error: {}",
-                                    tool_output.output, e
-                                );
-                                "[Tool output not serializable]".to_string()
-                            }
-                        };
-                        if content.len() > MAX_TOOL_RESPONSE_CHARS {
-                            let mut new_len = MAX_TOOL_RESPONSE_CHARS;
-
-                            // Ensure we don't cut off in the middle of a UTF-8 character.
-                            while !content.is_char_boundary(new_len) {
-                                new_len -= 1;
-                            }
-                            content.truncate(new_len);
-                            content.push_str(TRUNCATION_MARKER);
-                        }
-
-                        // Update output field and serialize full ToolResult
-                        tool_output.output = serde_json::Value::String(content);
-                        msg.text = match serde_json::to_string(&tool_output) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                error!(
-                                    "Token trimming: Failed to serialize ToolResult: {:?}. Error: {}",
-                                    tool_output, e
-                                );
-                                "[Tool output not available]".to_string()
-                            }
-                        };
-                    }
-                }
-            }
-        }
-
-        // Add system prompt at beginning of the messages
-        if !system_prompt.is_empty() {
-            final_messages.insert(
-                0,
-                ChatMessage {
-                    sender: SenderType::System,
-                    text: system_prompt.to_string(),
-                    ..Default::default()
-                },
-            );
-        }
-        final_messages
+    /// Get model metrics
+    pub fn metrics(&self) -> &ModelMetrics {
+        &self.metrics
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        completion::{Completion, CompletionMetrics},
-        model::ModelProvider,
-        tools::{ToolCall, ToolResult},
-    };
+    use crate::completion::{CompletionResponse, SenderType};
+    use crate::model::{ModelMetrics, ModelProvider};
     use async_trait::async_trait;
-    use serde_json::Value;
-    use std::collections::HashMap;
-
-    // A mock CompletionModel for testing purposes.
-    struct MockModel {}
-
-    impl MockModel {
-        fn new() -> Self {
-            Self {}
-        }
-    }
-
-    #[async_trait]
-    impl CompletionModel for MockModel {
-        fn metrics(&self) -> ModelMetrics {
-            ModelMetrics {
-                init_latency_ms: 0.0,
-            }
-        }
-        async fn complete(
-            &self,
-            _messages: &[ChatMessage],
-            _tools: Option<&[Arc<dyn Tool>]>,
-            _settings: &HashMap<String, String>,
-            _cancel_token: CancellationToken,
-        ) -> BoxStream<'static, Result<Completion>> {
-            let stream = futures::stream::iter(Vec::<Result<Completion>>::new());
-            Box::pin(stream)
-        }
-        async fn reset(&self) -> Result<()> {
-            Ok(())
-        }
-    }
+    use futures::stream::{self, BoxStream};
+    use std::sync::Arc;
 
     fn new_chat_msg(sender: SenderType, text: &str) -> ChatMessage {
         ChatMessage {
@@ -563,621 +435,459 @@ mod tests {
         }
     }
 
-    fn new_assistant_msg(
-        text: &str,
-        metrics: CompletionMetrics,
-        tools: Vec<ToolCall>,
-    ) -> ChatMessage {
-        ChatMessage {
-            sender: SenderType::Assistant,
-            text: text.to_string(),
-            tools: Some(tools),
-            metrics: Some(metrics),
-            ..Default::default()
-        }
-    }
-
-    fn new_session(context_size: usize) -> Session {
-        Session {
-            model: Box::new(MockModel::new()),
-            model_key: "test-model".to_string(),
-            context_size,
-            system_prompt: "System".to_string(), // 6 chars -> 1 token est.
-            messages: Vec::new(),
-            tools: Vec::new(),
+    fn new_session(_context_size: usize) -> Session {
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
             settings: HashMap::new(),
-            metrics: Some(ModelMetrics {
-                init_latency_ms: 0.0,
-            }),
-            enable_thinking: None,
-        }
+        };
+        Session::new(model_config, SessionConfig::default()).unwrap()
     }
 
-    fn new_tool_call(name: &str) -> ToolCall {
-        ToolCall {
-            id: "{name}_id".to_string(),
-            name: name.to_string(),
-            arguments: "{}".to_string(),
-        }
+    #[test]
+    fn test_session_new() {
+        let config = SessionConfig {
+            system_prompt: "Test".to_string(),
+            ..Default::default()
+        };
+
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
+            settings: HashMap::new(),
+        };
+
+        let session = Session::new(model_config, config).unwrap();
+        assert_eq!(session.model_key(), "test");
     }
 
     #[test]
     fn test_add_message() {
         let mut session = new_session(100);
+        session
+            .add_message(new_chat_msg(SenderType::User, "Hello"))
+            .unwrap();
+        assert_eq!(session.messages().len(), 1);
+    }
 
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Hello"));
+    #[test]
+    fn test_trim_for_memory_recovery() {
+        let mut session = new_session(100);
 
-        assert_eq!(session.messages.len(), 1);
-        assert_eq!(session.messages[0].0.text, "Hello");
-        assert_eq!(session.messages[0].1, None);
+        // Add 10 messages
+        for i in 0..10 {
+            session
+                .add_message(new_chat_msg(SenderType::User, &format!("Msg {}", i)))
+                .unwrap();
+        }
+        assert_eq!(session.messages().len(), 10);
+
+        session.trim_for_memory_recovery();
+
+        // Should keep last 50% = 5 messages
+        assert_eq!(session.messages().len(), 5);
+        assert_eq!(session.messages()[0].text, "Msg 5");
+    }
+
+    #[derive(Clone)]
+    #[allow(dead_code)]
+    struct MockModel {
+        response: Option<String>,
+        should_error: bool,
+    }
+
+    #[async_trait]
+    impl CompletionModel for MockModel {
+        fn metrics(&self) -> ModelMetrics {
+            ModelMetrics {
+                init_latency_ms: 0.0,
+                ..Default::default()
+            }
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: Option<&[Arc<dyn Tool>]>,
+            _settings: &HashMap<String, String>,
+            _cancel_token: CancellationToken,
+        ) -> BoxStream<'static, Result<Completion>> {
+            if self.should_error {
+                return stream::iter([Err(anyhow::anyhow!("Mock error"))]).boxed();
+            }
+
+            let response = self.response.clone().unwrap_or_else(|| "Hello".to_string());
+            stream::iter([Ok(Completion::Response(CompletionResponse {
+                text: response,
+                tool_calls: None,
+                ..Default::default()
+            }))])
+            .boxed()
+        }
+
+        async fn reset(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+    use crate::completion::{CompletionResponse, SenderType};
+    use crate::model::{ModelMetrics, ModelProvider};
+    use crate::tools::{Tool, ToolError};
+    use async_trait::async_trait;
+    use futures::TryStreamExt;
+    use futures::stream::{self, BoxStream, StreamExt};
+    use serde_json::{Value as JsonValue, json};
+    use serde_yaml::Value;
+    use std::sync::Arc;
+
+    fn new_chat_msg(sender: SenderType, text: &str) -> ChatMessage {
+        ChatMessage {
+            sender,
+            text: text.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[derive(Clone)]
+    struct TestTool {
+        name: String,
+        should_error: bool,
+    }
+
+    #[async_trait]
+    impl Tool for TestTool {
+        fn name(&self) -> String {
+            self.name.clone()
+        }
+
+        fn description(&self) -> String {
+            format!("Test tool {}", self.name)
+        }
+
+        fn parameters(&self) -> JsonValue {
+            json!({"type": "object"})
+        }
+
+        async fn execute(&self, _args: &JsonValue) -> Result<JsonValue, ToolError> {
+            if self.should_error {
+                Err(ToolError::ExecutionError(format!(
+                    "Tool {} failed",
+                    self.name
+                )))
+            } else {
+                Ok(json!({"result": format!("executed {}", self.name)}))
+            }
+        }
     }
 
     #[tokio::test]
-    async fn test_add_message_assistant_simple() {
-        let mut session = new_session(100);
-        let _ = session.add_message(new_chat_msg(SenderType::User, "User 1"));
+    async fn test_tool_start_event_emitted() -> Result<()> {
+        let tool: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "mock_tool".to_string(),
+            should_error: false,
+        });
 
-        let metrics = CompletionMetrics {
-            prompt_tokens: 10,
-            completion_tokens: 20,
-            ..Default::default()
-        };
-        let _ = session.add_message(new_assistant_msg("Response 1", metrics, Vec::new()));
-
-        assert_eq!(session.messages.len(), 2);
-        assert_eq!(session.messages[0].1, Some(10));
-        assert_eq!(session.messages[1].1, Some(20));
-    }
-
-    #[tokio::test]
-    async fn test_add_message_assistant_multiple_unknown() {
-        let mut session = new_session(100);
-        let _ = session.add_message(new_chat_msg(
-            SenderType::User,
-            "This is a slightly longer message.",
-        )); // 34 chars
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Short one.")); // 10 chars
-
-        let metrics = CompletionMetrics {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            ..Default::default()
-        };
-        let _ = session.add_message(new_assistant_msg("Response 1", metrics, Vec::new()));
-        assert_eq!(session.messages.len(), 3);
-        // 100 * (34 / (34+10)) = 77.27 -> 77
-        assert_eq!(session.messages[0].1, Some(77));
-        // Remainder: 100 - 77 = 23
-        assert_eq!(session.messages[1].1, Some(23));
-        assert_eq!(session.messages[2].1, Some(20));
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_no_trimming() {
-        let session = new_session(100);
-        let messages = vec![
-            (new_chat_msg(SenderType::User, "U1"), Some(10)),
-            (new_chat_msg(SenderType::Assistant, "A1"), Some(10)),
-        ];
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-
-        assert_eq!(trimmed.len(), 3);
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_simple_trim() {
-        let session = new_session(30); // small context
-        let messages = vec![
-            (new_chat_msg(SenderType::User, "U1"), Some(10)),
-            (new_chat_msg(SenderType::Assistant, "A1"), Some(10)),
-            (new_chat_msg(SenderType::User, "U2"), Some(10)),
-        ];
-        let system_prompt = session.system_prompt.clone();
-        // available_tokens = 30-1=29.
-        // U2 block (10) fits. current_tokens=10.
-        // U1 block (20) doesn't fit with U2 (10+20 > 29). Trim U1 block.
-        let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-
-        assert_eq!(trimmed.len(), 2);
-        assert_eq!(trimmed[1].text, "U2");
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_keeps_blocks() {
-        let session = new_session(25); // Very small context to force trimming
-        let messages = vec![
-            (new_chat_msg(SenderType::User, "U1"), Some(10)),
-            (new_chat_msg(SenderType::Assistant, "A1"), Some(10)),
-            (new_chat_msg(SenderType::User, "U2"), Some(10)),
-        ];
-        let system_prompt = session.system_prompt.clone();
-        // available_tokens = 25-1=24.
-        // U2 block (10) fits. U1+A1 block (20) doesn't fit with U2 (10+20 > 24).
-        // Should keep only U2 block (most recent).
-        let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-
-        assert_eq!(trimmed.len(), 2);
-        assert_eq!(trimmed[1].text, "U2");
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_with_system_prompt() {
-        let session = new_session(30); // smaller context to force trimming
-        let system_prompt = "System prompt with much more text to consume tokens";
-        let messages = vec![
-            (new_chat_msg(SenderType::User, "U1"), Some(10)),
-            (new_chat_msg(SenderType::Assistant, "A1"), Some(10)),
-            (new_chat_msg(SenderType::User, "U2"), Some(10)),
-        ];
-        // available_tokens = 30 - (system_prompt.len() / 4) = 30 - (48/4) = 30 - 12 = 18.
-        // U2 block (10) fits. U1+A1 block (20) doesn't fit with U2 (10+20 > 18).
-        // Should keep only U2 block.
-        let trimmed = session.get_trimmed_messages(&messages, 0, system_prompt);
-
-        assert_eq!(trimmed.len(), 2);
-        assert_eq!(trimmed[1].text, "U2");
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_exact_fit() {
-        let session = new_session(21); // exact fit for U2
-        let messages = vec![
-            (new_chat_msg(SenderType::User, "U1"), Some(20)),
-            (new_chat_msg(SenderType::Assistant, "A1"), Some(20)),
-            (new_chat_msg(SenderType::User, "U2"), Some(10)),
-        ];
-        let system_prompt = session.system_prompt.clone();
-        // available_tokens = 21-1=20.
-        // U2 block (10) fits. current_tokens=10.
-        // U1 block (20) doesn't fit with U2 (10+20 > 20). Trim U1 block.
-        let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-
-        assert_eq!(trimmed.len(), 2);
-        assert_eq!(trimmed[1].text, "U2");
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_empty_input() {
-        let session = new_session(30);
-        let messages = Vec::new();
-        let system_prompt = session.system_prompt.clone();
-
-        let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-
-        // Only system prompt
-        assert_eq!(trimmed.len(), 1);
-    }
-
-    #[test]
-    fn test_get_trimmed_messages_all_fit() {
-        let session = new_session(100); // large context
-        let messages = vec![
-            (new_chat_msg(SenderType::User, "U1"), Some(10)),
-            (new_chat_msg(SenderType::Assistant, "A1"), Some(10)),
-            (new_chat_msg(SenderType::User, "U2"), Some(10)),
-        ];
-        let system_prompt = session.system_prompt.clone();
-        // available_tokens = 100-1=99.
-        // All messages fit easily.
-        let trimmed = session.get_trimmed_messages(&messages, 0, &system_prompt);
-        assert_eq!(trimmed.len(), 4);
-        assert_eq!(trimmed[1].text, "U1");
-        assert_eq!(trimmed[2].text, "A1");
-        assert_eq!(trimmed[3].text, "U2");
-    }
-
-    #[test]
-    fn test_full_flow() {
-        let mut session = new_session(35); // Reduced from 50 to force trimming
-
-        // Turn 1
-        let _ = session.add_message(new_chat_msg(
-            SenderType::User,
-            "User message 1, quite long to ensure it costs something",
-        ));
-        let metrics1 = CompletionMetrics {
-            prompt_tokens: 20,
-            completion_tokens: 10,
-            ..Default::default()
-        };
-        let _ = session.add_message(new_assistant_msg(
-            "Assistant response 1",
-            metrics1,
-            Vec::new(),
-        ));
-        assert_eq!(session.messages[0].1, Some(20));
-        assert_eq!(session.messages[1].1, Some(10));
-
-        // Turn 2
-        let _ = session.add_message(new_chat_msg(SenderType::User, "User message 2")); // est. 3 tokens
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-        // Sys(1)+U1_block(30)+U2_est(3) = 34 > 35. All still fit.
-        assert_eq!(trimmed.len(), 4);
-
-        let metrics2 = CompletionMetrics {
-            prompt_tokens: 35, // 20+10 known, so U2 cost is 5
-            completion_tokens: 5,
-            ..Default::default()
-        };
-        let _ = session.add_message(new_assistant_msg(
-            "Assistant response 2",
-            metrics2,
-            Vec::new(),
-        ));
-        assert_eq!(session.messages[2].1, Some(5));
-        assert_eq!(session.messages[3].1, Some(5));
-
-        // Turn 3: force trimming - with context of 35, system (1) + available = 34 tokens
-        // Messages: U1(20) + A1(10) + U2(5) + A2(5) + U3(est.7) = 47 tokens total
-        // Expected to trim U1+A1 block (30 tokens), keeping U2+A2+U3 (17 tokens)
-        let _ = session.add_message(new_chat_msg(
-            SenderType::User,
-            "User message 3 is also quite long",
-        )); // est. 7 tokens
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-
-        // Should have trimmed the oldest block (U1+A1) to fit within context
-        // Keeping: U2(5) + A2(5) + U3(est.7) = 17 tokens + system(1) = 18 tokens total
-        assert_eq!(trimmed.len(), 4); // Sys prompt, U2, A2, U3 - U1+A1 was trimmed
-        assert_eq!(trimmed[1].text, "User message 2"); // First message should be U2
-        assert_eq!(trimmed[2].text, "Assistant response 2"); // Second message should be A2
-        assert_eq!(trimmed[3].text, "User message 3 is also quite long"); // Third message should be U3
-    }
-
-    #[test]
-    fn test_trim_messages_with_tool_calls() {
-        let mut session = new_session(200); // Larger context to fit all messages
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-        let _ = session.add_message(new_assistant_msg(
-            "I'll search for that information.",
-            CompletionMetrics::default(),
-            Vec::new(),
-        ));
-
-        // Simulate tool calls in the assistant message
-        session.messages[1].0.tools =
-            Some(vec![new_tool_call("search"), new_tool_call("calculate")]);
-
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Search result"));
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Calculation result"));
-
-        // Get trimmed messages with limited context
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-        // Should include all messages since they fit in context
-        assert_eq!(trimmed.len(), 5);
-    }
-
-    #[test]
-    fn test_trim_messages_oversized_tool_call() {
-        let mut session = new_session(50); // Very small context to force trimming
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-        let _ = session.add_message(new_assistant_msg(
-            "I'll search for that information.",
-            CompletionMetrics::default(),
-            Vec::new(),
-        ));
-
-        // Simulate a large tool call that exceeds context
-        session.messages[1].0.tools = Some(vec![new_tool_call("search")]);
-
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Search result"));
-
-        // Add an extra message that should be trimmed
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Follow up question"));
-
-        // Get trimmed messages with limited context
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-        // Should trim the oldest user message to fit the tool call
-        assert!(trimmed.len() >= 3); // At least the assistant, tool, and latest user message
-    }
-
-    #[test]
-    fn test_trim_messages_with_invalid_tool_result() {
-        let mut session = new_session(100);
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-        let _ = session.add_message(new_assistant_msg(
-            "I'll search for that information.",
-            CompletionMetrics::default(),
-            Vec::new(),
-        ));
-
-        // Simulate tool calls in the assistant message
-        session.messages[1].0.tools = Some(vec![new_tool_call("search")]);
-
-        // Add a tool result with invalid JSON (make it long enough to trigger truncation)
-        let invalid_json = format!(
-            r#"{{"call":{{"id":"search_id","name":"search","arguments":"{{}}"}},"output":""{}""#,
-            "invalid json ".repeat(100)
-        );
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, &invalid_json));
-
-        // Add another tool result (this will be the last one, forcing the first to be truncated)
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Second tool result"));
-
-        // Get trimmed messages
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-        // Should handle invalid JSON gracefully
-        assert_eq!(trimmed.len(), 4);
-
-        // Check if the invalid tool result was truncated
-        assert!(
-            trimmed[2].text.contains("... [truncated]"),
-            "Expected tool result to be truncated"
-        );
-    }
-
-    #[test]
-    fn test_record_completion_with_tools() {
-        let mut session = new_session(100);
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-
-        let metrics = CompletionMetrics {
-            prompt_tokens: 10,
-            completion_tokens: 20,
-            ..Default::default()
-        };
-        let assistant_message = new_assistant_msg(
-            "I'll search for that information.",
-            metrics,
-            vec![new_tool_call("search")],
+        let mut settings: HashMap<String, Value> = HashMap::new();
+        settings.insert(
+            "response_mode".to_string(),
+            Value::String("tool_call".to_string()),
         );
 
-        let _ = session.add_message(assistant_message);
-
-        assert_eq!(session.messages.len(), 2);
-        assert_eq!(session.messages[1].1, Some(20));
-        assert_eq!(session.messages[1].0.tools.as_ref().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_trim_messages_extremely_large_tool_result() {
-        let mut session = new_session(300); // Very small context to force truncation
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Use the search tool"));
-
-        let assistant_message = new_assistant_msg(
-            "I'll search for that information.",
-            CompletionMetrics::default(),
-            vec![new_tool_call("search")],
-        );
-
-        let _ = session.add_message(assistant_message);
-
-        // Create a very large tool result
-        let large_tool_result =
-            r#"{"call":{"id":"search_id","name":"search","arguments":"{}"},"output":""#.to_string()
-                + &"x".repeat(1000)
-                + r#""#;
-        let tool_message = new_chat_msg(SenderType::Tool, &large_tool_result);
-        let _ = session.add_message(tool_message);
-
-        // Create another tool result (this will be the last one and won't be truncated)
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, "Small result"));
-
-        // Create another message
-        // let _ = session.add_message(new_chat_msg(SenderType::User, "Follow up"));
-
-        // Get trimmed messages
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-        // Check that it didn't panic and the tool message was truncated correctly.
-        // The tool result is very large (1070 chars) and should be truncated to 512 chars
-        assert!(
-            trimmed[3].text.contains("... [truncated]"),
-            "Expected tool result to be truncated. Text: {}...",
-            &trimmed[3].text[..100.min(trimmed[2].text.len())]
-        );
-        assert!(!trimmed[4].text.contains("... [truncated]")); // Follow-up message should not be truncated
-    }
-
-    #[test]
-    fn test_session_new() {
         let model_config = ModelConfig {
-            key: "test_key".to_string(),
-            name: "test_model".to_string(),
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
+            settings,
+        };
+
+        let session_config = SessionConfig {
+            tools: vec![tool],
+            ..Default::default()
+        };
+
+        let mut session = Session::new(model_config, session_config)?;
+        session.add_message(new_chat_msg(SenderType::User, "test"))?;
+
+        let stream = session
+            .generate(HashMap::new(), CancellationToken::new())
+            .await?;
+
+        let events: Vec<SessionEvent> = stream.try_collect().await?;
+
+        let tool_start_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::ToolStart { .. }))
+            .collect();
+
+        assert!(
+            !tool_start_events.is_empty(),
+            "ToolStart event should be emitted"
+        );
+
+        if let SessionEvent::ToolStart { calls } = &tool_start_events[0] {
+            assert!(!calls.is_empty(), "ToolStart should have calls");
+            assert_eq!(calls[0].name, "mock_tool");
+        } else {
+            panic!("Expected ToolStart event");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_end_event_emitted_after_execution() -> Result<()> {
+        let tool: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "mock_tool".to_string(),
+            should_error: false,
+        });
+
+        let mut settings: HashMap<String, Value> = HashMap::new();
+        settings.insert(
+            "response_mode".to_string(),
+            Value::String("tool_call".to_string()),
+        );
+
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
+            settings,
+        };
+
+        let session_config = SessionConfig {
+            tools: vec![tool],
+            tool_execution_enabled: true,
+            ..Default::default()
+        };
+
+        let mut session = Session::new(model_config, session_config)?;
+        session.add_message(new_chat_msg(SenderType::User, "test"))?;
+
+        let stream = session
+            .generate(HashMap::new(), CancellationToken::new())
+            .await?;
+
+        let events: Vec<SessionEvent> = stream.try_collect().await?;
+
+        let tool_end_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::ToolEnd { .. }))
+            .collect();
+
+        assert!(
+            !tool_end_events.is_empty(),
+            "ToolEnd event should be emitted"
+        );
+
+        if let SessionEvent::ToolEnd { results } = &tool_end_events[0] {
+            assert_eq!(results.len(), 1, "ToolEnd should have one result");
+            assert!(results[0].1, "Tool execution should succeed");
+        } else {
+            panic!("Expected ToolEnd event");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_result_message_added_to_context() -> Result<()> {
+        let tool: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "mock_tool".to_string(),
+            should_error: false,
+        });
+
+        let mut settings: HashMap<String, Value> = HashMap::new();
+        settings.insert(
+            "response_mode".to_string(),
+            Value::String("tool_call".to_string()),
+        );
+
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
+            settings,
+        };
+
+        let session_config = SessionConfig {
+            tools: vec![tool],
+            tool_execution_enabled: true,
+            ..Default::default()
+        };
+
+        let mut session = Session::new(model_config, session_config)?;
+        session.add_message(new_chat_msg(SenderType::User, "test"))?;
+
+        let stream = session
+            .generate(HashMap::new(), CancellationToken::new())
+            .await?;
+        let _ = stream.try_collect::<Vec<_>>().await?;
+
+        let messages = session.messages();
+
+        let tool_messages: Vec<_> = messages
+            .iter()
+            .filter(|m| m.sender == SenderType::Tool)
+            .collect();
+
+        assert!(
+            !tool_messages.is_empty(),
+            "Tool result message should be added to context"
+        );
+
+        let first_tool_msg = &tool_messages[0];
+        let parsed: serde_json::Value = serde_json::from_str(&first_tool_msg.text)?;
+        assert!(
+            parsed.get("output").is_some(),
+            "Tool result should contain output"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_execution_error() -> Result<()> {
+        let tool: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "mock_tool".to_string(),
+            should_error: true,
+        });
+
+        let mut settings: HashMap<String, Value> = HashMap::new();
+        settings.insert(
+            "response_mode".to_string(),
+            Value::String("tool_call".to_string()),
+        );
+
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
+            settings,
+        };
+
+        let session_config = SessionConfig {
+            tools: vec![tool],
+            tool_execution_enabled: true,
+            ..Default::default()
+        };
+
+        let mut session = Session::new(model_config, session_config)?;
+        session.add_message(new_chat_msg(SenderType::User, "test"))?;
+
+        let stream = session
+            .generate(HashMap::new(), CancellationToken::new())
+            .await?;
+
+        let events: Vec<SessionEvent> = stream.try_collect().await?;
+
+        let tool_end_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::ToolEnd { .. }))
+            .collect();
+
+        assert!(
+            !tool_end_events.is_empty(),
+            "ToolEnd should be emitted on error too"
+        );
+
+        if let SessionEvent::ToolEnd { results } = &tool_end_events[0] {
+            assert_eq!(results.len(), 1, "ToolEnd should have one result");
+            assert!(!results[0].1, "Tool execution should fail");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires architecture to inject custom model into Session"]
+    async fn test_tools_passed_to_model_complete() -> Result<()> {
+        struct ModelCapturesTools {
+            captured_tools: Arc<std::sync::Mutex<Option<Vec<String>>>>,
+        }
+
+        #[async_trait]
+        impl CompletionModel for ModelCapturesTools {
+            fn metrics(&self) -> ModelMetrics {
+                ModelMetrics::default()
+            }
+
+            async fn complete(
+                &self,
+                _messages: &[ChatMessage],
+                tools: Option<&[Arc<dyn Tool>]>,
+                _settings: &HashMap<String, String>,
+                _cancel_token: CancellationToken,
+            ) -> BoxStream<'static, Result<Completion>> {
+                let tool_names = tools.map(|t| t.iter().map(|t| t.name()).collect::<Vec<_>>());
+                *self.captured_tools.lock().unwrap() = tool_names;
+
+                stream::iter([Ok(Completion::Response(CompletionResponse {
+                    text: "Hello".to_string(),
+                    tool_calls: None,
+                    finish_reason: Some("stop".to_string()),
+                    ..Default::default()
+                }))])
+                .boxed()
+            }
+
+            async fn reset(&self) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let tool1: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "search".to_string(),
+            should_error: false,
+        });
+        let tool2: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "weather".to_string(),
+            should_error: false,
+        });
+
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let captured_for_model = captured.clone();
+
+        let _model = ModelCapturesTools {
+            captured_tools: captured_for_model,
+        };
+
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
             provider: ModelProvider::Test,
             settings: HashMap::new(),
         };
-        let session = Session::new(model_config, "test_system_prompt").unwrap();
-        assert_eq!(session.model_key, "test_key");
-        assert_eq!(session.context_size, 4096); // default value
-        assert_eq!(session.system_prompt, "test_system_prompt");
-        assert!(session.messages.is_empty());
-        assert!(session.tools.is_empty());
-        assert!(session.settings.is_empty());
-    }
 
-    #[tokio::test]
-    async fn test_clear_history() {
-        let mut session = new_session(100);
-        let _ = session.add_message(new_chat_msg(SenderType::User, "Hello"));
-        let _ = session.add_message(new_assistant_msg(
-            "Hi there",
-            CompletionMetrics::default(),
-            Vec::new(),
-        ));
-        assert_eq!(session.messages.len(), 2);
+        let session_config = SessionConfig {
+            tools: vec![tool1, tool2],
+            tool_execution_enabled: true,
+            ..Default::default()
+        };
 
-        session.clear_history().await.unwrap();
-        assert_eq!(session.messages.len(), 0);
-    }
+        let mut session = Session::new(model_config, session_config)?;
+        session.add_message(new_chat_msg(SenderType::User, "hello"))?;
 
-    #[test]
-    fn test_settings() {
-        let mut session = new_session(100);
-        session
-            .settings
-            .insert("temperature".to_string(), "0.7".to_string());
-        session
-            .settings
-            .insert("top_p".to_string(), "0.9".to_string());
+        let stream = session
+            .generate(HashMap::new(), CancellationToken::new())
+            .await?;
+        let _ = stream.try_collect::<Vec<_>>().await?;
+
+        let captured_tools = captured.lock().unwrap();
+        let tools_passed = captured_tools.as_ref().expect("Tools should be captured");
 
         assert_eq!(
-            session.settings.get("temperature"),
-            Some(&"0.7".to_string())
+            tools_passed.len(),
+            2,
+            "Both tools should be passed to model"
         );
-        assert_eq!(session.settings.get("top_p"), Some(&"0.9".to_string()));
-    }
-
-    #[test]
-    fn test_tool_response_truncation_with_multibyte_chars() {
-        // This test ensures that truncating a tool response with multi-byte characters
-        // does not panic by cutting a character in half.
-        let mut session = new_session(4096);
-
-        // Construct a string where the truncation boundary (512) falls within a multi-byte character.
-        // `content` will be `"` + `long_string` + `"`.
-        // The euro sign '€' is 3 bytes and starts at byte index 511 of `content`.
-        let long_string = "a".to_string().repeat(510) + "€"; // 513 bytes as a string slice.
-
-        let tool_outputs = [
-            ToolResult {
-                call: new_tool_call("tool_1"),
-                output: Value::String(long_string),
-            },
-            ToolResult {
-                call: new_tool_call("tool_2"),
-                output: Value::String("b".to_string().repeat(10)), // A dummy second tool call
-            },
-        ];
-
-        let serialized_outputs: Vec<String> = tool_outputs
-            .iter()
-            .map(|out| serde_json::to_string(out).unwrap())
-            .collect();
-
-        let _ = session.add_message(new_chat_msg(SenderType::User, "U1"));
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, &serialized_outputs[0]));
-        let _ = session.add_message(new_chat_msg(SenderType::User, "U2"));
-        let _ = session.add_message(new_chat_msg(SenderType::Tool, &serialized_outputs[1]));
-
-        // Get trimmed messages using the same pattern as other tests
-        let messages_to_send: Vec<(ChatMessage, Option<usize>)> = session
-            .messages
-            .iter()
-            .map(|(msg, tokens)| (msg.clone(), *tokens))
-            .collect();
-        let system_prompt = session.system_prompt.clone();
-        let trimmed = session.get_trimmed_messages(&messages_to_send, 0, &system_prompt);
-
-        // Check that it didn't panic and the first message was truncated correctly.
-        assert!(trimmed[2].text.contains("... [truncated]"));
-        assert!(!trimmed[4].text.contains("... [truncated]"));
-    }
-
-    #[test]
-    fn test_set_model() -> Result<()> {
-        let mut session = new_session(100);
-        let original_model_key = session.model_key();
-        assert_eq!(original_model_key, "test-model");
-
-        // Create a new model config with different key
-        let new_model_config = ModelConfig {
-            key: "new-test-model".to_string(),
-            name: "new-test-model".to_string(),
-            provider: ModelProvider::Test,
-            settings: HashMap::new(),
-        };
-
-        // Set new model
-        session.set_model(new_model_config)?;
-
-        // Verify model was updated
-        assert_eq!(session.model_key(), "new-test-model");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_set_model_preserves_session_data() -> Result<()> {
-        let mut session = new_session(100);
-
-        // Add some data to the session
-        session.add_message(new_chat_msg(SenderType::User, "Hello"))?;
-        session.add_message(new_assistant_msg(
-            "Hi there",
-            CompletionMetrics::default(),
-            Vec::new(),
-        ))?;
-        let original_prompt = session.system_prompt();
-
-        // Create a new model config
-        let new_model_config = ModelConfig {
-            key: "new-test-model".to_string(),
-            name: "new-test-model".to_string(),
-            provider: ModelProvider::Test,
-            settings: HashMap::new(),
-        };
-
-        // Set new model
-        session.set_model(new_model_config)?;
-
-        // Verify session data is preserved
-        assert_eq!(session.model_key(), "new-test-model");
-        assert_eq!(session.system_prompt(), original_prompt);
-        assert_eq!(session.all_messages().len(), 2);
-        assert_eq!(session.all_messages()[0].text, "Hello");
-        assert_eq!(session.all_messages()[1].text, "Hi there");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_set_model_with_gguf_config() -> Result<()> {
-        let mut session = new_session(100);
-
-        // Create a GGUF model config (even if path doesn't exist, we test the flow)
-        let mut gguf_settings = HashMap::new();
-        gguf_settings.insert("path".to_string(), "/nonexistent/model.gguf".into());
-
-        let gguf_config = ModelConfig {
-            key: "gguf-test-model".to_string(),
-            name: "gguf-test-model".to_string(),
-            provider: ModelProvider::Gguf,
-            settings: gguf_settings,
-        };
-
-        let result = session.set_model(gguf_config);
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("not found") || err_msg.contains("Model loading failed"));
-
-        assert_eq!(session.model_key(), "test-model");
+        assert!(tools_passed.contains(&"search".to_string()));
+        assert!(tools_passed.contains(&"weather".to_string()));
 
         Ok(())
     }

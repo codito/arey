@@ -94,6 +94,7 @@ impl ToolCallParser {
     }
 
     pub fn reset(&self) {
+        debug!("ToolCallParser: resetting parser state");
         let mut buffer = self.buffer.lock().unwrap();
         buffer.clear();
         let mut state = self.is_in_thought.lock().unwrap();
@@ -173,6 +174,7 @@ impl ToolCallParser {
                     match match_type {
                         0 => {
                             // Thought start
+                            debug!("ToolCallParser: thought start");
                             let m = thought_start.unwrap();
                             *is_in_thought = true;
                             current_pos += m.end();
@@ -182,6 +184,8 @@ impl ToolCallParser {
                             let m = tool_call_match.unwrap();
                             let abs_end = current_pos + (m.end() - m.start());
                             let content = &buffer[current_pos..abs_end];
+
+                            debug!("ToolCallParser: complete tool call");
 
                             // Extract the inner content (captured by group 1 in complete_call_re)
                             if let Some(caps) = self.complete_call_re.captures(content)

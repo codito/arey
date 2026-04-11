@@ -20,3 +20,4 @@ rust-project.json
 
 .aider*
 coverage.json
+coverage/

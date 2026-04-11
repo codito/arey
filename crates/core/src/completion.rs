@@ -110,11 +110,16 @@ pub struct CacheMetrics {
     pub checkpoint_transition: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CompletionResponse {
     pub text: String,
     pub thought: Option<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
+
+    /// The reason the completion finished.
+    /// Possible values:
+    /// "stop", "length" are supported by all providers.
+    /// "trimmed" is a special internal value indicating the session to trim conversation and retry.
     pub finish_reason: Option<String>,
     pub raw_chunk: Option<String>,
 }

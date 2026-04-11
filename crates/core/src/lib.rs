@@ -4,7 +4,9 @@ pub mod provider;
 pub mod agent;
 pub mod completion;
 pub mod config;
+mod context; // Internal - used by Session, not exported publicly
 pub mod model;
+pub mod registry;
 pub mod session;
 pub mod tools;
 

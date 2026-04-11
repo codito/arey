@@ -100,9 +100,8 @@ pub async fn execute(file: Option<&str>, no_watch: bool, config: &Config) -> Res
 async fn run_once(play_file: &mut PlayFile) -> Result<()> {
     if play_file.session.is_none() {
         play_file.ensure_session().await?;
-        if let Some(session) = &play_file.session
-            && let Some(metrics) = session.metrics()
-        {
+        if let Some(session) = &play_file.session {
+            let metrics = session.metrics();
             println!(
                 "{} {}",
                 style_chat_text("✓ Model loaded.", ChatMessageType::Footer),

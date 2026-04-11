@@ -1,9 +1,9 @@
 //! Extensions for arey.
 //! Support for tools, agents, workflows, and memory extensions.
 use anyhow::{Context, Result, anyhow};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
-use arey_core::{config::Config, tools::Tool};
+use arey_core::{config::Config, registry::ToolRegistry, tools::Tool};
 
 /// Retrieves all available tools from the configuration.
 ///
@@ -17,17 +17,16 @@ use arey_core::{config::Config, tools::Tool};
 ///
 /// # Returns
 ///
-/// A `Result` containing a `HashMap` mapping tool names to their corresponding
-/// `Tool` trait objects, or an error if initialization fails or an unknown tool
-/// is encountered.
+/// A `Result` containing a `ToolRegistry` with all available tools, or an error
+/// if initialization fails or an unknown tool is encountered.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - A tool fails to initialize (e.g., due to invalid configuration).
 /// - An unknown tool name is found in the configuration.
-pub fn get_tools<'a>(config: &'a Config) -> Result<HashMap<&'a str, Arc<dyn Tool>>> {
-    let mut available_tools: HashMap<&'a str, Arc<dyn Tool>> = HashMap::new();
+pub fn get_tools(config: &Config) -> Result<ToolRegistry> {
+    let mut registry = ToolRegistry::new();
     for (name, tool_config) in &config.tools {
         let tool: Arc<dyn Tool> = match name.as_str() {
             "search" => Arc::new(
@@ -36,8 +35,8 @@ pub fn get_tools<'a>(config: &'a Config) -> Result<HashMap<&'a str, Arc<dyn Tool
             ),
             _ => return Err(anyhow!("Unknown tool in config: {}", name)),
         };
-        available_tools.insert(name.as_str(), tool);
+        registry.register(tool)?;
     }
 
-    Ok(available_tools)
+    Ok(registry)
 }

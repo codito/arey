@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A mock `CompletionModel` for use in unit tests.
 ///
@@ -25,6 +26,7 @@ use std::sync::Arc;
 pub struct TestProviderModel {
     config: ModelConfig,
     metrics: ModelMetrics,
+    reset_called: Arc<AtomicBool>,
 }
 
 impl TestProviderModel {
@@ -33,7 +35,19 @@ impl TestProviderModel {
         Ok(Self {
             config,
             metrics: ModelMetrics::default(),
+            reset_called: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Returns true if reset() has been called on this model.
+    pub fn was_reset(&self) -> bool {
+        self.reset_called.load(Ordering::SeqCst)
+    }
+
+    /// Resets the reset_called flag (for test isolation).
+    #[cfg(test)]
+    pub fn reset_flag(&self) {
+        self.reset_called.store(false, Ordering::SeqCst);
     }
 }
 
@@ -114,6 +128,7 @@ impl CompletionModel for TestProviderModel {
     }
 
     async fn reset(&self) -> Result<()> {
+        self.reset_called.store(true, Ordering::SeqCst);
         Ok(())
     }
 }

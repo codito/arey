@@ -2,8 +2,7 @@ use crate::cli::ux::{TerminalRenderer, get_theme};
 use crate::svc::chat::Chat;
 use anyhow::{Context, Result};
 use arey_core::config::Config;
-use arey_core::tools::Tool;
-use std::collections::HashMap;
+use arey_core::registry::ToolRegistry;
 use std::io::stdout;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -18,10 +17,10 @@ mod test_utils;
 pub async fn execute(
     model: Option<String>,
     config: &Config,
-    available_tools: HashMap<&str, Arc<dyn Tool>>,
+    tool_registry: ToolRegistry,
 ) -> Result<()> {
     let chat =
-        Chat::new(config, model, available_tools).context("Failed to initialize chat service")?;
+        Chat::new(config, model, tool_registry).context("Failed to initialize chat service")?;
     let theme = get_theme("ansi"); // TODO: Theme from config
     let mut stdout = stdout();
     let mut renderer = TerminalRenderer::new(&mut stdout, &theme);
