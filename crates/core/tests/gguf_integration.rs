@@ -70,19 +70,21 @@ async fn get_model_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
 async fn get_shared_model() -> Result<Arc<GgufBaseModel>, Box<dyn std::error::Error>> {
     let model_path = get_model_path().await?;
 
-    Ok(MODEL_ONCE
+    let model = MODEL_ONCE
         .get_or_init(|| async {
             let model_config = get_model_config(&model_path, "shared-gguf-model");
             Arc::new(GgufBaseModel::new(model_config).expect("Failed to create shared model"))
         })
         .await
-        .clone())
+        .clone();
+    model.reset().await?;
+    Ok(model)
 }
 
 async fn get_shared_transformer_model() -> Result<Arc<GgufBaseModel>, Box<dyn std::error::Error>> {
     let model_path = get_transformer_model_path().await?;
 
-    Ok(TRANSFORMER_MODEL_ONCE
+    let model = TRANSFORMER_MODEL_ONCE
         .get_or_init(|| async {
             let model_config = get_model_config_with_strategy(
                 &model_path,
@@ -95,13 +97,15 @@ async fn get_shared_transformer_model() -> Result<Arc<GgufBaseModel>, Box<dyn st
             )
         })
         .await
-        .clone())
+        .clone();
+    model.reset().await?;
+    Ok(model)
 }
 
 async fn get_shared_template_model() -> Result<Arc<GgufBaseModel>, Box<dyn std::error::Error>> {
     let model_path = get_model_path().await?;
 
-    Ok(TEMPLATE_MODEL_ONCE
+    let model = TEMPLATE_MODEL_ONCE
         .get_or_init(|| async {
             let mut model_config = get_model_config(&model_path, "shared-template-model");
             model_config.settings.insert(
@@ -116,13 +120,15 @@ async fn get_shared_template_model() -> Result<Arc<GgufBaseModel>, Box<dyn std::
             )
         })
         .await
-        .clone())
+        .clone();
+    model.reset().await?;
+    Ok(model)
 }
 
 async fn get_shared_oom_model() -> Result<Arc<GgufBaseModel>, Box<dyn std::error::Error>> {
     let model_path = get_model_path().await?;
 
-    Ok(OOM_TEST_MODEL_ONCE
+    let model = OOM_TEST_MODEL_ONCE
         .get_or_init(|| async {
             let mut settings = HashMap::new();
             settings.insert("path".to_string(), model_path.to_str().unwrap().into());
@@ -139,7 +145,9 @@ async fn get_shared_oom_model() -> Result<Arc<GgufBaseModel>, Box<dyn std::error
             Arc::new(GgufBaseModel::new(model_config).expect("Failed to create shared OOM model"))
         })
         .await
-        .clone())
+        .clone();
+    model.reset().await?;
+    Ok(model)
 }
 
 fn get_model_config(model_path: &Path, name: &str) -> ModelConfig {
@@ -313,7 +321,6 @@ async fn complete_and_extract(
 async fn test_gguf_hybrid_cache_prefix_match() {
     init_tracing();
     let model = get_shared_model().await.unwrap();
-    model.reset().await.unwrap();
 
     let mut settings = HashMap::new();
     settings.insert("max_tokens".to_string(), "5".to_string());
@@ -482,7 +489,6 @@ async fn test_gguf_auto_detect_cache_strategy() {
 async fn test_gguf_cache_mechanism() {
     init_tracing();
     let model = get_shared_model().await.unwrap();
-    model.reset().await.unwrap();
 
     let mut settings = HashMap::new();
     settings.insert("max_tokens".to_string(), "5".to_string());
