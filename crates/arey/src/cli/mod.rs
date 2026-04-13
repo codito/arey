@@ -7,6 +7,7 @@ pub mod ux;
 use anyhow::{Context, Result};
 use arey_core::config::{Config, get_config};
 use arey_core::registry::ToolRegistry;
+use arey_mcp::McpRegistry;
 use clap::{Parser, Subcommand};
 
 use crate::ext::get_tools;
@@ -67,13 +68,25 @@ pub async fn run() -> Result<()> {
     let config = get_config(None).context("Failed to load configuration")?;
 
     // Initialize all available tools
-    let tool_registry = get_tools(&config).context("Failed to get builtin tools")?;
+    let mut tool_registry = get_tools(&config).context("Failed to get builtin tools")?;
+
+    // Initialize MCP servers from config
+    let mcp_registry = McpRegistry::from_config(&config).await?;
+
+    // Add MCP tools to the tool registry
+    if let Some(ref mcp) = mcp_registry {
+        for tool in mcp.get_all_tools() {
+            tool_registry.register(tool)?;
+        }
+    }
 
     match &cli.command {
         Commands::Run { instruction, model } => {
             run::execute(instruction.clone(), model.clone(), &config).await
         }
-        Commands::Chat { model } => execute_chat(model.clone(), &config, tool_registry).await,
+        Commands::Chat { model } => {
+            execute_chat(model.clone(), &config, tool_registry, mcp_registry).await
+        }
         Commands::Play { file, no_watch } => {
             play::execute(file.as_deref(), *no_watch, &config).await
         }
@@ -84,13 +97,7 @@ async fn execute_chat(
     model: Option<String>,
     config: &Config,
     tool_registry: ToolRegistry,
+    mcp_registry: Option<McpRegistry>,
 ) -> Result<()> {
-    crate::cli::chat::execute(model, config, tool_registry).await
-}
-
-#[cfg(test)]
-mod tests {
-    // TODO: Add integration tests for the CLI entrypoint `run`.
-    // This would involve running the binary with different arguments and
-    // checking exit codes and output.
+    crate::cli::chat::execute(model, config, tool_registry, mcp_registry).await
 }

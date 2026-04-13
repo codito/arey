@@ -47,6 +47,16 @@ pub enum Command {
         /// Tool names to set, or "clear"
         names: Vec<String>,
     },
+    /// Manage MCP servers.
+    ///
+    /// With no arguments, lists all MCP servers and their status.
+    /// Use "enable", "disable", "start", "stop" with a server name.
+    Mcp {
+        /// Subcommand: enable, disable, start, stop
+        subcommand: Option<String>,
+        /// Server name for enable/disable/start/stop
+        server: Option<String>,
+    },
     /// Manage chat agents.
     ///
     /// With no arguments, shows the current agent and available agents with their sources.
@@ -88,6 +98,13 @@ impl Command {
             Command::Model { ref name } => self.execute_model(session, name).await,
             Command::Profile { ref name } => self.execute_profile(session, name).await,
             Command::Tool { ref names } => self.execute_tool(session, names).await,
+            Command::Mcp {
+                ref subcommand,
+                ref server,
+            } => {
+                self.execute_mcp(session, subcommand.as_deref(), server.as_deref())
+                    .await
+            }
             Command::Agent { ref name } => self.execute_agent(session, name).await,
             Command::System { ref prompt } => self.execute_system(session, prompt).await,
             Command::Think { ref mode } => self.execute_think(session, mode).await,
@@ -124,9 +141,16 @@ impl Command {
             }
         } else if names.is_empty() {
             // Show current and available tools
-            let chat_guard = session.lock().await;
+            let mut chat_guard = session.lock().await;
             let current_tools = chat_guard.tools();
             let available_tools = chat_guard.available_tool_names();
+
+            // Get MCP server info
+            let mcp_servers = if let Some(mgr) = chat_guard.mcp_registry() {
+                mgr.list().await
+            } else {
+                vec![]
+            };
 
             if current_tools.is_empty() {
                 println!("No tools are currently active.");
@@ -138,6 +162,19 @@ impl Command {
 
             if !available_tools.is_empty() {
                 println!("Available tools: {}", available_tools.join(", "));
+            }
+
+            // Show MCP server status
+            if !mcp_servers.is_empty() {
+                println!("\nMCP Servers:");
+                for server in mcp_servers {
+                    let status = if server.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    };
+                    println!("  {}: {}", server.name, status);
+                }
             }
         } else {
             // Set new tools
@@ -374,6 +411,112 @@ impl Command {
                     Some(false) => println!("Reasoning: off"),
                     None => println!("Reasoning: not set (using model default)"),
                 }
+            }
+        }
+        Ok(true)
+    }
+
+    async fn execute_mcp(
+        &self,
+        session: Arc<Mutex<Chat<'_>>>,
+        subcommand: Option<&str>,
+        server: Option<&str>,
+    ) -> Result<bool> {
+        let mut chat_guard = session.lock().await;
+
+        match (subcommand, server) {
+            (None, None) => {
+                // List all MCP servers
+                let mcp_registry = chat_guard.mcp_registry();
+                if let Some(manager) = mcp_registry {
+                    let servers = manager.list().await;
+                    if servers.is_empty() {
+                        println!("No MCP servers configured.");
+                    } else {
+                        println!("MCP Servers:");
+                        for s in servers {
+                            let status = if s.running {
+                                if s.enabled {
+                                    "running, enabled"
+                                } else {
+                                    "running, disabled"
+                                }
+                            } else {
+                                "stopped"
+                            };
+                            println!("  {}: {} ({} tools)", s.name, status, s.tool_count);
+                        }
+                    }
+                } else {
+                    println!("MCP not available");
+                }
+            }
+            (Some("list"), None) => {
+                let mcp_registry = chat_guard.mcp_registry();
+                if let Some(manager) = mcp_registry {
+                    let servers = manager.list().await;
+                    for s in servers {
+                        let status = if s.running {
+                            if s.enabled {
+                                "running, enabled"
+                            } else {
+                                "running, disabled"
+                            }
+                        } else {
+                            "stopped"
+                        };
+                        println!("  {}: {} ({} tools)", s.name, status, s.tool_count);
+                    }
+                }
+            }
+            (Some("enable"), Some(name)) => {
+                let mcp_registry = chat_guard.mcp_registry();
+                if let Some(manager) = mcp_registry {
+                    if let Err(e) = manager.enable(name).await {
+                        eprintln!("Failed to enable MCP server '{}': {}", name, e);
+                    } else {
+                        println!("MCP server '{}' enabled.", name);
+                    }
+                } else {
+                    eprintln!("MCP not available");
+                }
+            }
+            (Some("disable"), Some(name)) => {
+                let mcp_registry = chat_guard.mcp_registry();
+                if let Some(manager) = mcp_registry {
+                    if let Err(e) = manager.disable(name).await {
+                        eprintln!("Failed to disable MCP server '{}': {}", name, e);
+                    } else {
+                        println!("MCP server '{}' disabled.", name);
+                    }
+                } else {
+                    eprintln!("MCP not available");
+                }
+            }
+            (Some("start"), Some(name)) => {
+                // This would require access to config, which we don't have here
+                eprintln!("Use '/mcp enable {}' to enable a running server", name);
+            }
+            (Some("stop"), Some(name)) => {
+                let mcp_registry = chat_guard.mcp_registry();
+                if let Some(manager) = mcp_registry {
+                    if let Err(e) = manager.remove_server(name).await {
+                        eprintln!("Failed to stop MCP server '{}': {}", name, e);
+                    } else {
+                        println!("MCP server '{}' stopped.", name);
+                    }
+                } else {
+                    eprintln!("MCP not available");
+                }
+            }
+            (Some(sub), _) => {
+                eprintln!(
+                    "Unknown MCP subcommand: {}. Use list, enable, disable, start, or stop.",
+                    sub
+                );
+            }
+            (None, Some(_)) => {
+                eprintln!("Use /mcp <subcommand> <server-name>");
             }
         }
         Ok(true)
@@ -1061,6 +1204,161 @@ USER: Run tool
         // Test exit command
         let exit_cmd = Command::Exit;
         assert!(!exit_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_no_mcp_registry() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // Test /mcp with no MCP registry - should show "MCP not available"
+        let mcp_cmd = Command::Mcp {
+            subcommand: None,
+            server: None,
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_list_no_mcp_registry() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("list".to_string()),
+            server: None,
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_enable_no_mcp_registry() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("enable".to_string()),
+            server: Some("test-server".to_string()),
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_disable_no_mcp_registry() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("disable".to_string()),
+            server: Some("test-server".to_string()),
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_stop_no_mcp_registry() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("stop".to_string()),
+            server: Some("test-server".to_string()),
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_unknown_subcommand() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("invalid".to_string()),
+            server: None,
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_start_shows_hint() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // /mcp start should show a hint to use enable instead
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("start".to_string()),
+            server: Some("test-server".to_string()),
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mcp_command_missing_server_arg() -> Result<()> {
+        let config = create_test_config_with_custom_agent()?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // /mcp enable without server name should show error
+        let mcp_cmd = Command::Mcp {
+            subcommand: Some("enable".to_string()),
+            server: None,
+        };
+        assert!(mcp_cmd.execute(chat_session.clone()).await?);
 
         Ok(())
     }

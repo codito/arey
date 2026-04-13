@@ -101,6 +101,8 @@ pub struct Config {
     pub theme: String,
     #[serde(default)]
     pub tools: HashMap<String, serde_yaml::Value>,
+    #[serde(default)]
+    pub mcp: serde_yaml::Value,
 }
 
 fn default_theme() -> String {
@@ -253,6 +255,8 @@ struct RawConfig {
     theme: Option<String>,
     #[serde(default)]
     tools: HashMap<String, serde_yaml::Value>,
+    #[serde(default)]
+    mcp: serde_yaml::Value,
 }
 
 impl RawConfig {
@@ -387,6 +391,7 @@ impl RawConfig {
             },
             theme: self.theme.clone().unwrap_or_else(default_theme),
             tools: self.tools.clone(),
+            mcp: self.mcp.clone(),
         })
     }
 }
@@ -674,6 +679,7 @@ theme: dark
             },
             theme: Some("dark".to_string()),
             tools: HashMap::new(),
+            mcp: serde_yaml::Value::Null,
         };
 
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -710,6 +716,7 @@ theme: dark
             },
             theme: None,
             tools: HashMap::new(),
+            mcp: serde_yaml::Value::Null,
         };
 
         let err = raw_config.to_config(&PathBuf::from("/tmp")).unwrap_err();
@@ -738,6 +745,7 @@ theme: dark
             },
             theme: None,
             tools: HashMap::new(),
+            mcp: serde_yaml::Value::Null,
         };
 
         let err = raw_config.to_config(&PathBuf::from("/tmp")).unwrap_err();
@@ -763,6 +771,7 @@ theme: dark
             },
             theme: Some("light".to_string()),
             tools: HashMap::new(),
+            mcp: serde_yaml::Value::Null,
         };
 
         let temp_dir = tempfile::TempDir::new().unwrap();

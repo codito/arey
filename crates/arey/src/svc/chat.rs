@@ -6,6 +6,7 @@ use arey_core::model::ModelConfig;
 use arey_core::registry::ToolRegistry;
 use arey_core::session::{Session, SessionConfig, SessionEvent};
 use arey_core::tools::Tool;
+use arey_mcp::McpRegistry;
 use futures::{StreamExt, stream::BoxStream};
 use std::collections::HashMap;
 use std::fmt;
@@ -22,6 +23,7 @@ pub struct Chat<'a> {
     current_agent: Agent,
     session: Option<Session>,
     tool_registry: ToolRegistry,
+    mcp_registry: Option<McpRegistry>,
 }
 
 impl<'a> fmt::Debug for Chat<'a> {
@@ -97,7 +99,14 @@ impl<'a> Chat<'a> {
             current_agent: agent,
             tool_registry,
             config,
+            mcp_registry: None,
         })
+    }
+
+    /// Builder method to set MCP server manager after creating Chat
+    pub fn with_mcp_registry(mut self, mcp_registry: McpRegistry) -> Self {
+        self.mcp_registry = Some(mcp_registry);
+        self
     }
 
     /// Loads the session, initializing the model.
@@ -331,6 +340,11 @@ impl<'a> Chat<'a> {
     /// Get available tool names (all tools from registry, not just active ones)
     pub fn available_tool_names(&self) -> Vec<String> {
         self.tool_registry.list()
+    }
+
+    /// Get MCP server manager reference
+    pub fn mcp_registry(&mut self) -> Option<&mut McpRegistry> {
+        self.mcp_registry.as_mut()
     }
 
     /// Get available agents with their sources
@@ -590,6 +604,31 @@ mod tests {
         assert_eq!(available.len(), 2);
         assert!(available.contains(&"mock_tool".to_string()));
         assert!(available.contains(&"other_mock_tool".to_string()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_chat_with_mcp_builder() -> Result<()> {
+        let server = MockServer::start().await;
+        let config = get_test_config(&server).await?;
+
+        // Create Chat without MCP
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), ToolRegistry::new())?;
+
+        // Initially no MCP manager
+        let mcp_before = chat.mcp_registry();
+        assert!(mcp_before.is_none());
+
+        // Create a mock McpRegistry for testing
+        let mcp_registry = McpRegistry::new();
+
+        // Use builder to add MCP registry
+        chat = chat.with_mcp_registry(mcp_registry);
+
+        // Verify MCP registry is now set
+        let mcp_after = chat.mcp_registry();
+        assert!(mcp_after.is_some());
 
         Ok(())
     }
