@@ -4,12 +4,9 @@ mod play;
 mod run;
 pub mod ux;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use arey_core::config::{Config, get_config};
-use arey_core::tools::Tool;
+use arey_core::registry::ToolRegistry;
 use clap::{Parser, Subcommand};
 
 use crate::ext::get_tools;
@@ -70,13 +67,13 @@ pub async fn run() -> Result<()> {
     let config = get_config(None).context("Failed to load configuration")?;
 
     // Initialize all available tools
-    let available_tools = get_tools(&config).context("Failed to get builtin tools")?;
+    let tool_registry = get_tools(&config).context("Failed to get builtin tools")?;
 
     match &cli.command {
         Commands::Run { instruction, model } => {
             run::execute(instruction.clone(), model.clone(), &config).await
         }
-        Commands::Chat { model } => execute_chat(model.clone(), &config, available_tools).await,
+        Commands::Chat { model } => execute_chat(model.clone(), &config, tool_registry).await,
         Commands::Play { file, no_watch } => {
             play::execute(file.as_deref(), *no_watch, &config).await
         }
@@ -86,9 +83,9 @@ pub async fn run() -> Result<()> {
 async fn execute_chat(
     model: Option<String>,
     config: &Config,
-    available_tools: HashMap<&str, Arc<dyn Tool>>,
+    tool_registry: ToolRegistry,
 ) -> Result<()> {
-    crate::cli::chat::execute(model, config, available_tools).await
+    crate::cli::chat::execute(model, config, tool_registry).await
 }
 
 #[cfg(test)]

@@ -1,31 +1,40 @@
 use anyhow::{Context, Result};
 use arey_core::agent::{Agent, AgentSource};
-use arey_core::completion::{CancellationToken, ChatMessage, Completion};
+use arey_core::completion::{CancellationToken, ChatMessage};
 use arey_core::config::{Config, ProfileConfig};
-use arey_core::session::Session;
+use arey_core::model::ModelConfig;
+use arey_core::registry::ToolRegistry;
+use arey_core::session::{Session, SessionConfig, SessionEvent};
 use arey_core::tools::Tool;
 use futures::{StreamExt, stream::BoxStream};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use tracing::debug;
 
 /// Represents an interactive chat session between a user and an AI model.
 ///
 /// It maintains conversation history and manages tool usage.
 pub struct Chat<'a> {
-    session: Option<Session>,
-    model_config: Option<arey_core::model::ModelConfig>,
-    current_agent: Agent,
-    pub available_tools: HashMap<&'a str, Arc<dyn Tool>>,
     config: &'a Config,
+    model_config: ModelConfig,
+    session_config: SessionConfig,
+    current_agent: Agent,
+    session: Option<Session>,
+    tool_registry: ToolRegistry,
 }
 
 impl<'a> fmt::Debug for Chat<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Chat")
             .field(
-                "available_tools",
-                &self.available_tools.keys().collect::<Vec<_>>(),
+                "tool_names",
+                &self
+                    .session_config
+                    .tools
+                    .iter()
+                    .map(|t| t.name())
+                    .collect::<Vec<_>>(),
             )
             .finish_non_exhaustive()
     }
@@ -39,7 +48,7 @@ impl<'a> Chat<'a> {
     pub fn new(
         config: &'a Config,
         model: Option<String>,
-        available_tools: HashMap<&'a str, Arc<dyn Tool>>,
+        tool_registry: arey_core::registry::ToolRegistry,
     ) -> Result<Self> {
         let model_config = if let Some(model_name) = model {
             config
@@ -72,11 +81,21 @@ impl<'a> Chat<'a> {
         // Mark this agent as active
         agent.set_active(true);
 
+        // Get tools from registry based on agent's effective tools
+        let tools = tool_registry.tools_for(agent.effective_tools());
+
+        let session_config = SessionConfig {
+            system_prompt: agent.prompt.clone(),
+            tools,
+            ..Default::default()
+        };
+
         Ok(Self {
             session: None,
-            model_config: Some(model_config),
+            model_config,
+            session_config,
             current_agent: agent,
-            available_tools,
+            tool_registry,
             config,
         })
     }
@@ -91,18 +110,8 @@ impl<'a> Chat<'a> {
             return Ok(());
         }
 
-        let model_config = self.model_config.take().context("Session already loaded")?;
-
-        let tools: Vec<Arc<dyn Tool>> = self
-            .current_agent
-            .effective_tools()
-            .iter()
-            .filter_map(|tool_name| self.available_tools.get(tool_name.as_str()).cloned())
-            .collect();
-
-        let mut session = Session::new(model_config, &self.current_agent.prompt)
+        let session = Session::new(self.model_config.clone(), self.session_config.clone())
             .context("Failed to create chat session")?;
-        session.set_tools(tools)?;
 
         self.session = Some(session);
         Ok(())
@@ -112,18 +121,12 @@ impl<'a> Chat<'a> {
     /// This is a blocking wrapper around load_session.
     #[cfg(test)]
     pub fn load_session_blocking(&mut self) -> Result<()> {
-        let model_config = self.model_config.take().context("Session already loaded")?;
+        if self.session.is_some() {
+            return Ok(());
+        }
 
-        let tools: Vec<Arc<dyn Tool>> = self
-            .current_agent
-            .effective_tools()
-            .iter()
-            .filter_map(|tool_name| self.available_tools.get(tool_name.as_str()).cloned())
-            .collect();
-
-        let mut session = Session::new(model_config, &self.current_agent.prompt)
+        let session = Session::new(self.model_config.clone(), self.session_config.clone())
             .context("Failed to create chat session")?;
-        session.set_tools(tools)?;
 
         self.session = Some(session);
         Ok(())
@@ -164,21 +167,7 @@ impl<'a> Chat<'a> {
             return;
         }
 
-        let model_config = match self.model_config.take() {
-            Some(c) => c,
-            None => return,
-        };
-
-        let tools: Vec<Arc<dyn Tool>> = self
-            .current_agent
-            .effective_tools()
-            .iter()
-            .filter_map(|tool_name| self.available_tools.get(tool_name.as_str()).cloned())
-            .collect();
-
-        if let Ok(mut session) = Session::new(model_config, &self.current_agent.prompt)
-            && session.set_tools(tools).is_ok()
-        {
+        if let Ok(session) = Session::new(self.model_config.clone(), self.session_config.clone()) {
             self.session = Some(session);
         }
     }
@@ -190,10 +179,18 @@ impl<'a> Chat<'a> {
 
     /// Get the model name that will be loaded
     pub fn model_key(&self) -> String {
-        self.model_config
-            .as_ref()
-            .map(|c| c.key.clone())
-            .unwrap_or_else(|| self.session().model_key())
+        if let Some(ref session) = self.session {
+            session.model_key().to_string()
+        } else {
+            self.model_config.key.clone()
+        }
+    }
+
+    fn update_session_config(&mut self, config: SessionConfig) {
+        self.session_config = config.clone();
+        if let Some(session) = self.session.as_mut() {
+            session.update_config(config);
+        }
     }
 
     /// Switch to a different agent
@@ -209,35 +206,33 @@ impl<'a> Chat<'a> {
         self.current_agent.set_active(false);
 
         let model_key = self.session().model_key();
-        let _model_config = self
-            .config
-            .models
-            .get(&model_key)
-            .cloned()
-            .context(format!(
-                "Model '{}' associated with the current session not found in config.",
-                model_key
-            ))?;
-
-        let _messages = self.session().all_messages();
+        let _model_config = self.config.models.get(model_key).cloned().context(format!(
+            "Model '{}' associated with the current session not found in config.",
+            model_key
+        ))?;
 
         // Activate new agent
         new_agent.set_active(true);
 
-        let tools: Result<Vec<Arc<dyn Tool>>, _> = new_agent
-            .effective_tools()
-            .iter()
-            .map(|name| {
-                self.available_tools
-                    .get(name.as_str())
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("Tool not found: {}", name))
-            })
-            .collect();
+        // Ensure we clear any session overrides when switching agent
+        new_agent.set_session_tools(None);
+        new_agent.clear_current_profile();
+
+        // Get new tools from registry for new agent
+        let tools = self.tool_registry.tools_for(new_agent.effective_tools());
+        debug!(
+            "Tools for agent '{}': {:?}",
+            new_agent.name,
+            tools.iter().map(|f| f.name()).collect::<Vec<_>>()
+        );
 
         // Update the session with new agent and tools
-        self.session_mut()
-            .update_agent(new_agent.prompt.clone(), tools?)?;
+        let new_config = SessionConfig {
+            system_prompt: new_agent.prompt.clone(),
+            tools,
+            ..self.session_config.clone()
+        };
+        self.update_session_config(new_config);
         self.current_agent = new_agent;
 
         Ok(())
@@ -253,7 +248,7 @@ impl<'a> Chat<'a> {
             .context(format!("Model '{model_name}' not found in config."))?;
 
         // Session handles model creation and old model cleanup
-        self.session_mut().set_model(model_config)?;
+        self.session_mut().update_model(model_config)?;
 
         Ok(())
     }
@@ -304,26 +299,28 @@ impl<'a> Chat<'a> {
 
     /// Get current system prompt
     pub fn system_prompt(&self) -> String {
-        self.session().system_prompt()
+        self.session_config.system_prompt.clone()
     }
 
     /// Set new system prompt for the current session
     pub async fn set_system_prompt(&mut self, prompt: &str) -> Result<()> {
-        // Update the session with the new system prompt
-        self.session_mut().set_system_prompt(prompt)?;
-
+        let mut config = self.session_config.clone();
+        config.system_prompt = prompt.to_string();
+        self.update_session_config(config);
         Ok(())
     }
 
-    /// Get the enable_thinking setting
-    pub fn enable_thinking(&self) -> Option<bool> {
-        self.session().enable_thinking()
+    /// Get the enable_reasoning setting
+    pub fn enable_reasoning(&self) -> Option<bool> {
+        self.session_config.enable_reasoning
     }
 
-    /// Set the enable_thinking template parameter
-    /// None = use model's default, Some(true) = enable thinking, Some(false) = disable thinking
-    pub fn set_enable_thinking(&mut self, enabled: Option<bool>) {
-        self.session_mut().set_enable_thinking(enabled);
+    /// Set the enable_reasoning template parameter
+    /// None = use model's default, Some(true) = enable reasoning, Some(false) = disable reasoning
+    pub fn set_enable_reasoning(&mut self, enabled: Option<bool>) {
+        let mut config = self.session_config.clone();
+        config.enable_reasoning = enabled;
+        self.update_session_config(config);
     }
 
     /// Get available agent names
@@ -331,9 +328,9 @@ impl<'a> Chat<'a> {
         self.config.agents.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Get available tool names
-    pub fn available_tool_names(&self) -> Vec<&str> {
-        self.available_tools.keys().copied().collect()
+    /// Get available tool names (all tools from registry, not just active ones)
+    pub fn available_tool_names(&self) -> Vec<String> {
+        self.tool_registry.list()
     }
 
     /// Get available agents with their sources
@@ -374,34 +371,55 @@ impl<'a> Chat<'a> {
 
     /// Gets the tools available for the current chat session.
     pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.session().tools()
+        self.session_config.tools.clone()
+    }
+
+    /// Gets the tools for the current chat session.
+    pub fn session_tools(&self) -> &[Arc<dyn Tool>] {
+        &self.session_config.tools
     }
 
     /// Sets the tools available for the current chat session.
     pub async fn set_tools(&mut self, tool_names: &[String]) -> Result<()> {
-        let mut tools = Vec::new();
-        for name in tool_names {
-            let tool = self
-                .available_tools
-                .get(name.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Tool not found or not available: {}", name))?;
-            tools.push(tool.clone());
+        let tools = self.tool_registry.tools_for(tool_names);
+
+        if tools.len() != tool_names.len() {
+            let missing: Vec<_> = tool_names
+                .iter()
+                .filter(|name| self.tool_registry.get(name).is_none())
+                .collect();
+            anyhow::bail!("Tools not found or not available: {:?}", missing);
         }
 
-        // Update the session with the new tools
-        self.session_mut().set_tools(tools)?;
+        // Update current agent's session tools to keep it in sync
+        self.current_agent
+            .set_session_tools(Some(tool_names.to_vec()));
 
+        let mut config = self.session_config.clone();
+        config.tools = tools;
+        self.update_session_config(config);
         Ok(())
     }
 
     /// Get all messages from the session
     pub fn get_all_messages(&self) -> Vec<ChatMessage> {
-        self.session().all_messages()
+        self.session().messages()
+    }
+
+    /// Returns true if the model was reset during the last clear() call.
+    #[cfg(test)]
+    pub fn was_model_reset(&self) -> bool {
+        self.session().was_model_reset()
     }
 
     /// Retrieves the last message from the assistant in the conversation history.
     pub fn get_last_assistant_message(&self) -> Option<ChatMessage> {
-        self.session().last_assistant_message()
+        self.session()
+            .messages()
+            .iter()
+            .rev()
+            .find(|m| m.sender == arey_core::completion::SenderType::Assistant)
+            .cloned()
     }
 
     /// Adds messages to the conversation history.
@@ -415,7 +433,7 @@ impl<'a> Chat<'a> {
 
     /// Clears the conversation history of the session.
     pub async fn clear_messages(&mut self) {
-        if let Err(e) = self.session_mut().clear_history().await {
+        if let Err(e) = self.session_mut().clear().await {
             eprintln!("Failed to clear history: {}", e);
         }
     }
@@ -424,7 +442,7 @@ impl<'a> Chat<'a> {
     pub async fn stream_response(
         &mut self,
         cancel_token: CancellationToken,
-    ) -> Result<BoxStream<'_, Result<Completion>>> {
+    ) -> Result<BoxStream<'_, Result<SessionEvent>>> {
         // Use the current profile (either session override or agent default)
         let profile = self
             .current_profile()
@@ -507,15 +525,38 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
+    struct OtherMockTool;
+
+    #[async_trait]
+    impl Tool for OtherMockTool {
+        fn name(&self) -> String {
+            "other_mock_tool".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Another mock tool for testing".to_string()
+        }
+
+        fn parameters(&self) -> Value {
+            json!({"type": "object", "properties": {}})
+        }
+
+        async fn execute(&self, _input: &Value) -> Result<Value, ToolError> {
+            Ok(json!("Other mock tool executed"))
+        }
+    }
+
     #[tokio::test]
     async fn test_chat_new() -> Result<()> {
         let server = MockServer::start().await;
         let config = get_test_config(&server).await?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools = HashMap::from([("mock_tool", mock_tool)]);
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(mock_tool)?;
 
         // Test with existing model, should use default agent from config
-        let mut chat = Chat::new(&config, Some("test-model".to_string()), available_tools)?;
+        let mut chat = Chat::new(&config, Some("test-model".to_string()), tool_registry)?;
 
         chat.load_session().await?;
 
@@ -525,6 +566,30 @@ mod tests {
         assert_eq!(name, "precise");
         assert_eq!(profile_config.temperature, 0.3);
         assert_eq!(profile_config.top_k, 20);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_available_tool_names_returns_all_registry_tools() -> Result<()> {
+        let server = MockServer::start().await;
+        let config = get_test_config(&server).await?;
+
+        // Create registry with multiple tools
+        let mock_tool1: Arc<dyn Tool> = Arc::new(MockTool);
+        let mock_tool2: Arc<dyn Tool> = Arc::new(OtherMockTool);
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(mock_tool1)?;
+        tool_registry.register(mock_tool2)?;
+
+        // Chat with empty effective_tools (no tools enabled for agent)
+        let chat = Chat::new(&config, Some("test-model".to_string()), tool_registry)?;
+
+        // available_tool_names should return ALL tools from registry, not just active ones
+        let available = chat.available_tool_names();
+        assert_eq!(available.len(), 2);
+        assert!(available.contains(&"mock_tool".to_string()));
+        assert!(available.contains(&"other_mock_tool".to_string()));
 
         Ok(())
     }

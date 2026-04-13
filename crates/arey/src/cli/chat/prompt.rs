@@ -59,8 +59,8 @@ pub fn format_status_prompt(chat_guard: &Chat<'_>) -> String {
 mod tests {
     use super::*;
     use crate::cli::chat::test_utils::{MockTool, create_test_config_with_custom_agent};
+    use arey_core::registry::ToolRegistry;
     use arey_core::tools::Tool;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     /// Strip ANSI escape codes from a string for testing
@@ -92,7 +92,11 @@ mod tests {
     async fn test_format_status_prompt() -> Result<(), Box<dyn std::error::Error>> {
         // 1. Setup config and chat
         let config = create_test_config_with_custom_agent()?;
-        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        let mut chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
         chat.load_session().await?;
 
         // 2. Test basic prompt with no tools
@@ -132,10 +136,10 @@ mod tests {
 
         // 3. Test prompt with tools
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("mock_tool", mock_tool.clone())]);
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(mock_tool.clone())?;
         let mut chat_with_tools =
-            Chat::new(&config, Some("test-model-1".to_string()), available_tools)?;
+            Chat::new(&config, Some("test-model-1".to_string()), tool_registry)?;
         chat_with_tools.load_session().await?;
         chat_with_tools
             .set_tools(&["mock_tool".to_string()])
@@ -176,7 +180,11 @@ mod tests {
     async fn test_format_status_prompt_styling() -> Result<(), Box<dyn std::error::Error>> {
         // Test that the function applies the correct styling
         let config = create_test_config_with_custom_agent()?;
-        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        let mut chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
         chat.load_session().await?;
 
         let prompt = format_status_prompt(&chat);

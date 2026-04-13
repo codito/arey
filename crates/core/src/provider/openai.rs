@@ -74,6 +74,7 @@ impl OpenAIBaseModel {
             client,
             metrics: ModelMetrics {
                 init_latency_ms: 0.0,
+                ..Default::default()
             },
         })
     }
@@ -633,7 +634,12 @@ mod tests {
 
         let cancel_token = CancellationToken::new(); // Create a token for the test
         let mut stream = model
-            .complete(&messages, Some(&tools), &HashMap::new(), cancel_token)
+            .complete(
+                &messages,
+                Some(tools.as_slice()),
+                &HashMap::new(),
+                cancel_token,
+            )
             .await;
 
         // Collect and assert on responses

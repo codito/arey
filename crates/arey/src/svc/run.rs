@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use futures::stream::BoxStream;
-use std::sync::Arc;
 
 use arey_core::agent::Agent;
 use arey_core::completion::{CancellationToken, ChatMessage, Completion, SenderType};
 use arey_core::config::Config;
 use arey_core::model::ModelConfig;
-use arey_core::session::Session;
-use arey_core::tools::Tool;
+use arey_core::session::{Session, SessionConfig, SessionEvent};
 
 use crate::ext::get_tools;
 
@@ -51,21 +50,19 @@ impl<'a> Task<'a> {
     /// It should be called before `run`.
     pub async fn load_session(&mut self) -> Result<()> {
         let model_config = self.config.task.model.clone();
-        let system_prompt = &self.current_agent.prompt;
 
-        let mut session =
-            Session::new(model_config, system_prompt).context("Failed to create task session")?;
+        // Get tools from registry based on agent's effective tools
+        let tool_registry = get_tools(self.config).unwrap_or_default();
+        let tools = tool_registry.tools_for(self.current_agent.effective_tools());
 
-        // Get tools for the agent
-        let available_tools = get_tools(self.config).unwrap_or_default();
-        let tools: Vec<Arc<dyn Tool>> = self
-            .current_agent
-            .effective_tools()
-            .iter()
-            .filter_map(|tool_name| available_tools.get(tool_name.as_str()).cloned())
-            .collect();
+        let session_config = SessionConfig {
+            system_prompt: self.current_agent.prompt.clone(),
+            tools,
+            ..Default::default()
+        };
 
-        session.set_tools(tools)?;
+        let session =
+            Session::new(model_config, session_config).context("Failed to create task session")?;
 
         self.session = Some(session);
         Ok(())
@@ -81,10 +78,9 @@ impl<'a> Task<'a> {
     pub async fn load_model(&mut self) -> Result<arey_core::model::ModelMetrics> {
         self.load_session().await?;
 
-        // Return metrics from the session
         self.session
             .as_ref()
-            .and_then(|s| s.metrics().cloned())
+            .map(|s| s.metrics().clone())
             .ok_or_else(|| anyhow::anyhow!("No metrics available"))
     }
 
@@ -115,7 +111,43 @@ impl<'a> Task<'a> {
             .await
             .context("Failed to generate response")?;
 
-        Ok(stream)
+        // Map SessionEvent to Completion
+        let stream = stream.filter_map(|event| async move {
+            match event {
+                Ok(SessionEvent::Token(c)) => Some(Ok(c)),
+                Ok(SessionEvent::CompactionStart) => {
+                    tracing::info!("Context compaction started");
+                    None
+                }
+                Ok(SessionEvent::CompactionEnd { result }) => {
+                    tracing::info!(
+                        "Context compaction completed: {} -> {} messages",
+                        result.original_messages,
+                        result.compacted_messages
+                    );
+                    None
+                }
+                Ok(SessionEvent::ReasoningStart) => {
+                    tracing::debug!("Reasoning started");
+                    None
+                }
+                Ok(SessionEvent::ReasoningEnd { .. }) => {
+                    tracing::debug!("Reasoning ended");
+                    None
+                }
+                Ok(SessionEvent::ToolStart { .. }) => {
+                    tracing::info!("Tool calls started");
+                    None
+                }
+                Ok(SessionEvent::ToolEnd { .. }) => {
+                    tracing::info!("Tool calls completed");
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            }
+        });
+
+        Ok(Box::pin(stream))
     }
 }
 

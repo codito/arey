@@ -125,9 +125,60 @@ impl ModelProvider {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ModelMetrics {
+    /// Initialization latency in milliseconds
     pub init_latency_ms: f32,
+
+    /// Number of CPU threads detected
+    pub cpu_threads: Option<usize>,
+
+    /// List of GPU devices detected
+    pub gpu_devices: Option<Vec<GpuDeviceInfo>>,
+
+    /// Context window size (auto-tuned)
+    pub n_ctx: Option<u32>,
+
+    /// Logical batch size for prompt processing (auto-tuned)
+    pub n_batch: Option<u32>,
+
+    /// Physical batch size for prompt processing (auto-tuned)
+    pub n_ubatch: Option<u32>,
+
+    /// Number of GPU layers to offload (auto-tuned)
+    pub n_gpu_layers: Option<i32>,
+
+    /// Number of threads for inference (auto-tuned)
+    pub n_threads: Option<i32>,
+
+    /// Whether flash attention is enabled (auto-tuned)
+    pub flash_attention: Option<bool>,
+
+    /// Model parameter count in billions (from GGUF metadata)
+    pub model_params_billions: Option<f64>,
+
+    /// Number of layers in the model (from GGUF metadata)
+    pub model_layers: Option<u32>,
+
+    /// Quantization type (from GGUF metadata, e.g., "Q4_K_M")
+    pub quantization: Option<String>,
+
+    /// Model's trained context window size (from GGUF metadata)
+    pub model_n_ctx_train: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct GpuDeviceInfo {
+    /// Device name (e.g., "Vulkan0", "CUDA0")
+    pub name: String,
+    /// Backend name (e.g., "Vulkan", "CUDA", "CPU")
+    pub backend: String,
+    /// Device type (e.g., "Cpu", "Gpu", "IntegratedGpu")
+    pub device_type: String,
+    /// Total memory in MB
+    pub memory_total_mb: Option<usize>,
+    /// Free/available memory in MB
+    pub memory_free_mb: Option<usize>,
 }
 
 #[derive(thiserror::Error, Debug)]

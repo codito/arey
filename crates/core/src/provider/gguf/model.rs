@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use llama_cpp_2::{
     LogOptions,
+    context::LlamaContext,
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
@@ -35,7 +36,12 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
+use crate::model::{GpuDeviceInfo, ModelMetrics};
 use crate::provider::gguf::checkpoint::{CheckpointManager, TransitionType};
+use crate::provider::gguf::system::{
+    ConfigOverrides, MemoryTrimmedError, Quantization, compute_params, detect_system_info,
+    flash_attention_policy, handle_memory_error,
+};
 use crate::provider::gguf::template::{ToolCallParser, apply_chat_template, get_tool_call_regexes};
 
 static GGUF_BACKEND: once_cell::sync::Lazy<Arc<LlamaBackend>> = once_cell::sync::Lazy::new(|| {
@@ -45,6 +51,8 @@ static GGUF_BACKEND: once_cell::sync::Lazy<Arc<LlamaBackend>> = once_cell::sync:
 pub struct GgufBaseModel {
     request_tx: mpsc::Sender<Request>,
     _thread_guard: Arc<ThreadGuard>,
+    /// Model metrics including system info and auto-tuned parameters
+    metrics: Arc<std::sync::Mutex<ModelMetrics>>,
 }
 
 /// Load status for tracking model loading progress.
@@ -109,7 +117,11 @@ impl GgufBaseModel {
         let (request_tx, request_rx) = mpsc::channel::<Request>(4);
         let (status_tx, status_rx) = mpsc::channel::<LoadStatus>(4);
 
+        // Shared metrics that will be populated by the model thread
+        let metrics = Arc::new(std::sync::Mutex::new(ModelMetrics::default()));
+
         let backend = GGUF_BACKEND.clone();
+        let metrics_clone = metrics.clone();
         let thread = thread::Builder::new()
             .name(format!("gguf-model-{}", model_config.key))
             .spawn(move || {
@@ -119,6 +131,7 @@ impl GgufBaseModel {
                     model_config,
                     request_rx,
                     Some(status_tx),
+                    metrics_clone,
                 );
             })
             .context("failed to spawn GGUF model thread")?;
@@ -148,6 +161,7 @@ impl GgufBaseModel {
             _thread_guard: Arc::new(ThreadGuard {
                 _handle: Some(thread),
             }),
+            metrics,
         })
     }
 }
@@ -155,7 +169,7 @@ impl GgufBaseModel {
 #[async_trait]
 impl CompletionModel for GgufBaseModel {
     fn metrics(&self) -> crate::model::ModelMetrics {
-        crate::model::ModelMetrics::default()
+        self.metrics.lock().unwrap().clone()
     }
 
     async fn complete(
@@ -179,8 +193,7 @@ impl CompletionModel for GgufBaseModel {
             .unwrap_or(0);
 
         let messages: Vec<ChatMessage> = messages.to_vec();
-        let tools: Option<Vec<_>> =
-            tools.map(|t| t.iter().map(|tool| tool.clone().into()).collect());
+        let tools: Option<Vec<_>> = tools.map(|t| t.iter().map(|t| t.clone().into()).collect());
 
         let request = Request {
             messages,
@@ -238,6 +251,7 @@ fn run_event_loop(
     model_config: ModelConfig,
     mut request_rx: mpsc::Receiver<Request>,
     status_sender: Option<LoadStatusSender>,
+    metrics: Arc<std::sync::Mutex<ModelMetrics>>,
 ) {
     send_logs_to_tracing(LogOptions::default());
 
@@ -246,14 +260,9 @@ fn run_event_loop(
         .as_ref()
         .map(|s| s.try_send(LoadStatus::Loading));
 
-    let n_ctx = model_config.get_setting::<u32>("n_ctx").unwrap_or(4096);
-    let n_batch = model_config.get_setting::<u32>("n_batch").unwrap_or(512);
-    let n_gpu_layers = model_config.get_setting::<u32>("n_gpu_layers").unwrap_or(0);
-
-    let model_params = LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers);
-    let context_params = LlamaContextParams::default()
-        .with_n_ctx(NonZeroU32::new(n_ctx))
-        .with_n_batch(n_batch);
+    // Get config overrides - only n_gpu_layers needed for initial model load
+    let n_gpu_layers_config = model_config.get_setting::<i32>("n_gpu_layers").unwrap_or(0) as u32;
+    let model_params = LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers_config);
 
     let model = match LlamaModel::load_from_file(&backend, &model_path, &model_params) {
         Ok(m) => m,
@@ -265,6 +274,107 @@ fn run_event_loop(
             return;
         }
     };
+
+    // Get model's trained context size from GGUF metadata
+    let model_n_ctx_train = model.n_ctx_train();
+
+    // Get model parameter count for GPU layer calculation
+    let model_params_count = model.n_params() as f64 / 1e9; // Convert to billions
+
+    // Get model layer count
+    let model_layers = model.n_layer();
+
+    // Get file type to detect quantization
+    let file_type = model.meta_val_str("general.file_type").ok();
+    let quantization = file_type
+        .as_deref()
+        .map(Quantization::from_file_type)
+        .unwrap_or(Quantization::Unknown);
+
+    tracing::debug!(
+        model_params_billions = model_params_count,
+        model_layers = model_layers,
+        file_type = file_type.as_deref(),
+        quantization = ?quantization,
+        "model quantization info"
+    );
+
+    // Detect system and compute optimal parameters
+    let system_info = detect_system_info();
+
+    // Build config overrides from model_config
+    let overrides = ConfigOverrides {
+        n_ctx: model_config.get_setting::<u32>("n_ctx"),
+        n_batch: model_config.get_setting::<u32>("n_batch"),
+        n_ubatch: model_config.get_setting::<u32>("n_ubatch"),
+        n_gpu_layers: model_config.get_setting::<i32>("n_gpu_layers"),
+        n_threads: model_config.get_setting::<i32>("n_threads"),
+        flash_attention: model_config.get_setting::<bool>("flash_attention"),
+    };
+
+    let computed = compute_params(
+        &system_info,
+        model_n_ctx_train,
+        model_layers,
+        model_params_count,
+        quantization,
+        &overrides,
+    );
+
+    tracing::info!(
+        model_n_ctx_train = model_n_ctx_train,
+        computed_n_ctx = computed.n_ctx,
+        computed_n_batch = computed.n_batch,
+        computed_n_ubatch = computed.n_ubatch,
+        computed_n_gpu_layers = computed.n_gpu_layers,
+        computed_n_threads = computed.n_threads,
+        flash_attention = computed.flash_attention,
+        "auto-tuned parameters"
+    );
+
+    // Populate model metrics with system info and computed parameters
+    {
+        let mut metrics_guard = metrics.lock().unwrap();
+
+        // System info
+        metrics_guard.cpu_threads = Some(system_info.cpu_threads);
+        metrics_guard.gpu_devices = Some(
+            system_info
+                .devices
+                .iter()
+                .map(|d| GpuDeviceInfo {
+                    name: d.name.clone(),
+                    backend: d.backend.clone(),
+                    device_type: format!("{:?}", d.device_type),
+                    memory_total_mb: Some(d.memory_total_bytes / (1024 * 1024)),
+                    memory_free_mb: Some(d.memory_free_bytes / (1024 * 1024)),
+                })
+                .collect(),
+        );
+
+        // Computed parameters
+        metrics_guard.n_ctx = Some(computed.n_ctx);
+        metrics_guard.n_batch = Some(computed.n_batch);
+        metrics_guard.n_ubatch = Some(computed.n_ubatch);
+        metrics_guard.n_gpu_layers = Some(computed.n_gpu_layers);
+        metrics_guard.n_threads = Some(computed.n_threads);
+        metrics_guard.flash_attention = Some(computed.flash_attention);
+
+        // Model info from GGUF metadata
+        metrics_guard.model_params_billions = Some(model_params_count);
+        metrics_guard.model_layers = Some(model_layers);
+        metrics_guard.quantization = file_type;
+        metrics_guard.model_n_ctx_train = Some(model_n_ctx_train);
+    }
+
+    // Apply computed parameters to model (recreate with computed n_gpu_layers if different)
+    // Note: We keep the model loaded, just use computed for context
+    let context_params = LlamaContextParams::default()
+        .with_n_ctx(NonZeroU32::new(computed.n_ctx))
+        .with_n_batch(computed.n_batch)
+        .with_n_ubatch(computed.n_ubatch)
+        .with_n_threads(computed.n_threads)
+        .with_flash_attention_policy(flash_attention_policy(computed.flash_attention));
 
     // Get model's built-in template from gguf metadata
     let model_template = model
@@ -326,9 +436,13 @@ fn run_event_loop(
         n_batch: n_batch_ctx,
         previous_tokens: Vec::new(),
         position: 0,
-        checkpoint_manager: CheckpointManager::new(max_checkpoints, is_hybrid, n_ctx as usize),
+        checkpoint_manager: CheckpointManager::new(
+            max_checkpoints,
+            is_hybrid,
+            computed.n_ctx as usize,
+        ),
         is_hybrid,
-        n_ctx: n_ctx as i32,
+        n_ctx: computed.n_ctx as i32,
     };
 
     while let Some(request) = request_rx.blocking_recv() {
@@ -360,11 +474,77 @@ fn determine_transition_type(messages: &[ChatMessage]) -> TransitionType {
     TransitionType::TurnStart
 }
 
+/// Decode with memory error recovery.
+/// This function attempts to decode the batch, and if it fails due to memory issues,
+/// it will try to recover by trimming the KV cache.
+///
+/// Returns:
+/// - Ok(()) on successful decode
+/// - Err(MemoryTrimmedError) if decode failed and memory was trimmed (caller should trim session)
+/// - Err(anyhow::Error) for other decode errors
+fn decode_with_recovery(
+    context: &mut LlamaContext,
+    batch: &mut LlamaBatch,
+    state: &mut RequestState,
+) -> Result<(), MemoryTrimmedError> {
+    // First attempt
+    match context.decode(batch) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            tracing::warn!("decode failed (first attempt): {}", e);
+
+            // Store position before recovery
+            let _position_before = state.position;
+
+            // Try to recover
+            let recovered = handle_memory_error(
+                context,
+                state.is_hybrid,
+                state.n_ctx,
+                Some(&mut state.checkpoint_manager),
+                &mut state.position,
+                &mut state.previous_tokens,
+            );
+            if !recovered {
+                return Err(MemoryTrimmedError);
+            }
+
+            batch.clear();
+
+            // Re-add last token to batch after recovery
+            // This is critical - without this, decode fails with "n_tokens == 0"
+            if let Some(&last_token) = state.previous_tokens.last() {
+                let pos = state.position; // position was reset by handle_memory_error
+                if let Err(e) = batch.add(last_token, pos, &[0], true) {
+                    tracing::error!("failed to re-add token to batch after recovery: {}", e);
+                    return Err(MemoryTrimmedError);
+                }
+                tracing::debug!("re-added token to batch for retry, position={}", pos);
+            } else {
+                tracing::debug!("no previous tokens after recovery, proceeding with empty batch");
+            }
+
+            // Second attempt after recovery
+            match context.decode(batch) {
+                Ok(()) => {
+                    tracing::info!("decode succeeded after OOM recovery");
+                    // Return MemoryTrimmedError so caller knows to trim session history too
+                    Err(MemoryTrimmedError)
+                }
+                Err(e) => {
+                    tracing::error!("decode failed even after recovery: {}", e);
+                    Err(MemoryTrimmedError)
+                }
+            }
+        }
+    }
+}
+
 #[tracing::instrument(skip_all)]
 fn handle_request(
     resources: ModelResources,
     state: &mut RequestState,
-    context: &mut llama_cpp_2::context::LlamaContext,
+    context: &mut LlamaContext,
     request: Request,
 ) {
     let Request {
@@ -657,8 +837,38 @@ fn handle_request(
                 }
                 in_token_count += 1;
             }
-            if let Err(e) = context.decode(&mut batch) {
-                let _ = response_tx.blocking_send(Err(anyhow!("decode failed: {}", e)));
+            // Use decode with memory recovery
+            if let Err(_e) = decode_with_recovery(context, &mut batch, state) {
+                // Memory was trimmed - send completion with trim signal instead of error
+                // This allows generation to continue gracefully
+                let _ = response_tx.blocking_send(Ok(Completion::Response(CompletionResponse {
+                    text: String::new(),
+                    thought: None,
+                    tool_calls: None,
+                    finish_reason: Some("trimmed".to_string()), // Signal that session needs trimming
+                    raw_chunk: None,
+                })));
+                // Note: We don't have prompt_eval_latency_ms or generated_tokens here yet,
+                // send minimal metrics to indicate the event
+                let _ = response_tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
+                    prompt_tokens: tokens.len() as u32,
+                    prompt_eval_latency_ms: 0.0,
+                    completion_tokens: 0,
+                    completion_latency_ms: 0.0,
+                    thought: None,
+                    raw_chunk: None,
+                    cache_metrics: Some(CacheMetrics {
+                        cache_hit: cache_status.cache_hit,
+                        strategy: Some(if state.is_hybrid {
+                            "Hybrid".to_string()
+                        } else {
+                            "KvCacheOnly".to_string()
+                        }),
+                        tokens_skipped: None,
+                        n_ctx: Some(state.n_ctx),
+                        checkpoint_transition: None,
+                    }),
+                })));
                 return;
             }
 
@@ -741,8 +951,37 @@ fn handle_request(
             let _ = response_tx.blocking_send(Err(anyhow!("batch add failed: {}", e)));
             return;
         }
-        if let Err(e) = context.decode(&mut batch) {
-            let _ = response_tx.blocking_send(Err(anyhow!("decode failed: {}", e)));
+        // Use decode with memory recovery
+        if let Err(_e) = decode_with_recovery(context, &mut batch, state) {
+            // Memory was trimmed - send completion with trim signal instead of error
+            // This allows generation to continue gracefully
+            let completion_latency_ms = generation_start.elapsed().as_millis() as f32;
+            let _ = response_tx.blocking_send(Ok(Completion::Response(CompletionResponse {
+                text: String::new(),
+                thought: None,
+                tool_calls: None,
+                finish_reason: Some("trimmed".to_string()), // Signal that session needs trimming
+                raw_chunk: None,
+            })));
+            let _ = response_tx.blocking_send(Ok(Completion::Metrics(CompletionMetrics {
+                prompt_tokens: tokens.len() as u32,
+                prompt_eval_latency_ms,
+                completion_tokens: generated_tokens,
+                completion_latency_ms,
+                thought: None,
+                raw_chunk: None,
+                cache_metrics: Some(CacheMetrics {
+                    cache_hit: cache_status.cache_hit,
+                    strategy: Some(if state.is_hybrid {
+                        "Hybrid".to_string()
+                    } else {
+                        "KvCacheOnly".to_string()
+                    }),
+                    tokens_skipped: None,
+                    n_ctx: Some(state.n_ctx),
+                    checkpoint_transition: None,
+                }),
+            })));
             return;
         }
 

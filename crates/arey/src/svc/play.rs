@@ -3,11 +3,10 @@ use arey_core::{
     completion::{CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType},
     config::{AreyConfigError, Config},
     model::ModelConfig,
-    session::Session,
+    session::{Session, SessionConfig, SessionEvent},
 };
 use chrono::Local;
-#[allow(unused_imports)]
-use futures::{Stream, StreamExt};
+use futures::{StreamExt, stream::BoxStream};
 use markdown::{Constructs, ParseOptions, to_mdast};
 use serde_yaml::Value;
 use std::{
@@ -163,7 +162,8 @@ impl PlayFile {
                 AreyConfigError::Config("Missing model configuration".to_string())
             })?;
 
-            let session = Session::new(model_config.clone(), "")?;
+            let session_config = SessionConfig::default();
+            let session = Session::new(model_config.clone(), session_config)?;
 
             // TODO: Apply model_settings overrides
             self.session = Some(session);
@@ -174,7 +174,7 @@ impl PlayFile {
     /// Generates a response based on the prompt in the play file.
     ///
     /// It returns a stream of `Completion` events.
-    pub async fn generate(&mut self) -> Result<impl Stream<Item = Result<Completion>>> {
+    pub async fn generate(&mut self) -> Result<BoxStream<'_, Result<Completion>>> {
         self.ensure_session().await?;
         let session = self.session.as_mut().unwrap();
         let prompt = self.prompt.clone();
@@ -201,7 +201,42 @@ impl PlayFile {
 
         let stream = session.generate(settings, cancel_token).await?;
 
-        Ok(stream)
+        let stream = stream.filter_map(|event| async move {
+            match event {
+                Ok(SessionEvent::Token(c)) => Some(Ok(c)),
+                Ok(SessionEvent::CompactionStart) => {
+                    tracing::info!("Context compaction started");
+                    None
+                }
+                Ok(SessionEvent::CompactionEnd { result }) => {
+                    tracing::info!(
+                        "Context compaction completed: {} -> {} messages",
+                        result.original_messages,
+                        result.compacted_messages
+                    );
+                    None
+                }
+                Ok(SessionEvent::ReasoningStart) => {
+                    tracing::debug!("Reasoning started");
+                    None
+                }
+                Ok(SessionEvent::ReasoningEnd { .. }) => {
+                    tracing::debug!("Reasoning ended");
+                    None
+                }
+                Ok(SessionEvent::ToolStart { .. }) => {
+                    tracing::info!("Tool calls started");
+                    None
+                }
+                Ok(SessionEvent::ToolEnd { .. }) => {
+                    tracing::info!("Tool calls completed");
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            }
+        });
+
+        Ok(Box::pin(stream))
     }
 }
 

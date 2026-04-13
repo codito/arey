@@ -10,16 +10,14 @@ use arey_core::completion::{
     CancellationToken, ChatMessage, Completion, CompletionMetrics, SenderType,
 };
 use arey_core::config::get_history_file_path;
-use arey_core::tools::{Tool, ToolCall, ToolResult};
+use arey_core::session::SessionEvent;
 use clap::{CommandFactory, Parser};
 use futures::StreamExt;
 use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Editor};
-use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error};
+use tracing::error;
 
 /// Runs the interactive REPL for the chat session.
 pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>) -> Result<()> {
@@ -53,9 +51,8 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
         chat_guard
             .lock()
             .await
-            .available_tools
-            .clone()
-            .keys()
+            .available_tool_names()
+            .into_iter()
             .map(|s| s.to_string())
             .collect()
     };
@@ -201,19 +198,6 @@ pub async fn run(chat: Arc<Mutex<Chat<'_>>>, renderer: &mut TerminalRenderer<'_>
     }
 }
 
-/// Recursively removes control characters from JSON values
-fn clean_value(value: &mut serde_json::Value) {
-    match value {
-        Value::String(s) => {
-            let cleaned = s.replace(|c: char| c.is_control(), "");
-            *s = cleaned;
-        }
-        Value::Array(a) => a.iter_mut().for_each(clean_value),
-        Value::Object(m) => m.values_mut().for_each(clean_value),
-        _ => {}
-    }
-}
-
 /// Process a message and generate a response.
 async fn process_message(
     chat: Arc<Mutex<Chat<'_>>>,
@@ -227,24 +211,16 @@ async fn process_message(
     renderer.clear();
 
     // Create spinner
-    let spinner = GenerationSpinner::new("Generating...".to_string());
+    let mut spinner = GenerationSpinner::new("Generating...".to_string());
     let cancel_token = CancellationToken::new();
 
     // Clone for async block
     let chat_clone = chat.clone();
 
-    // Store tool call responses if LLM requires a set of tools to be invoked for responding to a
-    // user message.
-    let mut assistant_message_text = String::new();
-    let mut assistant_message_thought = String::new();
-    let mut assistant_message_tools: Vec<ToolCall> = vec![];
-    let mut assistant_tool_responses: Vec<ChatMessage> = vec![];
-
     let mut stream_error = false;
     let was_cancelled = {
         // Get stream response
         let mut chat_guard = chat_clone.lock().await;
-        let available_tools = chat_guard.available_tools.clone();
         let mut stream = {
             chat_guard.add_messages(messages).await;
             chat_guard.stream_response(cancel_token.clone()).await?
@@ -270,43 +246,68 @@ async fn process_message(
                 next = stream.next() => {
                     match next {
                         Some(response) => {
-                            if !first_token_received {
-                                spinner.clear();
-                                first_token_received = true;
-                            }
-
                             if cancel_token.is_cancelled() {
                                 was_cancelled_internal = true;
                                 break;
                             }
 
                             match response {
-                                Ok(Completion::Response(chunk)) => {
+                                Ok(SessionEvent::Token(Completion::Response(chunk))) => {
+                                    if !first_token_received {
+                                        spinner.clear();
+                                        first_token_received = true;
+                                    }
+
                                     if let Some(thought) = &chunk.thought {
-                                        assistant_message_thought.push_str(thought);
                                         renderer.render_markdown(thought)?;
                                     }
 
                                     if !&chunk.text.is_empty() {
-                                        assistant_message_text.push_str(&chunk.text);
                                         renderer.render_markdown(&chunk.text)?;
                                     }
 
                                     if let Some(reason) = &chunk.finish_reason {
                                         finish_reason = Some(reason.clone());
                                     }
-
-                                    // Tool messages can come in chunks, we collate all
-                                    if let Some(tools) = &chunk.tool_calls {
-                                        assistant_message_tools.extend(tools.clone());
-                                        assistant_tool_responses = process_tools(&available_tools, tools).await?;
-                                    }
                                 }
-                                Ok(Completion::Metrics(m)) => {
+                                Ok(SessionEvent::Token(Completion::Metrics(m))) => {
                                     metrics = m;
                                 }
+                                Ok(SessionEvent::ToolStart { calls }) => {
+                                    spinner.clear();
+                                    let tool_info: Vec<_> = calls.iter().map(|c| format!("{}({})", c.name, c.arguments)).collect();
+                                    let tool_names_str = format!("Executing tools: {}", tool_info.join(", "));
+                                    let tool_msg = style_chat_text(&tool_names_str, ChatMessageType::Footer);
+                                    spinner = GenerationSpinner::new(tool_msg.to_string());
+                                }
+                                Ok(SessionEvent::ToolEnd { results }) => {
+                                    spinner.clear();
+
+                                    for (call, succeeded) in &results {
+                                        if *succeeded {
+                                            eprintln!("{}", style_chat_text(&format!("✔  {}({})", call.name, call.arguments), ChatMessageType::Footer));
+                                        } else {
+                                            eprintln!("{}", style_chat_text(&format!("✘  {}({})", call.name, call.arguments), ChatMessageType::Footer));
+                                        }
+                                    }
+                                    eprintln!();
+
+                                    // Reset spinner for next potential generation turn
+                                    spinner = GenerationSpinner::new("Generating...".to_string());
+                                    first_token_received = false;
+                                }
+                                Ok(SessionEvent::CompactionStart) => {
+                                    spinner.clear();
+                                    spinner = GenerationSpinner::new("Compacting context...".to_string());
+                                }
+                                Ok(SessionEvent::CompactionEnd { .. }) => {
+                                    spinner.clear();
+                                    spinner = GenerationSpinner::new("Generating...".to_string());
+                                    first_token_received = false;
+                                }
+                                Ok(_) => {} // Handle other events silently
                                 Err(e) => {
-                                    eprintln!("Error: {e}");
+                                    eprintln!("{}", style_chat_text(&format!("Error: {e}"), ChatMessageType::Error));
                                     stream_error = true;
                                     break;
                                 }
@@ -330,36 +331,8 @@ async fn process_message(
         return Ok(true);
     }
 
-    {
-        // Add the assistant message to the chat history
-        let mut chat_guard = chat.lock().await;
-        chat_guard
-            .add_messages(vec![ChatMessage {
-                sender: SenderType::Assistant,
-                text: assistant_message_text,
-                thought: if assistant_message_thought.is_empty() {
-                    None
-                } else {
-                    Some(assistant_message_thought)
-                },
-                tools: Some(assistant_message_tools),
-                metrics: Some(metrics.clone()),
-            }])
-            .await;
-    }
-
     // After a successful stream, flush any remaining partial lines from the renderer.
     renderer.render_markdown("\n")?;
-
-    // If the model produced tool calls, recursively call this function to process them.
-    if !assistant_tool_responses.is_empty() {
-        return Box::pin(process_message(
-            chat_clone,
-            renderer,
-            assistant_tool_responses,
-        ))
-        .await;
-    }
 
     // If we've reached this point, the response is complete. Print the footer.
     let (metrics, finish_reason_option) = match was_cancelled {
@@ -370,128 +343,10 @@ async fn process_message(
     let footer = format_footer_metrics(&metrics, finish_reason_option.as_deref(), was_cancelled);
 
     // The `render_markdown("\n")` above ensures we start on a fresh line.
-    println!();
-    println!("{}", style_chat_text(&footer, ChatMessageType::Footer));
+    eprintln!();
+    eprintln!("{}", style_chat_text(&footer, ChatMessageType::Footer));
 
     Ok(true)
-}
-
-/// Returns set of tool results as messages
-async fn process_tools(
-    available_tools: &HashMap<&str, Arc<dyn Tool>>,
-    tool_calls: &Vec<ToolCall>,
-) -> Result<Vec<ChatMessage>> {
-    let mut tool_messages: Vec<ChatMessage> = vec![];
-
-    for call in tool_calls {
-        eprintln!(); // Add a newline before tool output
-        let tool_fmt = format!("Tool: {}({})", call.name, call.arguments);
-        let tool_msg = style_chat_text(&tool_fmt, ChatMessageType::Footer);
-        let spinner = GenerationSpinner::new(tool_msg.to_string());
-        let tool = match available_tools.get(call.name.as_str()) {
-            Some(t) => t.clone(),
-            None => {
-                eprintln!(
-                    "{}",
-                    style_chat_text(
-                        &format!("Tool '{}' not available", call.name),
-                        ChatMessageType::Error
-                    )
-                );
-                continue;
-            }
-        };
-
-        // Normalize tool call arguments - could be direct JSON, escaped JSON, or plain string
-        debug!("Raw tool call arguments: '{}'", call.arguments);
-
-        let args = match serde_json::from_str(&call.arguments) {
-            Ok(value) => {
-                debug!("Parsed as direct JSON: {}", value);
-                value
-            }
-            Err(first_error) => {
-                debug!(
-                    "First parse failed: {}. Trying raw string parse",
-                    first_error
-                );
-                match serde_json::from_str::<Value>(&call.arguments) {
-                    Ok(value) => {
-                        debug!("Parsed as raw JSON string: {}", value);
-                        value
-                    }
-                    Err(second_error) => {
-                        debug!(
-                            "Second parse failed: {}. Falling back to input wrapper",
-                            second_error
-                        );
-                        serde_json::json!({ "input": call.arguments })
-                    }
-                }
-            }
-        };
-
-        // If we got a string, try to parse that string as JSON to see if it's really a structured value.
-        let args = match &args {
-            Value::String(s) => match serde_json::from_str(s) {
-                Ok(parsed_value) => {
-                    debug!("Unescaped inner JSON string successfully: {}", parsed_value);
-                    parsed_value
-                }
-                Err(inner_error) => {
-                    debug!(
-                        "Failed to unescape inner JSON: {}. Keeping as string.",
-                        inner_error
-                    );
-                    args
-                }
-            },
-            _ => args,
-        };
-
-        debug!("Final tool arguments: {}", args);
-        let mut output = match tool.execute(&args).await {
-            Ok(out) => out,
-            Err(e) => {
-                eprintln!(
-                    "{}",
-                    style_chat_text(
-                        &format!("Tool execution failed: {e}"),
-                        ChatMessageType::Error
-                    )
-                );
-                continue;
-            }
-        };
-
-        // Clean control characters from tool output
-        clean_value(&mut output);
-
-        spinner.clear();
-        eprintln!("✓ {tool_msg}");
-
-        // Gemini doesn't provide a tool_id, we fill it if empty
-        let call_id = if call.id.is_empty() {
-            call.name.to_string()
-        } else {
-            call.id.to_string()
-        };
-        let result = ToolResult {
-            call: ToolCall {
-                id: call_id,
-                ..call.clone()
-            },
-            output,
-        };
-        tool_messages.push(ChatMessage {
-            text: serde_json::to_string(&result)?,
-            sender: SenderType::Tool,
-            ..Default::default()
-        });
-    }
-
-    eprintln!();
-    Ok(tool_messages)
 }
 
 #[cfg(test)]
@@ -502,12 +357,10 @@ mod tests {
     use anyhow::Result;
     use arey_core::{
         completion::{ChatMessage, SenderType},
-        tools::{Tool, ToolError, ToolResult},
+        registry::ToolRegistry,
+        tools::Tool,
     };
-    use async_trait::async_trait;
-    use serde_json::{Value, json};
     use std::sync::Arc;
-    use std::vec;
     use tokio::sync::Mutex;
 
     use crate::cli::chat::test_utils::{
@@ -516,166 +369,14 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn test_process_tools() -> Result<()> {
-        let mock_tool: Arc<dyn Tool> = Arc::new(MockTool {});
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("mock_tool", mock_tool.clone())]);
-        let tool_calls = vec![ToolCall {
-            id: "call_1".to_string(),
-            name: "mock_tool".to_string(),
-            arguments: "{}".to_string(),
-        }];
-
-        let messages = process_tools(&available_tools, &tool_calls).await?;
-
-        assert_eq!(messages.len(), 1);
-        let msg = &messages[0];
-        assert_eq!(msg.sender, SenderType::Tool);
-
-        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
-        assert_eq!(tool_result.call.id, "call_1");
-        assert_eq!(tool_result.output, json!("mock tool output"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_process_tools_with_stringified_json_argument() -> Result<()> {
-        struct ArgRecorder;
-        #[async_trait]
-        impl Tool for ArgRecorder {
-            fn name(&self) -> String {
-                "arg_recorder".to_string()
-            }
-
-            fn description(&self) -> String {
-                "Records arguments".to_string()
-            }
-
-            fn parameters(&self) -> Value {
-                json!({})
-            }
-
-            async fn execute(&self, args: &Value) -> std::result::Result<Value, ToolError> {
-                Ok(args.clone())
-            }
-        }
-
-        let tool: Arc<dyn Tool> = Arc::new(ArgRecorder);
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("arg_recorder", tool.clone())]);
-        // The arguments are a string that itself is a JSON object
-        let tool_calls = vec![ToolCall {
-            id: "call_1".to_string(),
-            name: "arg_recorder".to_string(),
-            arguments: r#""{\"arg\":42}""#.to_string(),
-        }];
-
-        let messages = process_tools(&available_tools, &tool_calls).await?;
-        assert_eq!(messages.len(), 1);
-        let msg = &messages[0];
-        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
-
-        // The tool should have received the parsed JSON object: {"arg":42}
-        assert_eq!(tool_result.output, json!({"arg":42}));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_process_tools_with_non_json_string() -> Result<()> {
-        struct ArgRecorder;
-        #[async_trait]
-        impl Tool for ArgRecorder {
-            fn name(&self) -> String {
-                "arg_recorder".to_string()
-            }
-
-            fn description(&self) -> String {
-                "Records arguments".to_string()
-            }
-
-            fn parameters(&self) -> Value {
-                json!({})
-            }
-
-            async fn execute(&self, args: &Value) -> std::result::Result<Value, ToolError> {
-                Ok(args.clone())
-            }
-        }
-
-        let tool: Arc<dyn Tool> = Arc::new(ArgRecorder);
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("arg_recorder", tool.clone())]);
-        let tool_calls = vec![ToolCall {
-            id: "call_1".to_string(),
-            name: "arg_recorder".to_string(),
-            arguments: "plain string".to_string(),
-        }];
-
-        let messages = process_tools(&available_tools, &tool_calls).await?;
-
-        assert_eq!(messages.len(), 1);
-        let msg = &messages[0];
-        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
-
-        // We expect the tool to have received: {"input": "plain string"}
-        assert_eq!(tool_result.output, json!({ "input": "plain string" }));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_process_tools_cleans_control_characters() -> Result<()> {
-        #[derive(Debug)]
-        struct ControlCharTool;
-        #[async_trait]
-        impl Tool for ControlCharTool {
-            fn name(&self) -> String {
-                "control_tool".to_string()
-            }
-
-            fn description(&self) -> String {
-                "Tool with control characters".to_string()
-            }
-
-            fn parameters(&self) -> Value {
-                json!({})
-            }
-
-            async fn execute(&self, _args: &Value) -> std::result::Result<Value, ToolError> {
-                // Return value containing control characters
-                Ok(json!({
-                    "key": "value with \u{0001} control \u{001F} characters"
-                }))
-            }
-        }
-
-        let tool: Arc<dyn Tool> = Arc::new(ControlCharTool);
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("control_tool", tool.clone())]);
-        let tool_calls = vec![ToolCall {
-            id: "call_1".to_string(),
-            name: "control_tool".to_string(),
-            arguments: "{}".to_string(),
-        }];
-
-        let messages = process_tools(&available_tools, &tool_calls).await?;
-        assert_eq!(messages.len(), 1);
-        let msg = &messages[0];
-        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
-
-        // Check that control characters were removed
-        let output_str = tool_result.output.get("key").unwrap().as_str().unwrap();
-        assert_eq!(output_str, "value with  control  characters");
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_process_message_simple_response() -> Result<()> {
         // 1. Setup Chat and Renderer
         let config = create_test_config_with_custom_agent()?;
-        let chat = Chat::new(&config, Some("test-model-1".to_string()), HashMap::new())?;
+        let chat = Chat::new(
+            &config,
+            Some("test-model-1".to_string()),
+            ToolRegistry::new(),
+        )?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
         let theme = get_theme("ansi");
@@ -700,13 +401,11 @@ mod tests {
     async fn test_process_message_with_tool_call() -> Result<()> {
         let config = create_test_config_with_tool_call_model()?;
         let mock_tool: Arc<dyn Tool> = Arc::new(MockTool);
-        let available_tools: HashMap<&str, Arc<dyn Tool>> =
-            HashMap::from([("mock_tool", mock_tool)]);
-        let chat = Chat::new(
-            &config,
-            Some("tool-call-model".to_string()),
-            available_tools,
-        )?;
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(mock_tool)?;
+        let mut chat = Chat::new(&config, Some("tool-call-model".to_string()), tool_registry)?;
+        chat.load_session().await?;
+        chat.set_tools(&["mock_tool".to_string()]).await?;
         let chat_session = Arc::new(Mutex::new(chat));
 
         let mut buffer = Vec::new();
@@ -729,7 +428,11 @@ mod tests {
     #[tokio::test]
     async fn test_process_message_stream_error() -> Result<()> {
         let config = create_test_config_with_error_model()?;
-        let chat = Chat::new(&config, Some("error-model".to_string()), HashMap::new())?;
+        let chat = Chat::new(
+            &config,
+            Some("error-model".to_string()),
+            ToolRegistry::new(),
+        )?;
         let chat_session = Arc::new(Mutex::new(chat));
         let mut buffer = Vec::new();
         let theme = get_theme("ansi");
