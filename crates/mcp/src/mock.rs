@@ -3,12 +3,19 @@
 //! This module provides mock tools that can be used for testing MCP integration
 //! without spawning external MCP servers.
 
-#[cfg(feature = "test_utils")]
+#[cfg(any(test, feature = "test_utils"))]
 pub mod test_helpers {
     use std::sync::Arc;
 
     use anyhow::Result;
     use async_trait::async_trait;
+    use rmcp::schemars;
+    use rmcp::{
+        handler::server::wrapper::{Json, Parameters},
+        schemars::JsonSchema,
+        tool, tool_router,
+    };
+    use serde::{Deserialize, Serialize};
     use serde_json::{Value, json};
 
     use arey_core::tools::{Tool, ToolError};
@@ -155,7 +162,56 @@ servers:
         )
         .unwrap()
     }
+
+    // --- Weather Server for Testing ---
+    #[derive(Clone)]
+    pub struct WeatherServer;
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    pub struct AddRequest {
+        pub a: i32,
+        pub b: i32,
+    }
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    pub struct GetWeatherRequest {
+        pub location: String,
+    }
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    pub struct GetWeatherResponse {
+        pub location: String,
+        #[serde(rename = "temp_C")]
+        pub temp_c: i32,
+        #[serde(rename = "weatherDesc")]
+        pub weather_desc: String,
+        pub humidity: i32,
+        #[serde(rename = "precipMM")]
+        pub precip_mm: i32,
+    }
+
+    #[tool_router(server_handler)]
+    impl WeatherServer {
+        #[tool(description = "Add two numbers")]
+        fn add(&self, Parameters(req): Parameters<AddRequest>) -> String {
+            (req.a + req.b).to_string()
+        }
+
+        #[tool(description = "Gets the current weather for a given location")]
+        fn get_weather(
+            &self,
+            Parameters(req): Parameters<GetWeatherRequest>,
+        ) -> Json<GetWeatherResponse> {
+            Json(GetWeatherResponse {
+                location: req.location,
+                temp_c: 28,
+                weather_desc: "sunny".to_string(),
+                humidity: 54,
+                precip_mm: 0,
+            })
+        }
+    }
 }
 
-#[cfg(feature = "test_utils")]
+#[cfg(any(test, feature = "test_utils"))]
 pub use test_helpers::*;

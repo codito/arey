@@ -1,5 +1,6 @@
 pub mod client;
 pub mod config;
+#[cfg(any(test, feature = "test_utils"))]
 pub mod mock;
 pub mod registry;
 

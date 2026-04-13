@@ -160,6 +160,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "arey-core",
+ "arey-mcp",
  "async-trait",
  "rmcp",
  "serde",

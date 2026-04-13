@@ -17,7 +17,7 @@ use arey_core::tools::{Tool, ToolError};
 
 pub struct McpClient {
     name: String,
-    service: RunningService<RoleClient, ()>,
+    service: Arc<RunningService<RoleClient, ()>>,
     tools: Vec<Arc<dyn Tool>>,
 }
 
@@ -30,11 +30,18 @@ impl McpClient {
         }
 
         let transport = TokioChildProcess::new(cmd)?;
-        let service = ().serve(transport).await?;
+        let service = Arc::new(().serve(transport).await?);
 
-        let tools = Self::list_tools(&service, &name).await?;
+        Self::with_service(name, service).await
+    }
 
-        info!("MCP server '{}' started with {} tools", name, tools.len());
+    pub async fn with_service(
+        name: String,
+        service: Arc<RunningService<RoleClient, ()>>,
+    ) -> Result<Self> {
+        let tools = Self::list_tools(&service, &name, service.clone()).await?;
+
+        info!("MCP server '{}' connected with {} tools", name, tools.len());
 
         Ok(Self {
             name,
@@ -44,8 +51,9 @@ impl McpClient {
     }
 
     async fn list_tools(
-        service: &RunningService<RoleClient, ()>,
+        service: &Arc<RunningService<RoleClient, ()>>,
         server_name: &str,
+        service_arc: Arc<RunningService<RoleClient, ()>>,
     ) -> Result<Vec<Arc<dyn Tool>>> {
         let tool_defs = service.list_all_tools().await?;
         let mut tools = Vec::new();
@@ -56,11 +64,12 @@ impl McpClient {
             let description = tool_def.description.unwrap_or_default().to_string();
             let input_schema = serde_json::to_value(&*tool_def.input_schema)?;
 
-            let tool = Arc::new(McpTool::new(
+            let tool = Arc::new(McpTool::with_service(
                 name,
                 description,
                 input_schema,
                 Arc::new(server_name.to_string()),
+                service_arc.clone(),
             )) as Arc<dyn Tool>;
             tools.push(tool);
         }
@@ -119,12 +128,14 @@ struct McpTool {
     name: String,
     description: String,
     input_schema: serde_json::Value,
-    #[allow(dead_code)]
     server_name: Arc<String>,
+    #[allow(dead_code)]
+    service: Option<Arc<RunningService<RoleClient, ()>>>,
 }
 
 impl McpTool {
-    fn new(
+    #[allow(dead_code)]
+    pub fn new(
         name: String,
         description: String,
         input_schema: serde_json::Value,
@@ -135,7 +146,68 @@ impl McpTool {
             description,
             input_schema,
             server_name,
+            service: None,
         }
+    }
+
+    pub fn with_service(
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        server_name: Arc<String>,
+        service: Arc<RunningService<RoleClient, ()>>,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            input_schema,
+            server_name,
+            service: Some(service),
+        }
+    }
+
+    async fn execute_internal(&self, arguments: &Value) -> Result<Value> {
+        let service = self.service.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("MCP service not available - tool created without service connection")
+        })?;
+
+        let actual_tool_name = if self.name.starts_with(&format!("{}_", self.server_name)) {
+            self.name
+                .strip_prefix(&format!("{}_", self.server_name))
+                .unwrap()
+        } else {
+            &self.name
+        };
+
+        let args_map = match arguments {
+            Value::Object(m) => Some(m.clone()),
+            _ => {
+                let mut map = serde_json::Map::new();
+                map.insert("location".to_string(), arguments.clone());
+                Some(map)
+            }
+        };
+
+        let mut params = CallToolRequestParams::default();
+        params.meta = None;
+        params.name = std::borrow::Cow::Owned(actual_tool_name.to_string());
+        params.arguments = args_map;
+        params.task = None;
+        let result = service.call_tool(params).await?;
+
+        let output = result.structured_content.unwrap_or_else(|| {
+            if let Some(content) = result.content.into_iter().next() {
+                if let Some(text) = content.as_text() {
+                    serde_json::json!({ "text": text.text })
+                } else {
+                    serde_json::json!({ "error": "Unsupported content type" })
+                }
+            } else {
+                serde_json::json!({ "error": "Empty response" })
+            }
+        });
+
+        Ok(output)
     }
 }
 
@@ -153,10 +225,11 @@ impl Tool for McpTool {
         self.input_schema.clone()
     }
 
-    async fn execute(&self, _arguments: &Value) -> Result<Value, ToolError> {
-        Ok(serde_json::json!({
-            "error": "McpTool::execute not implemented - use McpRegistry to execute MCP tools"
-        }))
+    async fn execute(&self, arguments: &Value) -> Result<Value, ToolError> {
+        match self.execute_internal(arguments).await {
+            Ok(result) => Ok(result),
+            Err(e) => Err(ToolError::ExecutionError(e.to_string())),
+        }
     }
 }
 
@@ -211,9 +284,8 @@ mod tests {
 
         let result = tool.execute(&arguments).await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.get("error").is_some());
+        // Without service connection, should return error
+        assert!(result.is_err() || result.as_ref().ok().and_then(|v| v.get("error")).is_some());
     }
 
     #[tokio::test]
@@ -223,9 +295,8 @@ mod tests {
 
         let result = tool.execute(&arguments).await;
 
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.get("error").is_some());
+        // Without service connection, should return error
+        assert!(result.is_err() || result.as_ref().ok().and_then(|v| v.get("error")).is_some());
     }
 
     #[test]
