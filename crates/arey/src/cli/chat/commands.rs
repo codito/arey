@@ -560,7 +560,9 @@ pub fn parse_command_line(line: &str) -> Vec<String> {
     };
 
     // Special handling for commands that accept multi-word arguments
-    if !args.is_empty() && (args[0] == "/system" || args[0] == "/sys" || args[0] == "/tool") {
+    // Only /system and /sys need to join all args into one (for prompts)
+    // /tool should keep args separate for multiple tool names
+    if !args.is_empty() && (args[0] == "/system" || args[0] == "/sys") {
         if args.len() > 1 {
             // Join all arguments after the command
             let mut processed = vec![args[0].clone()];
@@ -637,52 +639,70 @@ fn format_message_block(messages: &[arey_core::completion::ChatMessage]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::chat::test_utils::{MockTool, create_test_config_with_custom_agent};
+    use crate::cli::chat::test_utils::{
+        AnotherMockTool, MockTool, create_test_config_with_custom_agent,
+    };
     use arey_core::completion::{ChatMessage, SenderType};
     use arey_core::registry::ToolRegistry;
     use arey_core::tools::{Tool, ToolCall};
     use std::sync::Arc;
     use tokio::sync::Mutex;
+    use yare::parameterized;
 
-    #[test]
-    fn test_system_command_parsing_edge_cases() {
-        let test_cases = vec![
-            // Test normal case with spaces
-            ("/system you are an expert", Some("you are an expert")),
-            // Test apostrophes (the main issue)
-            ("/system you're an expert", Some("you're an expert")),
-            // Test quotes (should still work with shlex)
-            ("/system \"quoted text\"", Some("quoted text")),
-            // Test mixed punctuation
-            ("/system hello, world!", Some("hello, world!")),
-            // Test no arguments (should work)
-            ("/system", None),
-            // Test alias
-            ("/sys you're an expert", Some("you're an expert")),
-        ];
+    #[parameterized(
+        normal_spaces = { "/system you are an expert", Some("you are an expert") },
+        apostrophes = { "/system you're an expert", Some("you're an expert") },
+        quotes = { "/system \"quoted text\"", Some("quoted text") },
+        punctuation = { "/system hello, world!", Some("hello, world!") },
+        no_args = { "/system", None },
+        alias = { "/sys you're an expert", Some("you're an expert") },
+    )]
+    fn test_system_command_parsing(input: &str, expected_prompt: Option<&str>) {
+        let processed_args = parse_command_line(input);
 
-        for (input, expected_prompt) in test_cases {
-            // Use the shared parsing function
-            let processed_args = parse_command_line(input);
+        let result = CliCommand::try_parse_from(processed_args);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
 
-            let result = CliCommand::try_parse_from(processed_args);
-            assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
-
-            let cli_command = result.unwrap();
-            match cli_command.command {
-                Command::System { prompt } => {
-                    assert_eq!(
-                        prompt,
-                        expected_prompt.map(|s| s.to_string()),
-                        "Failed for input: '{}'",
-                        input
-                    );
-                }
-                _ => panic!(
-                    "Expected System command for input: '{}', got {:?}",
-                    input, cli_command.command
-                ),
+        let cli_command = result.unwrap();
+        match cli_command.command {
+            Command::System { prompt } => {
+                assert_eq!(
+                    prompt,
+                    expected_prompt.map(|s| s.to_string()),
+                    "Failed for input: '{}'",
+                    input
+                );
             }
+            _ => panic!(
+                "Expected System command for input: '{}', got {:?}",
+                input, cli_command.command
+            ),
+        }
+    }
+
+    #[parameterized(
+        single_tool = { "/tool search", vec!["search"] },
+        multiple_tools = { "/tool search fetch", vec!["search", "fetch"] },
+        multiple_tools_extra_spaces = { "/tool search  fetch", vec!["search", "fetch"] },
+        clear_command = { "/tool clear", vec!["clear"] },
+        no_arguments = { "/tool", vec![] },
+    )]
+    fn test_tool_command_parsing(input: &str, expected_names: Vec<&str>) {
+        let processed_args = parse_command_line(input);
+
+        let result = CliCommand::try_parse_from(processed_args);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result);
+
+        let cli_command = result.unwrap();
+        match cli_command.command {
+            Command::Tool { names } => {
+                let expected: Vec<String> = expected_names.iter().map(|s| s.to_string()).collect();
+                assert_eq!(names, expected, "Failed for input: '{}'", input);
+            }
+            _ => panic!(
+                "Expected Tool command for input: '{}', got {:?}",
+                input, cli_command.command
+            ),
         }
     }
 
@@ -932,6 +952,40 @@ USER: Run tool
             let tools = chat_guard.tools();
             assert_eq!(tools.len(), 1);
             assert_eq!(tools[0].name(), "mock_tool");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_command_set_multiple() -> Result<()> {
+        // Create Chat instance with multiple mock tools
+        let config = create_test_config_with_custom_agent()?;
+        let mock_tool1: Arc<dyn Tool> = Arc::new(MockTool);
+        let mock_tool2: Arc<dyn Tool> = Arc::new(AnotherMockTool);
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(mock_tool1)?;
+        tool_registry.register(mock_tool2)?;
+
+        let mut chat = Chat::new(&config, Some("test-model-1".to_string()), tool_registry)?;
+        chat.load_session().await?;
+        let chat_session = Arc::new(Mutex::new(chat));
+
+        // Test setting multiple tools
+        let set_tool_cmd = Command::Tool {
+            names: vec!["mock_tool".to_string(), "another_mock_tool".to_string()],
+        };
+        let result = set_tool_cmd.execute(chat_session.clone()).await?;
+        assert!(result, "execute should return true to continue REPL");
+
+        // Check that both tools are set
+        {
+            let chat_guard = chat_session.lock().await;
+            let tools = chat_guard.tools();
+            assert_eq!(tools.len(), 2);
+            let tool_names: Vec<String> = tools.iter().map(|t| t.name()).collect();
+            assert!(tool_names.contains(&"mock_tool".to_string()));
+            assert!(tool_names.contains(&"another_mock_tool".to_string()));
         }
 
         Ok(())
