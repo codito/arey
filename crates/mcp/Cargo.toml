@@ -1,0 +1,43 @@
+[package]
+name = "arey-mcp"
+version = "0.0.1"
+edition.workspace = true
+
+[features]
+default = []
+test_utils = ["rmcp/server", "rmcp/macros", "rmcp/transport-io"]
+server = ["rmcp/server", "rmcp/transport-io", "rmcp/macros", "rmcp/schemars", "test_utils"]
+
+[dependencies]
+arey-core = { path = "../core" }
+rmcp = { version = "1.4.0", features = ["client", "transport-child-process", "transport-io"] }
+anyhow.workspace = true
+async-trait.workspace = true
+tokio = { version = "1.50", features = [
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "sync",
+    "signal",
+    "time",
+] }
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+[dev-dependencies]
+arey-mcp = { path = ".", features = ["test_utils"] }
+tokio = { version = "1.50", features = ["macros", "test-util"] }
+serde_yaml.workspace = true
+yare.workspace = true
+
+[[test]]
+name = "mcp_integration"
+
+[[example]]
+name = "mcp_weather"
+required-features = ["server"]
+
+[[example]]
+name = "mcp_client"

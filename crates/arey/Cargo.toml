@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 arey-core = { path = "../core", version = "*" }
+arey-mcp = { path = "../mcp" }
 arey-tools-search = { path = "../tools-search" }
 anyhow.workspace = true
 async-stream.workspace = true
@@ -40,11 +41,13 @@ syntect = { version = "5.3.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+arey-mcp = { path = "../mcp", features = ["test_utils"] }
 async-trait.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 wiremock.workspace = true
 once_cell.workspace = true
+yare.workspace = true
 
 [features]
 cuda = ["arey-core/cuda"]

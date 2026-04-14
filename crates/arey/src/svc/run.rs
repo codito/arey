@@ -241,6 +241,7 @@ mod tests {
             },
             theme: "light".to_string(),
             tools: HashMap::new(),
+            mcp: serde_yaml::Value::Null,
         };
 
         let task = Task::new(
@@ -298,6 +299,7 @@ mod tests {
             },
             theme: "light".to_string(),
             tools: HashMap::new(),
+            mcp: serde_yaml::Value::Null,
         };
 
         let mut task = Task::new(

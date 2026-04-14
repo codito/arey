@@ -89,3 +89,26 @@ tools:
     default_language: "en"
     default_categories: "general"
     default_results: 10
+
+# MCP (Model Context Protocol) servers
+#
+# MCP servers provide additional tools that can be used by the AI.
+# Each server has a command to spawn and optional arguments/environment.
+# Tools from MCP servers are prefixed with the server name (e.g., filesystem_read_file).
+#
+# Example MCP server configuration:
+# mcp:
+#   filesystem:
+#     command: npx
+#     args:
+#       - -y
+#       - @modelcontextprotocol/server-filesystem
+#       - /home/user
+#     env: {}
+#     enabled: true
+#   memory:
+#     command: npx
+#     args:
+#       - -y
+#       - @modelcontextprotocol/server-memory
+#     enabled: false

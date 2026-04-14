@@ -90,6 +90,7 @@ pub fn create_test_config() -> Result<Config> {
         task: task_mode,
         theme: "ansi".to_string(),
         tools: HashMap::new(),
+        mcp: serde_yaml::Value::Null,
     })
 }
 
