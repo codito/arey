@@ -8,8 +8,8 @@ use arey_core::{config::Config, registry::ToolRegistry, tools::Tool};
 /// Retrieves all available tools from the configuration.
 ///
 /// This function iterates through the tools defined in the provided configuration
-/// and initializes each one based on its name. Currently, only the "search" tool
-/// is supported.
+/// and initializes each one based on its name. Currently, "search" and "fetch" tools
+/// are supported. The fetch tool is always available.
 ///
 /// # Arguments
 ///
@@ -27,12 +27,19 @@ use arey_core::{config::Config, registry::ToolRegistry, tools::Tool};
 /// - An unknown tool name is found in the configuration.
 pub fn get_tools(config: &Config) -> Result<ToolRegistry> {
     let mut registry = ToolRegistry::new();
+
+    registry.register(Arc::new(arey_tools_fetch::FetchTool::new()))?;
+
     for (name, tool_config) in &config.tools {
         let tool: Arc<dyn Tool> = match name.as_str() {
             "search" => Arc::new(
                 arey_tools_search::SearchTool::from_config(tool_config)
                     .with_context(|| format!("Failed to initialize tool: {name}"))?,
             ),
+            "fetch" => {
+                tracing::debug!("Fetch tool already registered, skipping config");
+                continue;
+            }
             _ => return Err(anyhow!("Unknown tool in config: {}", name)),
         };
         registry.register(tool)?;

@@ -1,0 +1,23 @@
+[package]
+name = "arey-tools-fetch"
+version = "0.0.7"
+edition.workspace = true
+authors.workspace = true
+description = "Fetch tool for arey - extracts readable content from URLs"
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+arey-core = { path = "../core" }
+
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+readabilityrs = "0.1"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+wiremock.workspace = true
