@@ -326,8 +326,7 @@ mod integration_tests {
 
         let result = tool.execute(&args).await;
 
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             if err.to_string().contains("Could not extract content") {
                 return;
             }
@@ -357,8 +356,7 @@ mod integration_tests {
 
         let result = tool.execute(&args).await;
 
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             if err.to_string().contains("Could not extract content") {
                 return;
             }
