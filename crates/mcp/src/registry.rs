@@ -183,7 +183,7 @@ mod tests {
 
     // Mock McpClient for testing
     struct MockMcpClient {
-        name: String,
+        _name: String,
         tools: Vec<Arc<dyn Tool>>,
     }
 
@@ -200,7 +200,7 @@ mod tests {
                 .collect();
 
             Self {
-                name: name.to_string(),
+                _name: name.to_string(),
                 tools,
             }
         }

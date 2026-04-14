@@ -10,7 +10,7 @@ use rmcp::{
 };
 use serde_json::Value;
 use tokio::process::Command;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::config::McpServerConfig;
 use arey_core::tools::{Tool, ToolError};
@@ -106,6 +106,10 @@ impl McpClient {
         params.name = std::borrow::Cow::Owned(actual_tool_name.to_string());
         params.arguments = args_map;
         params.task = None;
+        debug!(
+            "MCP {}: calling tool {} with arguments {:?}",
+            self.name, tool_name, arguments
+        );
         let result = self.service.call_tool(params).await?;
 
         let output = result.structured_content.unwrap_or_else(|| {
