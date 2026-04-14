@@ -11,6 +11,7 @@ path = "src/main.rs"
 arey-core = { path = "../core", version = "*" }
 arey-mcp = { path = "../mcp" }
 arey-tools-search = { path = "../tools-search" }
+arey-tools-fetch = { path = "../tools-fetch" }
 anyhow.workspace = true
 async-stream.workspace = true
 chrono.workspace = true

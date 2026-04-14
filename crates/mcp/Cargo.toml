@@ -13,14 +13,7 @@ arey-core = { path = "../core" }
 rmcp = { version = "1.4.0", features = ["client", "transport-child-process", "transport-io"] }
 anyhow.workspace = true
 async-trait.workspace = true
-tokio = { version = "1.50", features = [
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "sync",
-    "signal",
-    "time",
-] }
+tokio.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,7 +21,7 @@ serde_yaml.workspace = true
 
 [dev-dependencies]
 arey-mcp = { path = ".", features = ["test_utils"] }
-tokio = { version = "1.50", features = ["macros", "test-util"] }
+tokio.workspace = true
 serde_yaml.workspace = true
 yare.workspace = true
 

@@ -241,3 +241,26 @@ impl Tool for MockTool {
         Ok(Value::String("mock tool output".to_string()))
     }
 }
+
+/// Another mock tool for testing multiple tools
+#[derive(Debug)]
+pub struct AnotherMockTool;
+
+#[async_trait]
+impl Tool for AnotherMockTool {
+    fn name(&self) -> String {
+        "another_mock_tool".to_string()
+    }
+
+    fn description(&self) -> String {
+        "Another mock tool for testing".to_string()
+    }
+
+    fn parameters(&self) -> Value {
+        Value::Object(serde_json::Map::new())
+    }
+
+    async fn execute(&self, _args: &Value) -> Result<Value, ToolError> {
+        Ok(Value::String("another mock tool output".to_string()))
+    }
+}
