@@ -464,6 +464,7 @@ mod tests {
             id: format!("call_{}", name),
             name: name.to_string(),
             arguments: "{}".to_string(),
+            ..Default::default()
         }
     }
 

@@ -204,6 +204,7 @@ impl ToolCallParser {
                                             id: format!("call_{}", *next_id),
                                             name: raw_tool_call.name,
                                             arguments: raw_tool_call.arguments.to_string(),
+                                            ..Default::default()
                                         });
                                         *next_id += 1;
                                     }

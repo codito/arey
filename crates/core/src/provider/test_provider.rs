@@ -92,6 +92,7 @@ impl CompletionModel for TestProviderModel {
                     id: "c1".to_string(),
                     name: "mock_tool".to_string(),
                     arguments: "{}".to_string(),
+                    ..Default::default()
                 };
                 let response = Completion::Response(CompletionResponse {
                     text: "".to_string(),

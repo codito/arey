@@ -65,18 +65,13 @@ impl ToolExecutor {
     }
 
     pub fn create_result_message(call: &ToolCall, output: Value) -> ChatMessage {
-        let call_id = if call.id.is_empty() {
-            format!("call_{}", rand_id())
-        } else {
-            call.id.clone()
-        };
+        let mut call_clone = call.clone();
+        if call.id.is_empty() {
+            call_clone.id = format!("call_{}", rand_id());
+        }
 
         let tool_result = ToolResult {
-            call: ToolCall {
-                id: call_id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            },
+            call: call_clone,
             output,
         };
 
@@ -88,18 +83,13 @@ impl ToolExecutor {
     }
 
     pub fn create_error_message(call: &ToolCall, error: &ToolError) -> ChatMessage {
-        let call_id = if call.id.is_empty() {
-            format!("call_{}", rand_id())
-        } else {
-            call.id.clone()
-        };
+        let mut call_clone = call.clone();
+        if call.id.is_empty() {
+            call_clone.id = format!("call_{}", rand_id());
+        }
 
         let tool_result = ToolResult {
-            call: ToolCall {
-                id: call_id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-            },
+            call: call_clone,
             output: serde_json::json!({ "error": error.to_string() }),
         };
 
@@ -123,9 +113,11 @@ fn rand_id() -> String {
 /// A tool call may or may not resolve into a `Tool`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct ToolCall {
-    pub id: String, // To uniquely identify the call
+    pub id: String,
     pub name: String,
     pub arguments: String,
+    #[serde(default)]
+    pub extra_content: Option<serde_json::Value>,
 }
 
 /// The result of a tool execution, to be sent back to the model.
@@ -339,6 +331,7 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "test_tool".to_string(),
             arguments: "{}".to_string(),
+            ..Default::default()
         };
 
         let output = json!({"result": "success"});
@@ -354,6 +347,7 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "test_tool".to_string(),
             arguments: "{}".to_string(),
+            ..Default::default()
         };
 
         let error = ToolError::ExecutionError("Tool failed".to_string());
@@ -363,6 +357,26 @@ mod executor_tests {
         assert!(msg.text.contains("error"));
     }
 
+    #[test]
+    fn test_create_result_message_preserves_extra_content() {
+        let call = ToolCall {
+            id: "call_1".to_string(),
+            name: "test_tool".to_string(),
+            arguments: "{}".to_string(),
+            extra_content: Some(json!({"google": {"thought_signature": "sig_abc"}})),
+        };
+
+        let output = json!({"result": "success"});
+        let msg = ToolExecutor::create_result_message(&call, output);
+
+        assert_eq!(msg.sender, SenderType::Tool);
+        let tool_result: ToolResult = serde_json::from_str(&msg.text).unwrap();
+        assert_eq!(
+            tool_result.call.extra_content,
+            Some(json!({"google": {"thought_signature": "sig_abc"}}))
+        );
+    }
+
     #[tokio::test]
     async fn test_execute() -> Result<()> {
         let tool = TestTool;
@@ -370,6 +384,7 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "test_tool".to_string(),
             arguments: "{key: 10}".to_string(),
+            ..Default::default()
         };
 
         let msg = ToolExecutor::execute(&call, &tool).await?;
@@ -410,6 +425,7 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "arg_recorder".to_string(),
             arguments: r#""{\"arg\":42}""#.to_string(),
+            ..Default::default()
         };
 
         let result = ToolExecutor::execute(&call, &tool).await?;
@@ -448,6 +464,7 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "arg_recorder".to_string(),
             arguments: "plain string".to_string(),
+            ..Default::default()
         };
 
         let result = ToolExecutor::execute(&call, &tool).await?;
@@ -490,6 +507,7 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "control_tool".to_string(),
             arguments: "{}".to_string(),
+            ..Default::default()
         };
 
         let result = ToolExecutor::execute(&call, &tool).await?;
@@ -507,11 +525,33 @@ mod executor_tests {
             id: "call_1".to_string(),
             name: "different_tool".to_string(),
             arguments: "{}".to_string(),
+            ..Default::default()
         };
 
         let tool = TestTool;
         let result = ToolExecutor::execute(&call, &tool).await;
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_preserves_extra_content() -> Result<()> {
+        let tool = TestTool;
+        let call = ToolCall {
+            id: "call_1".to_string(),
+            name: "test_tool".to_string(),
+            arguments: "{}".to_string(),
+            extra_content: Some(json!({"google": {"thought_signature": "test_sig_123"}})),
+        };
+
+        let msg = ToolExecutor::execute(&call, &tool).await?;
+
+        let tool_result: ToolResult = serde_json::from_str(&msg.text)?;
+        assert_eq!(
+            tool_result.call.extra_content,
+            Some(json!({"google": {"thought_signature": "test_sig_123"}}))
+        );
+
+        Ok(())
     }
 }

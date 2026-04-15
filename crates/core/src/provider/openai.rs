@@ -14,7 +14,7 @@ use async_openai::{
         ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
         ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions,
-        CreateChatCompletionRequestArgs, FinishReason,
+        CreateChatCompletionRequestArgs,
     },
 };
 use async_trait::async_trait;
@@ -258,7 +258,7 @@ impl CompletionModel for OpenAIBaseModel {
                         match next {
                             Ok(value) => {
                                 let raw_json = serde_json::to_string(&value).unwrap_or_default();
-                                debug!("OpenAI response: {raw_json}");
+                                debug!("OpenAI CompletionResponse: stream chunk: {}", raw_json);
                                 let chunk: ChatCompletionStreamResponse =
                                     match serde_json::from_value(value) {
                                         Ok(chunk) => chunk,
@@ -296,21 +296,38 @@ impl CompletionModel for OpenAIBaseModel {
                                                     partial_call.arguments.push_str(args);
                                                 }
                                             }
+                                            // Extract extra_content (e.g., thought_signature for Gemini 3)
+                                            if let Some(extra) = &tool_call_chunk.extra_content {
+                                                partial_call.extra_content = Some(extra.clone());
+                                            }
                                         }
                                     }
 
-                                    // Collate if we have streamed all tool calls
+                                    // Collate tool calls - only emit when finish_reason signals response completion
                                     let mut final_tool_calls = None;
-                                    if choice.finish_reason == Some(FinishReason::ToolCalls) {
+                                    let has_tool_calls = !tool_calls_partial.is_empty();
+                                    let has_finish_reason = choice.finish_reason.is_some();
+
+                                    // Only emit tool_calls when finish_reason is present
+                                    // This handles both:
+                                    // - OpenAI with finish_reason=tool_calls
+                                    // - Gemini with finish_reason=stop (when tool_calls were accumulated)
+                                    if has_finish_reason && has_tool_calls {
                                         let completed_calls: Vec<ToolCall> = tool_calls_partial
                                             .values().cloned().collect();
                                         if !completed_calls.is_empty() {
                                             final_tool_calls = Some(completed_calls);
+                                            debug!("OpenAI CompletionResponse: finish_reason: {:?}, tool_calls: {final_tool_calls:?}", choice.finish_reason.unwrap());
                                         }
+                                        // Clear tool_calls_partial after emitting so that:
+                                        // 1. Subsequent chunks with finish_reason don't emit duplicates
+                                        // 2. NEW tool_calls can be accumulated fresh for subsequent batches
+                                        tool_calls_partial.clear();
                                     }
 
                                     completion_latency += elapsed;
 
+                                    debug!("OpenAI CompletionResponse: emitted chunk.");
                                     yield Ok(Completion::Response(CompletionResponse {
                                         text: text.to_string(),
                                         thought: None,
@@ -318,11 +335,13 @@ impl CompletionModel for OpenAIBaseModel {
                                         finish_reason: choice.finish_reason.map(|x| format!("{x:?}")),
                                         raw_chunk: Some(raw_json.clone()),
                                     }));
-                                    }
+                                }
+
                                 // Some openai compatible servers (Gemini) club usage with the
                                 // final response, others send a separate chunk.
                                 if let Some(usage) = chunk.usage {
                                     // FIXME possible duplicate logs in raw_chunk
+                                    debug!("OpenAI CompletionMetrics: emitted usage: {usage:?}");
                                     yield Ok(Completion::Metrics(CompletionMetrics{
                                         prompt_tokens: usage.prompt_tokens,
                                         prompt_eval_latency_ms: prompt_eval_latency,
@@ -335,7 +354,7 @@ impl CompletionModel for OpenAIBaseModel {
                                 }
                             }
                             Err(err) => {
-                                println!("{err:?}");
+                                eprintln!("{err:?}");
                                 yield Err(anyhow!("OpenAI stream error: {}", err));
                             }
                         }
@@ -669,5 +688,546 @@ mod tests {
         let parsed_args: serde_json::Value =
             serde_json::from_str(&tool_call.arguments).expect("Failed to parse arguments as JSON");
         assert_eq!(parsed_args, json!({"location": "Paris"}));
+    }
+
+    // Test that tool_calls are NOT emitted before finish_reason is present
+    #[tokio::test]
+    async fn test_tool_calls_not_emitted_before_finish_reason() {
+        let server = MockServer::start().await;
+        let server_url = server.uri();
+        let config = create_mock_model_config(&server_url).unwrap();
+
+        // Tool call in first chunk, but no finish_reason yet
+        let events = vec![
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\""
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+        ];
+
+        let mock_body = events
+            .into_iter()
+            .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
+            .collect::<String>();
+        let mock_body = format!("{}data: [DONE]\n\n", mock_body);
+
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_raw(mock_body, "text/event-stream")
+            .insert_header("Connection", "close");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
+
+        let model = OpenAIBaseModel::new(config).unwrap();
+
+        let messages = vec![ChatMessage {
+            text: "What's the weather in Paris?".to_string(),
+            sender: SenderType::User,
+            ..Default::default()
+        }];
+        let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
+
+        let cancel_token = CancellationToken::new();
+        let mut stream = model
+            .complete(
+                &messages,
+                Some(tools.as_slice()),
+                &HashMap::new(),
+                cancel_token,
+            )
+            .await;
+
+        let mut responses = Vec::new();
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result.unwrap() {
+                Completion::Response(response) => {
+                    responses.push(response);
+                }
+                Completion::Metrics(_) => {}
+            }
+        }
+
+        // We expect 2 responses: one with tool_calls in delta but no finish_reason,
+        // one with finish_reason=tool_calls
+        assert_eq!(responses.len(), 2);
+
+        // First response should NOT have tool_calls (no finish_reason yet)
+        assert!(
+            responses[0].tool_calls.is_none(),
+            "First response should not have tool_calls before finish_reason"
+        );
+
+        // Second response should have tool_calls (finish_reason=tool_calls present)
+        assert!(
+            responses[1].tool_calls.is_some(),
+            "Second response should have tool_calls with finish_reason"
+        );
+    }
+
+    // Test Gemini pattern: finish_reason=stop with tool_calls (not tool_calls)
+    #[tokio::test]
+    async fn test_tool_calls_with_finish_reason_stop() {
+        let server = MockServer::start().await;
+        let server_url = server.uri();
+        let config = create_mock_model_config(&server_url).unwrap();
+
+        // Simulate Gemini's response pattern: tool_calls with finish_reason=stop
+        let events = vec![
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gemini-3-flash-preview",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\":\"Paris\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gemini-3-flash-preview",
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }]
+            }),
+        ];
+
+        let mock_body = events
+            .into_iter()
+            .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
+            .collect::<String>();
+        let mock_body = format!("{}data: [DONE]\n\n", mock_body);
+
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_raw(mock_body, "text/event-stream")
+            .insert_header("Connection", "close");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
+
+        let model = OpenAIBaseModel::new(config).unwrap();
+
+        let messages = vec![ChatMessage {
+            text: "What's the weather in Paris?".to_string(),
+            sender: SenderType::User,
+            ..Default::default()
+        }];
+        let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
+
+        let cancel_token = CancellationToken::new();
+        let mut stream = model
+            .complete(
+                &messages,
+                Some(tools.as_slice()),
+                &HashMap::new(),
+                cancel_token,
+            )
+            .await;
+
+        let mut responses = Vec::new();
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result.unwrap() {
+                Completion::Response(response) => {
+                    responses.push(response);
+                }
+                Completion::Metrics(_) => {}
+            }
+        }
+
+        // We expect 2 responses
+        assert_eq!(responses.len(), 2);
+
+        // First response should NOT have tool_calls (no finish_reason yet)
+        assert!(
+            responses[0].tool_calls.is_none(),
+            "First response should not have tool_calls before finish_reason"
+        );
+
+        // Second response should have tool_calls (finish_reason=stop with tool_calls from previous chunk)
+        let second = &responses[1];
+        assert!(
+            second.tool_calls.is_some(),
+            "Second response should have tool_calls with finish_reason=stop"
+        );
+        assert_eq!(second.finish_reason, Some("Stop".to_string()));
+
+        let tool_calls = second.tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "get_weather");
+    }
+
+    // Test transition case: tool_calls in chunk 1, finish_reason in chunk 2 (no tool_calls in chunk 2)
+    #[tokio::test]
+    async fn test_tool_calls_transition_to_finish_reason() {
+        let server = MockServer::start().await;
+        let server_url = server.uri();
+        let config = create_mock_model_config(&server_url).unwrap();
+
+        // Tool call in first chunk, finish_reason in second chunk WITHOUT tool_calls delta
+        let events = vec![
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\":\"Paris\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+        ];
+
+        let mock_body = events
+            .into_iter()
+            .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
+            .collect::<String>();
+        let mock_body = format!("{}data: [DONE]\n\n", mock_body);
+
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_raw(mock_body, "text/event-stream")
+            .insert_header("Connection", "close");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
+
+        let model = OpenAIBaseModel::new(config).unwrap();
+
+        let messages = vec![ChatMessage {
+            text: "What's the weather in Paris?".to_string(),
+            sender: SenderType::User,
+            ..Default::default()
+        }];
+        let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
+
+        let cancel_token = CancellationToken::new();
+        let mut stream = model
+            .complete(
+                &messages,
+                Some(tools.as_slice()),
+                &HashMap::new(),
+                cancel_token,
+            )
+            .await;
+
+        let mut responses = Vec::new();
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result.unwrap() {
+                Completion::Response(response) => {
+                    responses.push(response);
+                }
+                Completion::Metrics(_) => {}
+            }
+        }
+
+        assert_eq!(responses.len(), 2);
+
+        // First response: no finish_reason, so no tool_calls
+        assert!(
+            responses[0].tool_calls.is_none(),
+            "First response should not have tool_calls (no finish_reason)"
+        );
+
+        // Second response: has finish_reason, tool_calls should be emitted
+        // (tool_calls_partial persists from chunk 1)
+        assert!(
+            responses[1].tool_calls.is_some(),
+            "Second response should have tool_calls (finish_reason=tool_calls)"
+        );
+
+        let tool_calls = responses[1].tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "get_weather");
+    }
+
+    // Test: model sends multiple tool call batches: tools1 -> finish -> tools2 -> finish -> text -> stop
+    // This verifies that tool_calls_partial is cleared after emit, allowing fresh accumulation
+    #[tokio::test]
+    async fn test_multiple_tool_call_batches_with_finish_reason() {
+        let server = MockServer::start().await;
+        let server_url = server.uri();
+        let config = create_mock_model_config(&server_url).unwrap();
+
+        // Sequence:
+        // Chunk 1: First tool call starts (no finish_reason)
+        // Chunk 2: First tool call complete + finish_reason=tool_calls → EMIT and CLEAR
+        // Chunk 3: New tool call starts (no finish_reason)
+        // Chunk 4: Second tool call complete + finish_reason=tool_calls → EMIT and CLEAR
+        // Chunk 5: Text + finish_reason=stop (no tool_calls)
+        let events = vec![
+            // Chunk 1: First tool call starts
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-4",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": ""
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            // Chunk 2: First tool call complete + finish_reason
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-4",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "{\"query\":\"test\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+            // Chunk 3: Second tool call starts (different ID)
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-4",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "weather",
+                                "arguments": ""
+                            }
+                        }]
+                    },
+                    "finish_reason": serde_json::Value::Null
+                }]
+            }),
+            // Chunk 4: Second tool call complete + finish_reason
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-4",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "{\"location\":\"NYC\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+            // Chunk 5: Final text + stop
+            json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1684,
+                "model": "gpt-4",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "content": "Done"
+                    },
+                    "finish_reason": "stop"
+                }]
+            }),
+        ];
+
+        let mock_body = events
+            .into_iter()
+            .map(|event| format!("data: {}\n\n", serde_json::to_string(&event).unwrap()))
+            .collect::<String>();
+        let mock_body = format!("{}data: [DONE]\n\n", mock_body);
+
+        let mock_response = ResponseTemplate::new(200)
+            .set_body_raw(mock_body, "text/event-stream")
+            .insert_header("Connection", "close");
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(mock_response)
+            .mount(&server)
+            .await;
+
+        let model = OpenAIBaseModel::new(config).unwrap();
+
+        let messages = vec![ChatMessage {
+            text: "Search for something and check weather".to_string(),
+            sender: SenderType::User,
+            ..Default::default()
+        }];
+        let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(MockTool)];
+
+        let cancel_token = CancellationToken::new();
+        let mut stream = model
+            .complete(
+                &messages,
+                Some(tools.as_slice()),
+                &HashMap::new(),
+                cancel_token,
+            )
+            .await;
+
+        let mut responses = Vec::new();
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result.unwrap() {
+                Completion::Response(response) => {
+                    responses.push(response);
+                }
+                Completion::Metrics(_) => {}
+            }
+        }
+
+        // Collect responses that have tool_calls
+        let responses_with_tool_calls: Vec<_> = responses
+            .iter()
+            .filter(|r| r.tool_calls.is_some())
+            .collect();
+
+        // Should have exactly 2 responses with tool_calls (one for each batch)
+        assert_eq!(
+            responses_with_tool_calls.len(),
+            2,
+            "Expected exactly 2 responses with tool_calls, got {}",
+            responses_with_tool_calls.len()
+        );
+
+        // First emitted tool_calls should be call_1 (search)
+        let first_tool_calls = responses_with_tool_calls[0].tool_calls.as_ref().unwrap();
+        assert_eq!(
+            first_tool_calls.len(),
+            1,
+            "First batch should have 1 tool call"
+        );
+        assert_eq!(
+            first_tool_calls[0].id, "call_1",
+            "First tool call ID should be call_1"
+        );
+        assert_eq!(
+            first_tool_calls[0].name, "search",
+            "First tool call should be search"
+        );
+
+        // Second emitted tool_calls should be call_2 (weather)
+        let second_tool_calls = responses_with_tool_calls[1].tool_calls.as_ref().unwrap();
+        assert_eq!(
+            second_tool_calls.len(),
+            1,
+            "Second batch should have 1 tool call"
+        );
+        assert_eq!(
+            second_tool_calls[0].id, "call_2",
+            "Second tool call ID should be call_2"
+        );
+        assert_eq!(
+            second_tool_calls[0].name, "weather",
+            "Second tool call should be weather"
+        );
+
+        // Last response (Chunk 5) should have no tool_calls (just text + stop)
+        let last_response = responses.last().unwrap();
+        assert!(
+            last_response.tool_calls.is_none(),
+            "Last response should have no tool_calls (just text + stop)"
+        );
+        assert_eq!(last_response.text, "Done");
+        assert_eq!(last_response.finish_reason, Some("Stop".to_string()));
     }
 }
