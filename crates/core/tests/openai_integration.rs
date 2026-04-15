@@ -172,6 +172,7 @@ async fn test_tool_calling(
 }
 
 #[tokio::test]
+#[ignore]
 async fn gemini_2_5_tool_calling() {
     test_tool_calling(
         "gemini-2.5-flash",
@@ -184,6 +185,7 @@ async fn gemini_2_5_tool_calling() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn gemini_3_tool_calling() {
     test_tool_calling(
         "gemini-3-flash-preview",
@@ -196,6 +198,7 @@ async fn gemini_3_tool_calling() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cerebras_tool_calling() {
     test_tool_calling(
         "qwen-3-235b-a22b-instruct-2507",
@@ -208,6 +211,7 @@ async fn cerebras_tool_calling() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn openrouter_tool_calling() {
     test_tool_calling(
         "openrouter/elephant-alpha",

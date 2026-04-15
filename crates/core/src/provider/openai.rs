@@ -296,6 +296,10 @@ impl CompletionModel for OpenAIBaseModel {
                                                     partial_call.arguments.push_str(args);
                                                 }
                                             }
+                                            // Extract extra_content (e.g., thought_signature for Gemini 3)
+                                            if let Some(extra) = &tool_call_chunk.extra_content {
+                                                partial_call.extra_content = Some(extra.clone());
+                                            }
                                         }
                                     }
 

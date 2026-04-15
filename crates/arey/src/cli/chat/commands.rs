@@ -789,6 +789,7 @@ ASSISTANT: Second Response
                 id: "id1".to_string(),
                 name: "tool1".to_string(),
                 arguments: "{\"arg\":1}".to_string(),
+                ..Default::default()
             }]),
             ..Default::default()
         }];

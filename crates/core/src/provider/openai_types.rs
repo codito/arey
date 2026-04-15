@@ -32,6 +32,9 @@ pub(super) struct ChatCompletionToolCallChunk {
     pub(super) index: u32,
     pub(super) id: Option<String>,
     pub(super) function: Option<FunctionCallStream>,
+    #[serde(default, rename = "extra_content")]
+    /// Extra content from the provider (e.g., thought_signature for Gemini 3 thinking models)
+    pub(super) extra_content: Option<serde_json::Value>,
 }
 
 impl dyn Tool {
@@ -58,6 +61,7 @@ impl From<ChatCompletionToolCallChunk> for ToolCall {
                 .and_then(|f| f.name.clone())
                 .unwrap(),
             arguments: value.function.and_then(|f| f.arguments).unwrap(),
+            extra_content: value.extra_content,
         }
     }
 }
