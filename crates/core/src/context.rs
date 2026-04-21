@@ -126,7 +126,9 @@ impl Context {
                     let msg_tokens = if i == last_index {
                         new_tokens.saturating_sub(distributed_tokens)
                     } else {
-                        (new_tokens * msg_chars) / total_unknown_chars
+                        (new_tokens * msg_chars)
+                            .checked_div(total_unknown_chars)
+                            .unwrap()
                     };
                     messages[*msg_idx].1 = Some(msg_tokens);
                     distributed_tokens += msg_tokens;
