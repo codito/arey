@@ -10,7 +10,7 @@ server = ["rmcp/server", "rmcp/transport-io", "rmcp/macros", "rmcp/schemars", "t
 
 [dependencies]
 arey-core = { path = "../core" }
-rmcp = { version = "1.6.0", features = ["client", "transport-child-process", "transport-io"] }
+rmcp = { version = "1.7.0", features = ["client", "transport-child-process", "transport-io"] }
 anyhow.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
