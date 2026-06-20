@@ -252,7 +252,7 @@ impl CheckpointManager {
                     if priority > best_match_priority {
                         best_match_priority = priority;
                         checkpoint_restored = true;
-                        checkpoint_tokens_skipped = cp.position;
+                        checkpoint_tokens_skipped = cp.tokens.len();
                         restored_position = Some(cp.position as i32);
                         best_match_transition = Some(cp.transition);
                     }

@@ -751,6 +751,7 @@ fn handle_request(
         );
         if state.checkpoint_manager.restore(context, cp) {
             state.position = cp.position as i32;
+            state.previous_tokens = cp.tokens.clone();
             debug!(
                 "Checkpoint restored: skipping {} tokens, position now {}",
                 cache_status.tokens_to_skip, state.position
