@@ -119,10 +119,6 @@ pub struct CheckpointManager {
     is_hybrid: bool,
     flags: LlamaStateSeqFlags,
     first_checkpoint_size: Option<usize>,
-    /// Dynamic periodic checkpoint interval (calculated from n_ctx and max_checkpoints)
-    periodic_interval: usize,
-    /// Last position where a periodic checkpoint was saved
-    last_periodic_position: usize,
 }
 
 impl CheckpointManager {
@@ -131,19 +127,13 @@ impl CheckpointManager {
     /// # Arguments
     /// * `max_checkpoints` - Maximum number of checkpoints to keep (FIFO eviction)
     /// * `is_hybrid` - Whether the model is hybrid/recurrent (uses PARTIAL_ONLY flag)
-    /// * `n_ctx` - Context window size (used to calculate periodic interval)
-    pub fn new(max_checkpoints: usize, is_hybrid: bool, n_ctx: usize) -> Self {
+    /// * `n_ctx` - Context window size
+    pub fn new(max_checkpoints: usize, is_hybrid: bool, _n_ctx: usize) -> Self {
         let flags = if is_hybrid {
             LlamaStateSeqFlags::PARTIAL_ONLY
         } else {
             LlamaStateSeqFlags::empty()
         };
-
-        // Calculate periodic checkpoint interval
-        // Reserve 4 slots for transitions + 4 for request boundaries = 8
-        // Remaining for periodic
-        let periodic_slots = max_checkpoints.saturating_sub(8).max(1);
-        let periodic_interval = n_ctx / periodic_slots;
 
         Self {
             checkpoints: Vec::new(),
@@ -151,8 +141,6 @@ impl CheckpointManager {
             is_hybrid,
             flags,
             first_checkpoint_size: None,
-            periodic_interval,
-            last_periodic_position: 0,
         }
     }
 
@@ -223,7 +211,10 @@ impl CheckpointManager {
             };
         }
 
-        // Hybrid: use checkpoint exact prefix matching with priority.
+        // Hybrid: use checkpoint exact prefix matching.
+        // Prefer longest prefix match (most tokens skipped = most efficient).
+        // Use priority as tiebreaker when lengths are equal.
+        let mut best_match_len: usize = 0;
         let mut best_match_priority: u8 = 0;
         let mut best_match_transition: Option<TransitionType> = None;
         if !self.checkpoints.is_empty() && !tokens.is_empty() {
@@ -238,21 +229,21 @@ impl CheckpointManager {
                 };
 
                 if is_prefix {
+                    let match_len = cp.tokens.len();
                     let priority = checkpoint_priority(cp.transition);
                     debug!(
                         "Checkpoint check: cp_position={}, cp_tokens_len={}, transition={:?}, priority={}, current_position={}",
-                        cp.position,
-                        cp.tokens.len(),
-                        cp.transition,
-                        priority,
-                        current_position
+                        cp.position, match_len, cp.transition, priority, current_position
                     );
 
-                    // Pick highest priority match
-                    if priority > best_match_priority {
+                    // Pick longest prefix match; break ties by highest priority
+                    if match_len > best_match_len
+                        || (match_len == best_match_len && priority > best_match_priority)
+                    {
+                        best_match_len = match_len;
                         best_match_priority = priority;
                         checkpoint_restored = true;
-                        checkpoint_tokens_skipped = cp.position;
+                        checkpoint_tokens_skipped = match_len;
                         restored_position = Some(cp.position as i32);
                         best_match_transition = Some(cp.transition);
                     }
@@ -305,21 +296,6 @@ impl CheckpointManager {
                 self.checkpoints.remove(0);
             }
         }
-    }
-
-    /// Checks if we should save a periodic checkpoint based on tokens processed.
-    ///
-    /// # Arguments
-    /// * `current_position` - Current position in the sequence
-    ///
-    /// # Returns
-    /// `true` if a periodic checkpoint should be saved
-    pub fn should_save_periodic(&self, current_position: usize) -> bool {
-        if self.periodic_interval == 0 {
-            return false;
-        }
-        let tokens_since_last = current_position.saturating_sub(self.last_periodic_position);
-        tokens_since_last >= self.periodic_interval
     }
 
     /// Saves a checkpoint at a specific transition point.
@@ -740,6 +716,87 @@ mod checkpoint_tests {
 
         assert!(result.checkpoint_restored);
         assert_eq!(result.restored_position, Some(3));
+    }
+
+    #[test]
+    fn test_cache_status_prefers_longer_prefix_over_higher_priority() {
+        // ToolCall (3 tokens, pri 40) vs TurnEnd (5 tokens, pri 20).
+        // Both are prefixes of the 7-token request.
+        // Longest prefix should win: TurnEnd (5 tokens) beats ToolCall (3 tokens).
+        let checkpoints = vec![
+            Checkpoint::new(
+                vec![token(1), token(2), token(3)],
+                vec![1, 2, 3],
+                3,
+                TransitionType::ToolCall,
+            ),
+            Checkpoint::new(
+                vec![token(1), token(2), token(3), token(4), token(5)],
+                vec![1, 2, 3, 4, 5],
+                5,
+                TransitionType::TurnEnd,
+            ),
+        ];
+        let tokens = vec![
+            token(1),
+            token(2),
+            token(3),
+            token(4),
+            token(5),
+            token(6),
+            token(7),
+        ];
+
+        let mgr = add_checkpoints(CheckpointManager::new(10, true, 4096), checkpoints);
+        let result = mgr.cache_status(true, 0, &tokens, &[]);
+
+        assert!(result.checkpoint_restored);
+        assert_eq!(
+            result.tokens_to_skip, 5,
+            "TurnEnd (5 tokens) should be preferred over ToolCall (3 tokens) due to longer prefix"
+        );
+        assert_eq!(result.restored_position, Some(5));
+        assert_eq!(result.restored_transition, Some(TransitionType::TurnEnd));
+    }
+
+    #[test]
+    fn test_cache_status_same_length_uses_priority_tiebreaker() {
+        // Periodic (3 tokens, pri 10) vs TurnStart (3 tokens, pri 50).
+        // Same prefix length, so higher priority (TurnStart) wins.
+        let checkpoints = vec![
+            Checkpoint::new(
+                vec![token(1), token(2), token(3)],
+                vec![1, 2, 3],
+                3,
+                TransitionType::Periodic,
+            ),
+            Checkpoint::new(
+                vec![token(1), token(2), token(3)],
+                vec![1, 2, 3],
+                3,
+                TransitionType::TurnStart,
+            ),
+        ];
+        let tokens = vec![
+            token(1),
+            token(2),
+            token(3),
+            token(4),
+            token(5),
+            token(6),
+            token(7),
+        ];
+
+        let mgr = add_checkpoints(CheckpointManager::new(10, true, 4096), checkpoints);
+        let result = mgr.cache_status(true, 0, &tokens, &[]);
+
+        assert!(result.checkpoint_restored);
+        assert_eq!(result.tokens_to_skip, 3);
+        assert_eq!(
+            result.restored_transition,
+            Some(TransitionType::TurnStart),
+            "TurnStart (pri 50) should be preferred over Periodic (pri 10) when lengths are equal"
+        );
     }
 
     // Helper function to add checkpoints to manager for testing

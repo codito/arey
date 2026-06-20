@@ -106,7 +106,8 @@ impl Tool for FetchTool {
     }
 
     fn description(&self) -> String {
-        "Fetches a URL and extracts readable content as markdown".to_string()
+        "Fetches a URL content as readable markdown. Use to deep dive into search results."
+            .to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -115,11 +116,11 @@ impl Tool for FetchTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch"
+                    "description": "A valid URL to fetch. Ensure URLs are from valid source e.g., from user input or from `search` tool results."
                 },
                 "search_text": {
                     "type": "string",
-                    "description": "Optional text to search for. If provided, returns only the surrounding context (3 lines before/after matching text) instead of full content."
+                    "description": "Optional. If provided, return only the surrounding context (3 lines before/after matching text) instead of full content."
                 }
             },
             "required": ["url"]
