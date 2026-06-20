@@ -840,6 +840,36 @@ fn handle_request(
             }
             // Use decode with memory recovery
             if let Err(_e) = decode_with_recovery(context, &mut batch, state) {
+                // If OOM cleared state (position=0), retry all tokens from scratch
+                if state.position == 0 {
+                    let mut retry_ok = true;
+                    let mut retry_pos = 0i32;
+                    for retry_chunk in tokens.chunks(state.n_batch) {
+                        batch.clear();
+                        for (i, &token) in retry_chunk.iter().enumerate() {
+                            if let Err(_e) =
+                                batch.add(token, retry_pos, &[0], i == retry_chunk.len() - 1)
+                            {
+                                retry_ok = false;
+                                break;
+                            }
+                            retry_pos += 1;
+                        }
+                        if !retry_ok {
+                            break;
+                        }
+                        if let Err(e) = context.decode(&mut batch) {
+                            tracing::error!("decode failed during retry after OOM: {}", e);
+                            retry_ok = false;
+                            break;
+                        }
+                    }
+                    if retry_ok {
+                        in_token_count = retry_pos;
+                        tracing::info!("decode succeeded after OOM recovery + full retry");
+                        break;
+                    }
+                }
                 // Memory was trimmed - send completion with trim signal instead of error
                 // This allows generation to continue gracefully
                 let _ = response_tx.blocking_send(Ok(Completion::Response(CompletionResponse {
@@ -872,30 +902,6 @@ fn handle_request(
                 })));
                 return;
             }
-
-            // Save periodic checkpoint if we've crossed the interval
-            if state.is_hybrid
-                && state
-                    .checkpoint_manager
-                    .should_save_periodic(in_token_count as usize)
-            {
-                // tokens contains new tokens for this request
-                // in_token_count = previous_position + tokens_processed_in_this_request
-                // We need to save all tokens up to current position = previous_tokens + processed new tokens
-                let tokens_processed = (in_token_count - state.position) as usize;
-                let tokens_for_checkpoint = state
-                    .previous_tokens
-                    .iter()
-                    .chain(tokens.iter().take(tokens_processed))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                state.checkpoint_manager.save_at_transition(
-                    context,
-                    tokens_for_checkpoint,
-                    in_token_count as usize,
-                    TransitionType::Periodic,
-                );
-            }
         }
     } else {
         debug!(
@@ -906,6 +912,16 @@ fn handle_request(
 
     state.position = in_token_count;
     state.previous_tokens = tokens.clone();
+
+    // Save periodic checkpoint after all prompt tokens processed
+    if state.is_hybrid && !had_overflow && state.position > 0 {
+        state.checkpoint_manager.save_at_transition(
+            context,
+            tokens.clone(),
+            state.position as usize,
+            TransitionType::Periodic,
+        );
+    }
 
     debug!(
         "After prompt: position={}, batch_n_tokens={}, is_hybrid={}, tokens_to_process.len()={}",

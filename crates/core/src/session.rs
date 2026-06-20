@@ -239,6 +239,8 @@ impl Session {
 
             let mut iteration = 0;
             let mut pending_tool_calls: Vec<ToolCall> = Vec::new();
+            let mut previous_tool_calls: Vec<ToolCall> = Vec::new();
+            let mut dedup_triggered = false;
 
             loop {
                 // Check compaction
@@ -298,7 +300,9 @@ impl Session {
                     effective_settings.insert("enable_thinking".to_string(), enabled.to_string());
                 }
 
-                let tool_slice = if self.config.tool_execution_enabled && !self.config.tools.is_empty() {
+                let tool_slice: Vec<Arc<dyn Tool>> = if dedup_triggered {
+                    Vec::new()
+                } else if self.config.tool_execution_enabled && !self.config.tools.is_empty() {
                     self.config.tools.clone()
                 } else {
                     Vec::new()
@@ -310,6 +314,13 @@ impl Session {
                     &effective_settings,
                     cancel_token.clone()
                 ).await;
+
+                debug!(
+                    "Tool loop iteration {}: sending {} messages to model; last user msg: {:?}",
+                    iteration,
+                    messages_to_send.len(),
+                    messages_to_send.iter().rev().find(|m| m.sender == SenderType::User).map(|m| m.text.chars().take(100).collect::<String>())
+                );
 
                 pending_tool_calls.clear();
                 let mut assistant_text = String::new();
@@ -359,6 +370,24 @@ impl Session {
                 };
                 let _ = self.add_message(assistant_msg);
 
+                // Check for repeated identical tool calls (same name + arguments)
+                if !pending_tool_calls.is_empty()
+                    && !previous_tool_calls.is_empty()
+                    && pending_tool_calls.len() == previous_tool_calls.len()
+                    && pending_tool_calls.iter().zip(previous_tool_calls.iter()).all(|(a, b)| a.name == b.name && a.arguments == b.arguments)
+                {
+                    warn!("Same tool calls repeated ({}), synthesizing response",
+                        pending_tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>().join(", "));
+                    let context_msg = ChatMessage {
+                        sender: SenderType::Tool,
+                        text: "Skipped repeated search query. Use a different query, or create an answer from above results. If needed, use `fetch` tool to get more details for the result url.".to_string(),
+                        ..Default::default()
+                    };
+                    let _ = self.add_message(context_msg);
+                    dedup_triggered = true;
+                    continue;
+                }
+
                 // No more tool calls - exit loop
                 if pending_tool_calls.is_empty() {
                     break;
@@ -369,6 +398,8 @@ impl Session {
                     info!("Tool calls detected but tool execution is disabled");
                     break;
                 }
+
+                previous_tool_calls = pending_tool_calls.clone();
 
                 yield Ok(SessionEvent::ToolStart {
                     calls: pending_tool_calls.clone(),
@@ -966,6 +997,89 @@ mod tool_tests {
                 "Tool execution should succeed with valid JSON"
             );
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_repeated_tool_call_dedup_synthesizes_response() -> Result<()> {
+        let tool: Arc<dyn Tool> = Arc::new(TestTool {
+            name: "mock_tool".to_string(),
+            should_error: false,
+        });
+
+        let mut settings: HashMap<String, Value> = HashMap::new();
+        settings.insert(
+            "response_mode".to_string(),
+            Value::String("persistent_tool_call".to_string()),
+        );
+
+        let model_config = ModelConfig {
+            key: "test".to_string(),
+            name: "Test".to_string(),
+            provider: ModelProvider::Test,
+            settings,
+        };
+
+        let session_config = SessionConfig {
+            tools: vec![tool],
+            tool_execution_enabled: true,
+            ..Default::default()
+        };
+
+        let mut session = Session::new(model_config, session_config)?;
+        session.add_message(new_chat_msg(SenderType::User, "test"))?;
+
+        let stream = session
+            .generate(HashMap::new(), CancellationToken::new())
+            .await?;
+
+        let events: Vec<SessionEvent> = stream.try_collect().await?;
+
+        // With persistent_tool_call, the model returns identical tool calls.
+        // The dedup check should trigger on the second iteration, skipping
+        // tool execution and continuing without tools to synthesize a text response.
+        let tool_end_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::ToolEnd { .. }))
+            .collect();
+
+        assert_eq!(
+            tool_end_events.len(),
+            1,
+            "Tool should execute only once before dedup triggers continue"
+        );
+
+        // The dedup context message should be in the conversation
+        let messages = session.messages();
+        let has_dedup_msg = messages.iter().any(|m| {
+            m.sender == SenderType::Tool && m.text.contains("Skipped repeated search query")
+        });
+        assert!(
+            has_dedup_msg,
+            "Dedup context message should be added to conversation"
+        );
+
+        // A final text response should have been synthesized (not an abrupt error)
+        let synthesized_text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Token(Completion::Response(r))
+                    if !r.text.is_empty() && r.tool_calls.is_none() =>
+                {
+                    Some(r.text.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !synthesized_text.is_empty(),
+            "Should have synthesized a text response after dedup"
+        );
+        assert!(
+            synthesized_text.contains("Final answer"),
+            "Synthesized response should contain the final answer text"
+        );
 
         Ok(())
     }

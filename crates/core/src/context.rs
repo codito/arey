@@ -428,9 +428,8 @@ impl Context {
                 .sum()
         };
 
-        self.messages = recent;
-        self.messages
-            .extend(summaries.into_iter().map(|m| (m, None)));
+        self.messages = summaries.into_iter().map(|m| (m, None)).collect();
+        self.messages.extend(recent);
 
         let compacted_count = self.messages.len();
 
@@ -772,6 +771,11 @@ mod compact_tests {
         noop_when_empty = { vec![], true },
         noop_when_under_threshold = { vec![msg_tuple(new_chat_msg(SenderType::User, "Hi"))], true },
         compact_when_over_threshold = { vec![msg_tuple(new_chat_msg(SenderType::User, &"X".repeat(10000)))], false },
+        compact_maintains_order = { vec![
+            msg_tuple(new_chat_msg(SenderType::User, &"X".repeat(11000))),
+            msg_tuple(new_chat_msg(SenderType::User, &"Y".repeat(11000))),
+            msg_tuple(new_chat_msg(SenderType::User, &"Z".repeat(11000))),
+        ], false },
     )]
     fn test_compact(messages: Vec<(ChatMessage, Option<usize>)>, expect_noop: bool) {
         let mut ctx = Context::new(10000);
@@ -786,6 +790,20 @@ mod compact_tests {
             assert_eq!(result.compacted_messages, result.original_messages);
         } else {
             assert!(result.compacted_messages <= result.original_messages);
+            // Verify chronological order is maintained
+            let texts: Vec<&str> = ctx.messages.iter().map(|(m, _)| m.text.as_str()).collect();
+            if texts.len() >= 3 {
+                assert!(
+                    texts[0].starts_with('X'),
+                    "Oldest message should be first after compaction, got: {}",
+                    texts[0].chars().next().unwrap_or('?')
+                );
+                assert!(
+                    texts[texts.len() - 1].starts_with('Z'),
+                    "Newest message should be last after compaction, got: {}",
+                    texts[texts.len() - 1].chars().next().unwrap_or('?')
+                );
+            }
         }
     }
 }

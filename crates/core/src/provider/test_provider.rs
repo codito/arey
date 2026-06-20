@@ -18,10 +18,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// The `response_mode` setting controls what kind of response it generates:
 /// - `""` (default): A simple "Hello world" streaming text response.
 /// - `"tool_call"`: A response containing a tool call to `mock_tool`.
+/// - `"persistent_tool_call"`: Always returns a tool call on every invocation,
+///   ignoring whether the last message is a tool result. Used to test tool-loop
+///   dedup logic.
 /// - `"error"`: An error response.
 ///
 /// It also responds with a final answer if the last message in the chat history
-/// is from a tool, simulating a complete tool-use cycle.
+/// is from a tool, simulating a complete tool-use cycle (unless overridden by
+/// `persistent_tool_call`).
 #[derive(Debug)]
 pub struct TestProviderModel {
     config: ModelConfig,
@@ -66,8 +70,26 @@ impl CompletionModel for TestProviderModel {
     ) -> BoxStream<'static, Result<Completion>> {
         let response_mode: String = self.config.get_setting("response_mode").unwrap_or_default();
 
-        // If the last message is a tool result, always return the "final answer".
-        if let Some(last_msg) = messages.last()
+        // When persistent_tool_call mode sees no tools were passed (session
+        // stripped them after dedup triggered), return a text response so the
+        // tool loop can exit naturally.
+        if response_mode == "persistent_tool_call" && _tools.is_none() {
+            let response = Completion::Response(CompletionResponse {
+                text: "Final answer based on available information".to_string(),
+                thought: None,
+                tool_calls: None,
+                finish_reason: Some("stop".to_string()),
+                raw_chunk: None,
+            });
+            let metrics = Completion::Metrics(CompletionMetrics::default());
+            let stream = stream::iter(vec![Ok(response), Ok(metrics)]);
+            return Box::pin(stream);
+        }
+
+        // If the last message is a tool result, return the "final answer" —
+        // unless persistent_tool_call mode is set (for testing tool-loop dedup).
+        if response_mode != "persistent_tool_call"
+            && let Some(last_msg) = messages.last()
             && last_msg.sender == SenderType::Tool
         {
             let response = Completion::Response(CompletionResponse {
@@ -87,7 +109,7 @@ impl CompletionModel for TestProviderModel {
                 let stream = stream::once(async { Err(anyhow!("TestProviderModel error")) });
                 Box::pin(stream)
             }
-            "tool_call" => {
+            "tool_call" | "persistent_tool_call" => {
                 let tool_call = ToolCall {
                     id: "c1".to_string(),
                     name: "mock_tool".to_string(),

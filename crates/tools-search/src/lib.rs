@@ -81,7 +81,7 @@ impl Tool for SearchTool {
                 },
                 "categories": {
                     "type": "string",
-                    "description": "Comma-separated categories: general, images, videos, news, map, music, it, science, files, social_media"
+                    "description": "Optional. Comma-separated, allowed values: general, images, videos, news, map, music, it, science, files, social_media"
                 },
             },
             "required": ["query"]
