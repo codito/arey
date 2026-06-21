@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.8](https://github.com/codito/arey/compare/arey-v0.0.7...arey-v0.0.8) (2026-06-21)
+
+
+### Features
+
+* qwen35 support, chat improvements, and template fixes ([#160](https://github.com/codito/arey/issues/160)) ([054145d](https://github.com/codito/arey/commit/054145d6fa470c3f261d573ae4b54e5e76352f03))
+* support mcp servers ([#163](https://github.com/codito/arey/issues/163)) ([fc390d1](https://github.com/codito/arey/commit/fc390d1d591e2da4e006d8aa69107bc3a4c19cce))
+* tool to fetch markdown content of an url ([#166](https://github.com/codito/arey/issues/166)) ([95e5a60](https://github.com/codito/arey/commit/95e5a60e081940927f8c284449a7f8734e81b2be))
+
+
+### Bug Fixes
+
+* tool call partial streams in openai providers and gemini 3 thought signature ([#167](https://github.com/codito/arey/issues/167)) ([5aa44df](https://github.com/codito/arey/commit/5aa44dfc7dff88ff85e8cdeef1f42af401e0ee75))
+
 ## [0.0.7](https://github.com/codito/arey/compare/arey-v0.0.6...arey-v0.0.7) (2025-10-04)
 
 
