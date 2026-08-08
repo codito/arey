@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.8](https://github.com/codito/arey/compare/arey-v0.0.7...arey-v0.0.8) (2026-08-08)
+
+
+### Bug Fixes
+
+* lint errors ([#210](https://github.com/codito/arey/issues/210)) ([2eb5c82](https://github.com/codito/arey/commit/2eb5c82e3aec7ac8d4f4e00c8b0ce52120d711de))
+
 ## [0.0.7](https://github.com/codito/arey/compare/arey-v0.0.6...arey-v0.0.7) (2025-10-04)
 
 
