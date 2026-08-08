@@ -200,7 +200,7 @@ impl Command {
             Some(name) => {
                 let mut chat_guard = session.lock().await;
                 let spinner =
-                    crate::cli::ux::GenerationSpinner::new(format!("Loading model '{}'...", &name));
+                    crate::cli::ux::GenerationSpinner::new(format!("Loading model '{}'...", name));
 
                 match chat_guard.set_model(name).await {
                     Ok(()) => {
@@ -316,7 +316,7 @@ impl Command {
             Some(name) => {
                 let mut chat_guard = session.lock().await;
                 let spinner =
-                    crate::cli::ux::GenerationSpinner::new(format!("Loading agent '{}'...", &name));
+                    crate::cli::ux::GenerationSpinner::new(format!("Loading agent '{}'...", name));
 
                 match chat_guard.set_agent(name).await {
                     Ok(()) => {
