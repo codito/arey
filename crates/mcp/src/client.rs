@@ -105,7 +105,6 @@ impl McpClient {
         params.meta = None;
         params.name = std::borrow::Cow::Owned(actual_tool_name.to_string());
         params.arguments = args_map;
-        params.task = None;
         debug!(
             "MCP {}: calling tool {} with arguments {:?}",
             self.name, tool_name, arguments
@@ -196,7 +195,6 @@ impl McpTool {
         params.meta = None;
         params.name = std::borrow::Cow::Owned(actual_tool_name.to_string());
         params.arguments = args_map;
-        params.task = None;
         let result = service.call_tool(params).await?;
 
         let output = result.structured_content.unwrap_or_else(|| {
