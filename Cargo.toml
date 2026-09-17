@@ -17,7 +17,7 @@ async-stream = "0.3"
 async-trait = "0.1.89"
 chrono = "0.4"
 clap = { version = "4.6.1", features = ["derive"] }
-dirs = "6.0"
+dirs = "7.0"
 encoding_rs = "0.8.35"
 env_logger = "0.11"
 futures = "0.3"
