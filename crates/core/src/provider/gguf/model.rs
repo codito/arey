@@ -21,7 +21,7 @@ use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{AddBos, LlamaModel, params::LlamaModelParams},
+    model::{LlamaModel, params::LlamaModelParams},
     sampling::LlamaSampler,
     send_logs_to_tracing,
     token::LlamaToken,
@@ -622,13 +622,10 @@ fn handle_request(
         }
     };
 
-    let tokens = match resources.model.str_to_token(&prompt, AddBos::Always) {
-        Ok(t) => t,
-        Err(e) => {
-            let _ = response_tx.blocking_send(Err(anyhow!("tokenization failed: {}", e)));
-            return;
-        }
-    };
+    let tokens = resources
+        .model
+        .vocab()
+        .tokenize(prompt.as_bytes(), true, true);
 
     debug!(
         "Tokenization: prompt length={}, token count={}",
@@ -701,16 +698,12 @@ fn handle_request(
                 // Decode tokens to strings with more detail
                 let decode_token = |t: &LlamaToken| -> String {
                     let token_id = t.0;
-                    match resources.model.token_to_piece_bytes(*t, 32, true, None) {
-                        Ok(bytes) => {
-                            let s = String::from_utf8_lossy(&bytes).to_string();
-                            if s.chars().any(|c| c.is_control()) {
-                                format!("{}:{:?}", token_id, bytes)
-                            } else {
-                                format!("{}:'{}'", token_id, s)
-                            }
-                        }
-                        Err(e) => format!("{}:error={}", token_id, e),
+                    let bytes = resources.model.vocab().token_to_piece(*t, true, None);
+                    let s = String::from_utf8_lossy(&bytes).to_string();
+                    if s.chars().any(|c| c.is_control()) {
+                        format!("{}:{:?}", token_id, bytes)
+                    } else {
+                        format!("{}:'{}'", token_id, s)
                     }
                 };
 
@@ -948,17 +941,11 @@ fn handle_request(
         let token = sampler.sample(context, -1);
         sampler.accept(token);
 
-        if resources.model.is_eog_token(token) {
+        if resources.model.vocab().is_eog(token) {
             break;
         }
 
-        let token_bytes = match resources.model.token_to_piece_bytes(token, 32, true, None) {
-            Ok(b) => b,
-            Err(_) => {
-                let _ = response_tx.blocking_send(Err(anyhow!("token conversion failed")));
-                return;
-            }
-        };
+        let token_bytes = resources.model.vocab().token_to_piece(token, true, None);
 
         let mut chunk = String::with_capacity(32);
         let _ = decoder.decode_to_string(&token_bytes, &mut chunk, false);
