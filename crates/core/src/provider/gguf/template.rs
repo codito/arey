@@ -4,7 +4,10 @@ use crate::{
     tools::ToolSpec,
 };
 use anyhow::{Context, Result};
-use minijinja::{Environment, Error, State, value::Value};
+use minijinja::{
+    Environment, Error, State,
+    value::{Serde, Value},
+};
 use serde_json;
 use serde_yaml;
 use std::collections::HashMap;
@@ -153,7 +156,7 @@ pub fn apply_chat_template(
         }
     }
 
-    tmpl.render(kwargs)
+    tmpl.render(Serde(kwargs))
         .inspect_err(|e| {
             error!(
                 ?template,
@@ -174,7 +177,7 @@ pub fn apply_chat_template(
 }
 
 fn unknown_method_callback(
-    state: &State,
+    state: &mut State,
     value: &Value,
     method: &str,
     args: &[Value],
