@@ -36,7 +36,7 @@ tracing-subscriber.workspace = true
 notify.workspace = true
 minijinja = { version = "3.0.1", features = ["builtins", "json", "serde"] }
 minijinja-contrib = { version = "3.0.1", features = ["pycompat"] }
-llama-cpp-2 = "=0.1.160"
+llama-cpp-2 = "=0.1.161"
 
 [dev-dependencies]
 tempfile = { workspace = true, features = [] }
