@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Context, Result};
 use minijinja::{
     Environment, Error, State,
-    value::{Serde, Value},
+    value::{Kwargs, Serde, Value},
 };
 use serde_json;
 use serde_yaml;
@@ -61,6 +61,7 @@ pub fn apply_chat_template(
     // We include minijinja with builtins for filters like tojson
     // Allow python compatibility methods like startswith to be available
     env.set_unknown_method_callback(unknown_method_callback);
+    env.add_filter("tojson", tojson_compat);
     env.add_function("strftime_now", |format: String| {
         chrono::Local::now().format(&format).to_string()
     });
@@ -184,6 +185,18 @@ fn unknown_method_callback(
 ) -> std::result::Result<Value, Error> {
     debug!("Unknown method callback: {method}");
     minijinja_contrib::pycompat::unknown_method_callback(state, value, method, args)
+}
+
+// MiniJinja's built-in tojson only accepts `indent`, but many Hugging Face
+// chat templates pass Jinja2's `ensure_ascii=False`. MiniJinja always emits
+// UTF-8 (no ASCII escaping), so consume and ignore that keyword.
+fn tojson_compat(
+    value: &Value,
+    indent: Option<Value>,
+    args: Kwargs,
+) -> std::result::Result<Value, Error> {
+    let _: Option<bool> = args.get("ensure_ascii")?;
+    minijinja::filters::tojson(value, indent, args)
 }
 
 #[cfg(test)]
